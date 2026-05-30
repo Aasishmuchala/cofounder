@@ -95,7 +95,7 @@ export default function TasksPage() {
                 No tasks yet — start on the Canvas.
               </p>
               <p className="mt-1.5 text-[13px] text-[var(--text-70)]">
-                Describe the company you want to run and cofounder will spin up
+                Describe the company you want to run and Helm will spin up
                 task agents for you.
               </p>
               <Link

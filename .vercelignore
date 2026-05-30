@@ -1,0 +1,14 @@
+# Secrets never go in the bundle — set these as Vercel Environment Variables.
+.env.local
+.env
+
+# Local tooling / test harnesses (not part of the app build)
+.claude
+stress.mjs
+stress-auth.mjs
+stress-db.mjs
+stress-skills.mjs
+ui-test.mjs
+ui-skill.mjs
+verify-landing.mjs
+smoke.mjs

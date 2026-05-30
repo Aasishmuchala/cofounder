@@ -1,4 +1,4 @@
-// Captured content from cofounder.co (live, May 2026)
+// Helm — marketing site content
 
 export const NAV_LINKS = [
   { label: "Start", href: "#start" },
@@ -31,7 +31,7 @@ export const VALUE_PROPS = [
   },
   {
     title: "Fully extensible",
-    body: "Easily connect MCP, custom APIs, custom skills, or an entire custom codebase to cofounder.",
+    body: "Easily connect MCP, custom APIs, custom skills, or an entire custom codebase to Helm.",
   },
 ];
 
@@ -111,7 +111,7 @@ export const PRICING = [
     highlight: false,
   },
   {
-    name: "Cofounder Pro",
+    name: "Helm Pro",
     price: "$20",
     cadence: "/mo, usage included",
     cta: "Get started",

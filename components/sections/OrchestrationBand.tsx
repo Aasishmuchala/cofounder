@@ -15,7 +15,7 @@ const EASE = [0.23, 1, 0.32, 1] as const;
 const NAV_ITEMS = [
   { label: "Home", active: false },
   { label: "Company", active: false },
-  { label: "Cofounder", active: true },
+  { label: "Helm", active: true },
   { label: "Tasks", active: false },
   { label: "Library", active: false },
 ];
@@ -75,7 +75,7 @@ export default function OrchestrationBand() {
           transition={{ duration: 0.6, ease: EASE }}
           className="font-display mx-auto max-w-[24ch] text-center text-[28px] font-normal leading-[1.15] text-[var(--text)] md:text-[32px] min-[1000px]:text-[40px]"
         >
-          Cofounder is an agent orchestration platform designed to help you run an
+          Helm is an agent orchestration platform designed to help you run an
           entire business
         </motion.h2>
 
@@ -108,8 +108,8 @@ export default function OrchestrationBand() {
                   <span className="block h-2 w-2 rounded-full bg-[var(--text-50)]" />
                 </span>
                 <span className="truncate font-mono text-[10px] tracking-[0.04em] text-[var(--text-50)]">
-                  General-intelligence-company&nbsp;/&nbsp;
-                  <span className="text-[var(--text-80)]">superoptimizers</span>
+                  Helm&nbsp;/&nbsp;
+                  <span className="text-[var(--text-80)]">your company</span>
                 </span>
               </div>
               <ProgressRing value={60} />
@@ -164,7 +164,7 @@ export default function OrchestrationBand() {
                 <div className="px-4 pb-4 md:px-5">
                   <div className="surface-gradient-chip flex items-center gap-3 rounded-[10px] px-3.5 py-2.5">
                     <span className="flex-1 truncate font-display text-[13px] text-[var(--text-50)]">
-                      Ask cofounder to spin up new tasks agents…
+                      Ask Helm to spin up new tasks agents…
                     </span>
                     <button
                       type="button"

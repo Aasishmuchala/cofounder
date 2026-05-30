@@ -1,17 +1,15 @@
-# Cofounder.co — pin-to-pin clone
+# Helm — run your whole company with agents
 
-A faithful replica of [cofounder.co](https://cofounder.co) (the multi-agent company-building
-platform by The General Intelligence Company of NY), rebuilt in Next.js with a **functional
-agent backend** — not just a static landing page.
-
-> Built from a live design teardown of the real site (captured May 2026). Visual tokens,
-> shadows, typography scale, and layout were reverse-engineered from the production CSS bundle.
+Helm is a multi-agent company-building platform built in Next.js with a **functional
+agent backend** — not just a landing page. Describe a company and Helm spins up
+specialized agents across every department; they search the skill ecosystem, author
+their own skills, produce real deliverables, and keep you **at the helm** with approval gates.
 
 ## Stack
 - **Next.js 16** (App Router, Turbopack) · **React 19** · **TypeScript**
 - **Tailwind CSS v4** (CSS-first `@theme`, custom design tokens in `app/globals.css`)
 - **Framer Motion** for scroll/entrance animation
-- **@anthropic-ai/sdk** — the "superoptimizer" agent backend (Claude `opus-4-8`)
+- **@anthropic-ai/sdk** — the Helm agent backend (Claude)
 
 ## What's included
 
@@ -25,7 +23,7 @@ agent backend** — not just a static landing page.
 - **`/pricing`** — 3 tiers + FAQ
 
 ### Functional app (`/app`) — the "dynamic workflow"
-- **Canvas** (`/app`) — describe a company → the superoptimizer **spins up task agents** across
+- **Canvas** (`/app`) — describe a company → Helm **spins up task agents** across
   Engineering / Sales / Marketing / Design / Support / Ops / Finance / Legal, rendered as live
   nodes with status (todo / running / needs-action / done) + a chat-driven conversation panel
 - **Tasks** (`/app/tasks`) — tasks grouped by department
@@ -46,6 +44,20 @@ falls back to a deterministic mock otherwise — **the UI always works with no k
   genuinely-usable templated fallback without one.
 
 > Env: set `SUPABASE_URL` + `SUPABASE_KEY` (publishable) in `.env.local` to enable persistence.
+
+### Write authorization
+Workspaces are anonymous (no login), so writes are protected by a per-workspace
+**capability token** — a stateless `HMAC-SHA256(APP_SECRET, workspaceId)` handed to
+the client when a workspace is created. Creating tasks in an existing workspace,
+executing a task, and patching a task all require it; forged or missing tokens get
+`403`, and a task can only be mutated within its own workspace. Set `APP_SECRET` to
+turn enforcement on (it's off when unset, so the keyless local demo still runs).
+All untrusted request fields are coerced + length-capped before reaching the model
+or the database, and user input is HTML-escaped in generated artifacts (which are
+additionally rendered in a script-less `<iframe sandbox>`). Conservative security
+headers (CSP `frame-ancestors`/`base-uri`/`object-src`/`form-action`, `nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`) ship on every
+response. A self-contained adversarial harness lives in `stress.mjs` (+ `stress-auth.mjs`).
 
 ## Run
 

@@ -23,9 +23,9 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cofounder lets you run an entire company with agents",
+  title: "Helm lets you run an entire company with agents",
   description:
-    "Cofounder is an agent orchestration platform designed to help you run an entire business. Run engineering, sales, marketing, design, finance, and ops.",
+    "Helm is an agent orchestration platform designed to help you run an entire business. Run engineering, sales, marketing, design, finance, and ops.",
 };
 
 export default function RootLayout({

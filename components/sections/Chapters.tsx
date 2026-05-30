@@ -26,7 +26,7 @@ export default function Chapters() {
           className="flex flex-col items-center text-center"
         >
           <span className="font-mono uppercase text-[var(--text-50)] tracking-[0.14em] text-[10px]">
-            By Cofounder, 2026
+            By Helm, 2026
           </span>
           <h2 className="font-display mt-3 text-[28px] md:text-[32px] min-[1000px]:text-[40px] font-normal leading-[1.15] text-[var(--text)]">
             Learn how to start a company

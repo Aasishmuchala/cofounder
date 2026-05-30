@@ -11,18 +11,19 @@ export default function Header() {
   // Only the home page has the dark pixel-art hero behind a transparent header.
   // Every other page has a light background, so the header must start solid/dark.
   const overHero = pathname === "/";
-  const [scrolled, setScrolled] = useState(!overHero);
+  // Only the hero page starts transparent and turns solid past 24px; every other
+  // page is solid from the start. `scrolled` is derived (no setState-in-effect).
+  const [scrolledPast, setScrolledPast] = useState(false);
 
   useEffect(() => {
-    if (!overHero) {
-      setScrolled(true);
-      return;
-    }
-    const onScroll = () => setScrolled(window.scrollY > 24);
+    if (!overHero) return;
+    const onScroll = () => setScrolledPast(window.scrollY > 24);
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, [overHero]);
+
+  const scrolled = !overHero || scrolledPast;
 
   return (
     <header
@@ -39,7 +40,7 @@ export default function Header() {
     >
       <div className="container-1440 flex items-center justify-between px-5 min-[476px]:px-8 pt-[22px] pb-[20px]">
         {/* Wordmark */}
-        <Link href="/" className="flex items-center gap-2" aria-label="Cofounder home">
+        <Link href="/" className="flex items-center gap-2" aria-label="Helm home">
           <Wordmark dark={scrolled} />
         </Link>
 
@@ -85,13 +86,13 @@ export default function Header() {
 
 function Wordmark({ dark }: { dark: boolean }) {
   const fill = dark ? "rgba(38,35,35,0.85)" : "#ffffff";
-  // Rectilinear pixel-grid "Cofounder" mark approximation
+  // Rectilinear pixel-grid "Helm" mark approximation
   return (
     <span
       className="font-display font-semibold tracking-[-0.02em] text-[20px]"
       style={{ color: fill, textShadow: dark ? "none" : "0 1px 1px rgba(0,0,0,0.18)" }}
     >
-      Cofounder
+      Helm
     </span>
   );
 }

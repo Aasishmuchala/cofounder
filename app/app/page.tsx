@@ -39,7 +39,7 @@ export default function CanvasPage() {
             transition={{ duration: 0.6, ease: EASE }}
             className="w-full max-w-[640px] text-center"
           >
-            <MonoLabel>Agent canvas · superoptimizers</MonoLabel>
+            <MonoLabel>Agent canvas · the helm</MonoLabel>
             <h1 className="mt-4 font-display text-[28px] font-normal leading-[1.12] text-[var(--text)] md:text-[36px] min-[1000px]:text-[42px]">
               What company do you want to run?
             </h1>
@@ -60,7 +60,7 @@ export default function CanvasPage() {
                     }
                   }}
                   rows={2}
-                  placeholder="Ask cofounder to spin up new task agents…"
+                  placeholder="Ask Helm to spin up new task agents…"
                   className="max-h-40 flex-1 resize-none bg-transparent px-2.5 py-1.5 font-display text-[16px] text-[var(--text)] outline-none placeholder:text-[var(--text-50)]"
                 />
                 <button

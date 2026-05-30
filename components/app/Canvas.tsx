@@ -67,7 +67,11 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
     if (a.taskId && !artifactByTask.has(a.taskId)) artifactByTask.set(a.taskId, a);
   }
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null);
-  const openArtifact = artifacts.find((a) => a.id === openArtifactId) ?? null;
+  // Guard the null case: an unpersisted artifact can have id === null, and
+  // find(a => a.id === null) would match it and auto-open the panel with no click.
+  const openArtifact = openArtifactId
+    ? (artifacts.find((a) => a.id === openArtifactId) ?? null)
+    : null;
 
   /* viewport pan/zoom */
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -77,11 +81,12 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
 
   /* node positions (world coords), keyed by task id */
   const [positions, setPositions] = useState<Record<string, Pt>>({});
-  const posRef = useRef(positions);
-  posRef.current = positions;
 
-  /* assign a ring position to any task that doesn't have one yet */
+  /* Assign a ring slot to any task that doesn't have a position yet. This is a
+     one-shot init of derived state from incoming task data: the functional
+     updater returns `prev` unchanged once every task is placed, so it can't loop. */
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot placement of new nodes; no-op when nothing changed
     setPositions((prev) => {
       const next = { ...prev };
       let changed = false;
@@ -157,7 +162,7 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
   const startNodeDrag = useCallback(
     (id: string) => (e: React.PointerEvent) => {
       e.stopPropagation();
-      const p = posRef.current[id] ?? { x: 0, y: 0 };
+      const p = positions[id] ?? { x: 0, y: 0 };
       drag.current = {
         kind: "node",
         id,
@@ -168,7 +173,7 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
       };
       (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     },
-    [],
+    [positions],
   );
 
   useEffect(() => {
@@ -306,11 +311,19 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
                   </span>
                 </div>
                 <div className="font-display text-[18px] font-medium text-[var(--text)]">
-                  Superoptimizer
+                  The Helm
                 </div>
                 <div className="font-mono text-[10px] text-[var(--text-50)]">
-                  {tasks.length} task agent{tasks.length === 1 ? "" : "s"} ·{" "}
-                  {tasks.filter((t) => t.status === "running").length} running
+                  {loading && tasks.length === 0 ? (
+                    <span className="anim-badge-blink text-[var(--text-70)]">
+                      Planning your company…
+                    </span>
+                  ) : (
+                    <>
+                      {tasks.length} task agent{tasks.length === 1 ? "" : "s"} ·{" "}
+                      {tasks.filter((t) => t.status === "running").length} running
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -367,13 +380,32 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
                       const art = artifactByTask.get(t.id);
                       if (art) {
                         return (
-                          <button
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={() => setOpenArtifactId(art.id)}
-                            className="mt-2.5 inline-flex items-center gap-1 rounded-[7px] bg-[var(--green-tint)] px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#2c7a3f] transition-opacity hover:opacity-80"
-                          >
-                            View output ↗
-                          </button>
+                          <div className="mt-2.5">
+                            <button
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={() => setOpenArtifactId(art.id)}
+                              className="inline-flex items-center gap-1 rounded-[7px] bg-[var(--green-tint)] px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#2c7a3f] transition-opacity hover:opacity-80"
+                            >
+                              View output ↗
+                            </button>
+                            {art.skill && (
+                              <div
+                                className="mt-1.5 flex items-center gap-1 truncate font-mono text-[8px] uppercase tracking-[0.08em] text-[var(--text-50)]"
+                                title={`${art.skill.source === "authored" ? "Authored" : art.skill.source === "house" ? "House" : "Equipped"} skill: ${art.skill.name} (${art.skill.source})`}
+                              >
+                                <span>
+                                  {art.skill.source === "authored"
+                                    ? "✍️"
+                                    : art.skill.source === "house"
+                                      ? "🏛"
+                                      : "⚡"}
+                                </span>
+                                <span className="truncate">
+                                  {art.skill.name.split("/").pop()}
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         );
                       }
                       if (t.status !== "running" && t.status !== "done") {
@@ -406,7 +438,7 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
           Agent canvas
         </div>
         <div className="font-display text-[20px] font-medium text-[var(--text)]">
-          Superoptimizers
+          The Helm
         </div>
         <div className="mt-1.5 flex items-center gap-2">
           <span
@@ -492,7 +524,7 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
             <div className="mb-1 flex items-center gap-1.5">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--green)]" />
               <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--text-50)]">
-                Cofounder
+                Helm
               </span>
             </div>
             <p className="text-[12.5px] leading-snug text-[var(--text-70)]">
@@ -512,7 +544,7 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask cofounder to spin up new task agents…"
+            placeholder="Ask Helm to spin up new task agents…"
             className="flex-1 bg-transparent py-2 font-display text-[14px] text-[var(--text)] outline-none placeholder:text-[var(--text-50)]"
           />
           <button
@@ -534,7 +566,7 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
 
       {/* deliverables counter */}
       {artifacts.length > 0 && (
-        <div className="absolute right-5 top-[88px] z-20 hidden md:block">
+        <div className="absolute left-5 top-[104px] z-20 hidden md:block">
           <button
             onClick={() => setOpenArtifactId(artifacts[0].id)}
             className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 shadow-raised transition-colors hover:text-[var(--text)]"

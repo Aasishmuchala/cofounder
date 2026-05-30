@@ -10,7 +10,7 @@ import {
 import { PRICING } from "@/lib/site-data";
 
 export const metadata = {
-  title: "Pricing — Cofounder",
+  title: "Pricing — Helm",
   description:
     "Simple, usage-based pricing. Run an entire company with agents — start free and scale as you grow.",
 };
@@ -23,7 +23,7 @@ const PLAN_FEATURES: Record<string, string[]> = {
     "All agentic departments",
     "Community support",
   ],
-  "Cofounder Pro": [
+  "Helm Pro": [
     "Everything in Free Trial",
     "Usage-based billing, pay as you go",
     "Run unlimited background tasks",
@@ -54,7 +54,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Is my data secure?",
-    a: "Cofounder is built on SOC 2 compliant infrastructure with encryption in transit and at rest. Your codebase, credentials, and customer data are isolated per workspace and never used to train shared models.",
+    a: "Helm is built on SOC 2 compliant infrastructure with encryption in transit and at rest. Your codebase, credentials, and customer data are isolated per workspace and never used to train shared models.",
   },
 ];
 

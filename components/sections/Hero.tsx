@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { GlassButton, BlinkDot } from "@/components/ui/primitives";
 import Link from "next/link";
+import HeroScene from "@/components/sections/HeroScene";
 
 const FLOATING = [
   { title: "Task Completed", sub: "New webpage", dot: "var(--green)", top: "8%" },
@@ -16,12 +17,8 @@ export default function Hero() {
       id="hero"
       className="relative min-h-[720px] md:h-screen md:min-h-[620px] w-full overflow-hidden"
     >
-      {/* Pixel-art GIF background */}
-      <div
-        className="absolute inset-0 bg-cover bg-right"
-        style={{ backgroundImage: "url(/hero/cofounder-2-hero.gif)" }}
-        aria-hidden
-      />
+      {/* Original animated landscape (ours — no borrowed assets) */}
+      <HeroScene />
       {/* subtle top gradient for nav legibility */}
       <div
         className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/15 to-transparent"
@@ -36,7 +33,7 @@ export default function Hero() {
           transition={{ duration: 0.6, ease: [0.23, 1, 0.32, 1], delay: 0.1 }}
           className="font-display hero-title-fill max-w-[20ch] text-[34px] min-[500px]:text-[38px] min-[900px]:text-[46px] font-normal leading-[1.08]"
         >
-          Cofounder lets you run an entire company with agents
+          Run your whole company with agents
         </motion.h1>
 
         <motion.p

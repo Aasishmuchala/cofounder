@@ -11,7 +11,7 @@ export default function Footer() {
         <div className="grid grid-cols-2 gap-10 md:grid-cols-4">
           <div className="col-span-2 md:col-span-1">
             <div className="font-display text-[20px] font-semibold tracking-[-0.02em] text-[var(--text)]">
-              Cofounder
+              Helm
             </div>
             <p className="mt-3 max-w-[28ch] font-display text-[14px] leading-[1.5] text-[var(--text-50)]">
               Automate with SOC&nbsp;2 compliant security.
@@ -46,7 +46,7 @@ export default function Footer() {
 
         <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <p className="font-display text-[13px] text-[var(--text-50)]">
-            Copyright © 2026 The General Intelligence Company Of New York
+            Copyright © 2026 Helm
           </p>
           <div className="flex items-center gap-5">
             <span className="font-display text-[13px] text-[var(--text-50)]">

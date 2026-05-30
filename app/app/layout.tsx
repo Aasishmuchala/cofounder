@@ -91,17 +91,17 @@ export default function AppLayout({
             />
           </span>
           <span className="font-display text-[16px] font-medium tracking-[0.1px] text-[var(--text)]">
-            Cofounder
+            Helm
           </span>
         </Link>
 
         {/* Breadcrumb */}
         <div className="mt-4 px-1 leading-relaxed">
           <div className="font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--text-50)]">
-            general-intelligence-company
+            helm
           </div>
           <div className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--text-70)]">
-            / superoptimizers
+            / your company
           </div>
         </div>
 
@@ -148,11 +148,11 @@ export default function AppLayout({
               className="flex h-7 w-7 items-center justify-center rounded-full surface-gradient-chip font-display text-[12px] text-[var(--text-70)]"
               aria-hidden
             >
-              S
+              H
             </span>
             <div className="min-w-0">
               <div className="truncate font-display text-[12px] text-[var(--text-80)]">
-                Superoptimizers
+                Helm
               </div>
               <div className="font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--text-50)]">
                 Pro plan
@@ -169,7 +169,7 @@ export default function AppLayout({
             href="/"
             className="font-display text-[15px] font-medium text-[var(--text)]"
           >
-            Cofounder
+            Helm
           </Link>
           <nav className="ml-auto flex items-center gap-1">
             {NAV.map((item) => {

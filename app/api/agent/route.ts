@@ -1,28 +1,17 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Task, TaskStatus, ChatMessage } from "@/lib/agent-types";
+import type { Task, ChatMessage } from "@/lib/agent-types";
+import { coerceText, coerceStatus, coerceDepartment } from "@/lib/agent-types";
 import {
   dbConfigured,
   createWorkspace,
   insertTasks,
 } from "@/lib/supabase-rest";
 import { getAnthropic, aiConfigured, MODEL } from "@/lib/anthropic";
+import { authEnforced, verifyWorkspaceToken, workspaceToken } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-const DEPARTMENTS = [
-  "Engineering",
-  "Sales",
-  "Marketing",
-  "Design",
-  "Support",
-  "Operations",
-  "Finance",
-  "Legal",
-] as const;
-
-const VALID_STATUSES: TaskStatus[] = ["todo", "running", "needs_action", "done"];
-
-const SYSTEM_PROMPT = `You are "Cofounder" — a superoptimizer manager agent that runs an entire company autonomously on the user's behalf.
+const SYSTEM_PROMPT = `You are "Helm" — the manager agent that runs an entire company autonomously on the user's behalf, while the human stays at the helm.
 
 You operate the company as a set of specialized departments, each staffed by agentic workers you can spin up on demand:
 - Engineering — builds and ships the product, infrastructure, and integrations.
@@ -64,6 +53,7 @@ interface AgentBody {
   messages?: ChatMessage[];
   companyContext?: string;
   workspaceId?: string;
+  workspaceSecret?: string;
 }
 
 interface AgentResult {
@@ -73,22 +63,6 @@ interface AgentResult {
 
 function makeId(): string {
   return `t_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function coerceStatus(value: unknown): TaskStatus {
-  return VALID_STATUSES.includes(value as TaskStatus)
-    ? (value as TaskStatus)
-    : "todo";
-}
-
-function coerceDepartment(value: unknown): string {
-  if (typeof value === "string") {
-    const match = DEPARTMENTS.find(
-      (d) => d.toLowerCase() === value.trim().toLowerCase(),
-    );
-    if (match) return match;
-  }
-  return "Operations";
 }
 
 /** Extract and parse the trailing ```json fenced block from a model reply. */
@@ -121,7 +95,7 @@ function parseAgentJson(text: string): AgentResult | null {
 
 /** Deterministic fallback so the UI always works without an API key. */
 function mockResult(lastUserMessage: string): AgentResult {
-  const goal = lastUserMessage.trim() || "your new company";
+  const goal = coerceText(lastUserMessage) || "your new company";
   const short = goal.length > 60 ? `${goal.slice(0, 57)}…` : goal;
 
   const tasks: Omit<Task, "id">[] = [
@@ -189,6 +163,8 @@ async function finalize(
         reply: result.reply,
         tasks,
         workspaceId,
+        // Hand the client its capability token (only when auth is enforced).
+        workspaceSecret: authEnforced ? workspaceToken(workspaceId) : undefined,
         mock: opts.mock,
         persisted: true,
       });
@@ -203,28 +179,41 @@ async function finalize(
 export async function POST(req: Request): Promise<Response> {
   let body: AgentBody = {};
   try {
-    body = (await req.json()) as AgentBody;
+    const parsed = await req.json();
+    // A valid JSON body of `null`/`42`/`"x"` must not crash `body.messages`.
+    if (parsed && typeof parsed === "object") body = parsed as AgentBody;
   } catch {
     body = {};
   }
 
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const lastUser =
-    [...messages].reverse().find((m) => m?.role === "user")?.content ?? "";
+  // `content` is typed string but may arrive as any JSON type — coerce it.
+  const lastUser = coerceText(
+    [...messages].reverse().find((m) => m?.role === "user")?.content,
+  );
+  const workspaceId = coerceText(body.workspaceId, 100) || undefined;
+  const workspaceSecret = coerceText(body.workspaceSecret, 200) || undefined;
+
+  // Writing into an existing workspace requires its capability token. (First
+  // turn has no workspaceId — anyone may create their own workspace.)
+  if (workspaceId && !verifyWorkspaceToken(workspaceId, workspaceSecret)) {
+    return Response.json({ error: "unauthorized" }, { status: 403 });
+  }
 
   // No credentials -> deterministic mock so the demo always works.
   const client = getAnthropic();
   if (!aiConfigured || !client) {
     return finalize(mockResult(lastUser), {
       mock: true,
-      workspaceId: body.workspaceId,
+      workspaceId,
       idea: lastUser,
     });
   }
 
   try {
-    const contextSuffix = body.companyContext
-      ? `\n\nCurrent company context:\n${body.companyContext}`
+    const companyContext = coerceText(body.companyContext, 4000);
+    const contextSuffix = companyContext
+      ? `\n\nCurrent company context:\n${companyContext}`
       : "";
 
     const apiMessages: Anthropic.MessageParam[] = messages
@@ -233,7 +222,9 @@ export async function POST(req: Request): Promise<Response> {
           (m?.role === "user" || m?.role === "assistant") &&
           typeof m?.content === "string",
       )
-      .map((m) => ({ role: m.role, content: m.content }));
+      // Bound conversation length + per-message size sent to the paid model.
+      .slice(-50)
+      .map((m) => ({ role: m.role, content: coerceText(m.content, 8000) }));
 
     if (apiMessages.length === 0) {
       apiMessages.push({ role: "user", content: lastUser || "Get started." });
@@ -241,7 +232,9 @@ export async function POST(req: Request): Promise<Response> {
 
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 1500,
+      // Generous cap: the model does extended thinking, which shares this budget
+      // with the output — too low truncates the trailing JSON block.
+      max_tokens: 5000,
       system: [
         {
           type: "text",
@@ -265,20 +258,20 @@ export async function POST(req: Request): Promise<Response> {
       const fallback = mockResult(lastUser);
       return finalize(
         { reply: text || fallback.reply, tasks: fallback.tasks },
-        { mock: true, workspaceId: body.workspaceId, idea: lastUser },
+        { mock: true, workspaceId, idea: lastUser },
       );
     }
 
     return finalize(parsed, {
       mock: false,
-      workspaceId: body.workspaceId,
+      workspaceId,
       idea: lastUser,
     });
   } catch {
     // Any API/network failure -> mock, never throw to the client.
     return finalize(mockResult(lastUser), {
       mock: true,
-      workspaceId: body.workspaceId,
+      workspaceId,
       idea: lastUser,
     });
   }

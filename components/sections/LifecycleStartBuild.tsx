@@ -311,7 +311,7 @@ function BuildMock() {
         >
           <BlinkDot color="var(--blue)" />
           <span className="font-body flex-1 text-[13px] text-[var(--text-30)]">
-            Create a new task for Cofounder
+            Create a new task for Helm
           </span>
           <span
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] surface-gradient-chip"
@@ -354,7 +354,7 @@ export default function LifecycleStartBuild() {
             <FeatureCopy
               eyebrow="START"
               heading="A full roadmap tailored to your company."
-              body="Cofounder lays out every milestone from idea to incorporation, then assigns each step to you or an agent — so nothing falls through the cracks as you stand up the business."
+              body="Helm lays out every milestone from idea to incorporation, then assigns each step to you or an agent — so nothing falls through the cracks as you stand up the business."
               linkLabel="Learn how to start"
               href="#start"
             />

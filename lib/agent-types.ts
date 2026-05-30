@@ -1,4 +1,4 @@
-// Shared types for the Cofounder superoptimizer agent backend.
+// Shared types for the Helm agent backend.
 
 export type TaskStatus = "todo" | "running" | "needs_action" | "done";
 
@@ -17,12 +17,21 @@ export interface ChatMessage {
 
 export type ArtifactKind = "landing_page" | "markdown" | "brand_spec" | "email";
 
+/** Client-safe reference to the skill an agent equipped to produce a deliverable. */
+export interface SkillRef {
+  name: string;
+  source: string;
+  url: string;
+  metric?: string;
+}
+
 export interface Artifact {
   id: string;
   taskId: string | null;
   kind: ArtifactKind;
   title: string;
   content: string;
+  skill?: SkillRef | null;
 }
 
 /**
@@ -73,4 +82,62 @@ export const DEFAULT_DEPARTMENT_COLOR = "var(--text-50)";
 
 export function departmentColor(department: string): string {
   return DEPARTMENT_META[department]?.color ?? DEFAULT_DEPARTMENT_COLOR;
+}
+
+/* ------------------------------------------------------------------ *
+ * Untrusted-input validation (shared by every API route).
+ * The API is public and unauthenticated, so request bodies are never
+ * trusted: values typed `string` here may arrive as numbers, objects,
+ * arrays, booleans, or null. These helpers guarantee a safe value so
+ * no handler ever calls `.trim()`/`.slice()` on a non-string.
+ * ------------------------------------------------------------------ */
+
+/** The eight departments Helm can staff. */
+export const DEPARTMENTS = [
+  "Engineering",
+  "Sales",
+  "Marketing",
+  "Design",
+  "Support",
+  "Operations",
+  "Finance",
+  "Legal",
+] as const;
+
+/** Valid task lifecycle states. */
+export const VALID_STATUSES: readonly TaskStatus[] = [
+  "todo",
+  "running",
+  "needs_action",
+  "done",
+];
+
+/**
+ * Coerce an untrusted value to a trimmed string, capped to `maxLen` chars.
+ * Non-strings become "" (rather than stringifying to "[object Object]"),
+ * which also bounds prompt size sent to the model / written to the DB.
+ */
+export function coerceText(value: unknown, maxLen = 8000): string {
+  if (typeof value !== "string") return "";
+  const t = value.trim();
+  return t.length > maxLen ? t.slice(0, maxLen) : t;
+}
+
+/** Coerce to a valid TaskStatus, defaulting to "todo". */
+export function coerceStatus(value: unknown): TaskStatus {
+  return VALID_STATUSES.includes(value as TaskStatus)
+    ? (value as TaskStatus)
+    : "todo";
+}
+
+/** Match a free-form value to a canonical department name, or null if unknown. */
+export function matchDepartment(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim().toLowerCase();
+  return DEPARTMENTS.find((d) => d.toLowerCase() === v) ?? null;
+}
+
+/** Coerce to a canonical department, defaulting to "Operations". */
+export function coerceDepartment(value: unknown): string {
+  return matchDepartment(value) ?? "Operations";
 }

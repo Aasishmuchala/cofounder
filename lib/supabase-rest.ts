@@ -1,7 +1,7 @@
 // Server-only Supabase access via PostgREST (no SDK dependency).
 // Used exclusively from API route handlers — never imported into client code.
 
-import type { Task, TaskStatus, Artifact, ArtifactKind } from "@/lib/agent-types";
+import type { Task, TaskStatus, Artifact, ArtifactKind, SkillRef } from "@/lib/agent-types";
 
 const URL = process.env.SUPABASE_URL;
 const KEY = process.env.SUPABASE_KEY;
@@ -97,6 +97,9 @@ interface DbArtifactRow {
   kind: ArtifactKind;
   title: string;
   content: string;
+  skill_name: string | null;
+  skill_source: string | null;
+  skill_url: string | null;
   created_at: string;
 }
 
@@ -107,13 +110,22 @@ function rowToArtifact(r: DbArtifactRow): Artifact {
     kind: r.kind,
     title: r.title,
     content: r.content,
+    skill: r.skill_name
+      ? { name: r.skill_name, source: r.skill_source ?? "", url: r.skill_url ?? "" }
+      : null,
   };
 }
 
 /** Persist a generated deliverable. */
 export async function insertArtifact(
   workspaceId: string,
-  artifact: { taskId: string | null; kind: ArtifactKind; title: string; content: string },
+  artifact: {
+    taskId: string | null;
+    kind: ArtifactKind;
+    title: string;
+    content: string;
+    skill?: SkillRef | null;
+  },
 ): Promise<Artifact | null> {
   const res = await rest("cofounder_artifacts", {
     method: "POST",
@@ -124,6 +136,9 @@ export async function insertArtifact(
       kind: artifact.kind,
       title: artifact.title.slice(0, 200),
       content: artifact.content,
+      skill_name: artifact.skill?.name?.slice(0, 200) ?? null,
+      skill_source: artifact.skill?.source?.slice(0, 200) ?? null,
+      skill_url: artifact.skill?.url?.slice(0, 400) ?? null,
     }),
   });
   if (!res.ok) throw new Error(`insertArtifact failed (${res.status})`);
@@ -142,6 +157,46 @@ export async function listArtifacts(workspaceId: string): Promise<Artifact[]> {
   return rows.map(rowToArtifact);
 }
 
+/** An agent-authored skill stored in a workspace's own skill library. */
+export interface StoredSkill {
+  name: string;
+  content: string;
+  source: string;
+}
+
+/** Most-recent authored skill for a workspace + deliverable kind, if any. */
+export async function findAuthoredSkill(
+  workspaceId: string,
+  kind: string,
+): Promise<StoredSkill | null> {
+  const res = await rest(
+    `cofounder_skills?workspace_id=eq.${encodeURIComponent(workspaceId)}&kind=eq.${encodeURIComponent(kind)}&order=created_at.desc&limit=1`,
+    { method: "GET", headers: headers() },
+  );
+  if (!res.ok) return null;
+  const rows = (await res.json()) as { name: string; content: string; source: string }[];
+  return rows[0] ?? null;
+}
+
+/** Persist a newly authored skill to the workspace's skill library. */
+export async function insertAuthoredSkill(
+  workspaceId: string,
+  skill: { department: string; kind: string; name: string; content: string; source?: string },
+): Promise<void> {
+  await rest("cofounder_skills", {
+    method: "POST",
+    headers: headers({ Prefer: "return=minimal" }),
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      department: skill.department.slice(0, 60),
+      kind: skill.kind,
+      name: skill.name.slice(0, 200),
+      content: skill.content.slice(0, 8000),
+      source: skill.source ?? "authored",
+    }),
+  });
+}
+
 /** A single artifact by id (used by the public preview route). */
 export async function getArtifact(id: string): Promise<Artifact | null> {
   const res = await rest(
@@ -153,16 +208,25 @@ export async function getArtifact(id: string): Promise<Artifact | null> {
   return rows[0] ? rowToArtifact(rows[0]) : null;
 }
 
-/** Patch a single task (e.g. status change). */
+/** Patch a single task (e.g. status change), optionally scoped to a workspace. */
 export async function patchTask(
   id: string,
   patch: Partial<Pick<Task, "status" | "title" | "detail" | "department">>,
+  workspaceId?: string,
 ): Promise<Task | null> {
-  const res = await rest(`cofounder_tasks?id=eq.${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: headers({ Prefer: "return=representation" }),
-    body: JSON.stringify(patch),
-  });
+  // Scoping by workspace_id means a task can only be modified within its own
+  // workspace — PostgREST updates 0 rows (returns null) on any mismatch.
+  const scope = workspaceId
+    ? `&workspace_id=eq.${encodeURIComponent(workspaceId)}`
+    : "";
+  const res = await rest(
+    `cofounder_tasks?id=eq.${encodeURIComponent(id)}${scope}`,
+    {
+      method: "PATCH",
+      headers: headers({ Prefer: "return=representation" }),
+      body: JSON.stringify(patch),
+    },
+  );
   if (!res.ok) throw new Error(`patchTask failed (${res.status})`);
   const rows = (await res.json()) as DbTaskRow[];
   return rows[0] ? rowToTask(rows[0]) : null;

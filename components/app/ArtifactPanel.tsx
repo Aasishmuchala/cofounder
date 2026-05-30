@@ -87,6 +87,28 @@ export default function ArtifactPanel({
             <div className="font-display text-[16px] font-medium text-[var(--text)]">
               {artifact.title}
             </div>
+            {artifact.skill &&
+              (() => {
+                const s = artifact.skill;
+                const { icon, verb } =
+                  s.source === "authored"
+                    ? { icon: "✍️", verb: "authored skill" }
+                    : s.source === "house"
+                      ? { icon: "🏛", verb: "house skill" }
+                      : { icon: "⚡", verb: "equipped" };
+                const label = `${icon} ${verb}: ${s.name}${s.metric ? ` · ${s.metric}` : ""}`;
+                const cls =
+                  "mt-1 inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--text-50)] hover:text-[var(--text)]";
+                return s.url ? (
+                  <a href={s.url} target="_blank" rel="noreferrer" title={`${s.name} (${s.source})`} className={cls}>
+                    {label}
+                  </a>
+                ) : (
+                  <span className={cls} title={s.name}>
+                    {label}
+                  </span>
+                );
+              })()}
           </div>
           <div className="flex items-center gap-2">
             {isHtml && (

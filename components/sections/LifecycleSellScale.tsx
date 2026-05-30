@@ -105,7 +105,7 @@ function SellMock() {
           </div>
           <EtchedDivider className="my-2" />
           <div className="font-display text-[13px] font-medium leading-snug text-[var(--text)]">
-            Thought you could use Cofounder for Acme
+            Thought you could use Helm for Acme
           </div>
           <p className="text-[12px] leading-[1.45] text-[var(--text-70)]">
             Hi Sarah — I noticed Acme is scaling fast and wanted to share how teams like
