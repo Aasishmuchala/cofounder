@@ -1,0 +1,245 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Cofounder.co replica — design tokens (captured from live CSS)
+   bg #f5f5f2 · fg #171717 · warm-black text #262323
+   ============================================================ */
+:root {
+  --background: #f5f5f2;
+  --foreground: #171717;
+
+  --surface-raised: #fbfbf8;
+  --surface-deep: #ffffff;
+
+  --border-soft: rgba(0, 0, 0, 0.08);
+  --border-line: #e3e3e0;
+
+  --text: #262323;
+  --text-80: #262323cc;
+  --text-70: #262323b3;
+  --text-50: #26232380;
+  --text-30: #2623234d;
+
+  --green: #34a853;
+  --green-tint: #eaf9e2;
+  --coral: #a76451;
+  --coral-tint: #fff0ed;
+  --blue: #1d70d9;
+  --amber: #f2b705;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface-raised);
+  --color-surface-deep: var(--surface-deep);
+  --color-text: var(--text);
+  --color-green: var(--green);
+  --color-coral: var(--coral);
+  --color-blue: var(--blue);
+  --color-amber: var(--amber);
+
+  --font-neoris: var(--font-neoris);
+  --font-inter: var(--font-inter);
+  --font-mono: var(--font-mono);
+
+  --breakpoint-container: 1440px;
+}
+
+* {
+  border-color: var(--border-soft);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ============================================================
+   Reusable surface / shadow utilities (sub-pixel = crisp edges)
+   ============================================================ */
+@layer utilities {
+  .font-display { font-family: var(--font-neoris), Arial, sans-serif; }
+  .font-body { font-family: var(--font-inter), Arial, sans-serif; }
+  .font-mono { font-family: var(--font-mono), monospace; }
+
+  .container-1440 { max-width: 1440px; margin-inline: auto; }
+
+  /* Generic raised card — the heart of the look */
+  .shadow-raised {
+    box-shadow:
+      0 0 0 0.829px #fff inset,
+      0 0 0 0.829px rgba(0, 0, 0, 0.08),
+      0 4px 12px rgba(0, 0, 0, 0.06);
+  }
+  /* Deep stacked card */
+  .shadow-deep {
+    box-shadow:
+      0 0 0 0.67px rgba(0, 0, 0, 0.08),
+      0 0 13.4px rgba(0, 0, 0, 0.02),
+      0 13.4px 13.4px rgba(0, 0, 0, 0.01),
+      0 4px 6px rgba(0, 0, 0, 0.02),
+      0 2px 5.4px rgba(0, 0, 0, 0.03),
+      inset 0 0 0 0.67px white;
+  }
+  /* Glossy small button */
+  .shadow-glossy {
+    box-shadow:
+      0 0.334px 0.669px rgba(255, 255, 255, 0.15) inset,
+      0 0.334px 0.4px rgba(0, 0, 0, 0.24),
+      0 0.669px 0.669px rgba(255, 255, 255, 0.1),
+      0 0 1.338px rgba(0, 0, 0, 0.2);
+  }
+
+  /* Primary light-surface pill button */
+  .btn-light-surface {
+    background: #f5f5f2;
+    border: 1px solid rgba(32, 32, 32, 0.1);
+    border-radius: 8px;
+    box-shadow:
+      0 2px 3px rgba(0, 0, 0, 0.06),
+      inset 0 0 0.357px 1.5px rgba(255, 255, 255, 0.35),
+      inset 0 2px 0 #fff;
+    transition: background-color 0.14s ease-out, box-shadow 0.14s ease-out;
+  }
+  .btn-light-surface:hover { background: #ededea; }
+
+  /* Etched 1px divider */
+  .divider-etched {
+    height: 1px;
+    background: #2623231a;
+    box-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.8);
+  }
+
+  /* Embossed / letterpress nav-link text */
+  .text-embossed {
+    color: #26232380;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3), 0 -1px 1px rgba(0, 0, 0, 0.12);
+    transition: color 0.15s ease, text-shadow 0.15s ease;
+  }
+  .text-embossed:hover { color: #262323; }
+
+  /* Gradient chip surface */
+  .surface-gradient-chip {
+    background: linear-gradient(to bottom, #ebebe8, #f5f5f2);
+    box-shadow:
+      inset 0 -0.5px 0 rgba(0, 0, 0, 0.12),
+      inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+      inset 0 1px 1px rgba(255, 255, 255, 0.24);
+  }
+
+  /* Glass pill (hero buttons only) */
+  .glass-pill {
+    backdrop-filter: blur(16px) saturate(1.1);
+    background: linear-gradient(rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.08) 100%);
+    box-shadow:
+      inset 0 -1px 0 rgba(0, 0, 0, 0.12),
+      inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+      inset 0 1px 1px rgba(255, 255, 255, 0.24);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+  .glass-pill:hover {
+    background: linear-gradient(rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.16));
+    box-shadow: inset 0 2px 1px rgba(255, 255, 255, 0.6);
+  }
+
+  .text-shadow-hero { text-shadow: 0 1px 1px rgba(0, 0, 0, 0.08); }
+
+  /* Hero gradient headline fill */
+  .hero-title-fill {
+    background: linear-gradient(180deg, #ffffff 0%, #dfe7ee 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.28));
+  }
+}
+
+/* ============================================================
+   Keyframe animations (pure CSS, mirrors live site)
+   ============================================================ */
+@keyframes hero-enter {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scroll-arrow {
+  0%, 100% { transform: translateY(0); opacity: 0.7; }
+  50% { transform: translateY(6px); opacity: 1; }
+}
+@keyframes badge-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.15; }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes float-btn-spring {
+  0% { transform: translateY(100px); opacity: 0; }
+  70% { transform: translateY(-20px); opacity: 1; }
+  100% { transform: translateY(0); }
+}
+@keyframes caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* ---- interactive canvas ---- */
+@keyframes edge-flow { to { stroke-dashoffset: -28; } }
+.edge-flow { animation: edge-flow 0.7s linear infinite; }
+
+@keyframes progress-sweep {
+  0% { width: 8%; }
+  80% { width: 92%; }
+  100% { width: 96%; }
+}
+.progress-fill { animation: progress-sweep 4s cubic-bezier(0.23, 1, 0.32, 1) forwards; }
+
+@keyframes manager-pulse {
+  0% { transform: scale(1); opacity: 0.5; }
+  70% { transform: scale(1.18); opacity: 0; }
+  100% { opacity: 0; }
+}
+.manager-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  border: 1.5px solid var(--green);
+  animation: manager-pulse 2.4s ease-out infinite;
+  pointer-events: none;
+}
+.manager-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent);
+}
+.hud-btn {
+  width: 36px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: var(--text-70);
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.hud-btn:hover { background: #f0f0ed; }
+
+.anim-hero-enter { animation: hero-enter 0.6s cubic-bezier(0.23, 1, 0.32, 1) both; }
+.anim-scroll-arrow { animation: scroll-arrow 1.6s ease-in-out infinite; }
+.anim-badge-blink { animation: badge-blink 1.4s ease-in-out infinite; }
+.anim-caret { animation: caret-blink 1s step-end infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+}
