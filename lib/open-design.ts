@@ -211,6 +211,8 @@ export async function fetchOpenDesign(sel: OpenDesignSelection): Promise<OpenDes
   } catch {
     ctx = null;
   }
+  // Bound the cache (keys are a finite template×system set, but cap defensively).
+  if (cache.size > 100) cache.clear();
   cache.set(key, { ctx, exp: Date.now() + (ctx ? TTL_HIT : TTL_MISS) });
   return ctx;
 }

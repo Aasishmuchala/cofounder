@@ -76,11 +76,14 @@ export async function authorizeWrite(
     return false;
   }
   if (!stored) return true;
-  if (typeof providedKey !== "string" || providedKey.length !== stored.length) {
-    return false;
-  }
+  if (typeof providedKey !== "string") return false;
+  // Compare BYTE lengths (not string .length) before timingSafeEqual — it throws
+  // on unequal-length buffers, and char count != byte count for non-ASCII input.
+  const a = Buffer.from(providedKey);
+  const b = Buffer.from(stored);
+  if (a.byteLength !== b.byteLength) return false;
   try {
-    return timingSafeEqual(Buffer.from(providedKey), Buffer.from(stored));
+    return timingSafeEqual(a, b);
   } catch {
     return false;
   }

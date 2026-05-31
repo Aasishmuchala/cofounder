@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Task, TaskStatus } from "@/lib/agent-types";
+import type { TaskStatus } from "@/lib/agent-types";
 import { departmentColor } from "@/lib/agent-types";
 import type { UseCofounder } from "@/lib/use-cofounder";
 import ArtifactPanel from "@/components/app/ArtifactPanel";
@@ -322,7 +322,6 @@ export default function Canvas({
             const p = positions[t.id];
             if (!p) return null;
             const c = departmentColor(t.department);
-            const sm = statusMeta(t.status);
             return (
               <div
                 key={t.id}
