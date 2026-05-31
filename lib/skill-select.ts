@@ -24,9 +24,15 @@ function words(s: string): string[] {
 }
 
 /**
- * Rank catalog skills for a task. Considers skills in the task's department plus
- * the cross-cutting "General" pool. Returns the chosen (top) skill + the ranked
- * shortlist with per-candidate scores and reasons.
+ * Pick the best skill OVERALL for a task — ranking the ENTIRE catalog (every
+ * repo-imported skill AND every preloaded one, across all departments) so we
+ * always land on the genuine best match, not the best within one silo.
+ *
+ * Department is a strong ranking SIGNAL, not a hard filter: same-department
+ * skills get a meaningful edge (+6) and cross-cutting "General" skills a small
+ * one (+2), but a skill from another department or source can still win if it
+ * fits the task markedly better. Scoring is transparent so the Skills tab can
+ * show exactly why the winner beat everything else.
  */
 export function compareSkills(req: {
   department: string;
@@ -39,9 +45,8 @@ export function compareSkills(req: {
 
   const taskWords = words(`${req.title} ${req.detail ?? ""}`);
   const kindWords = (req.kind ?? "").split(/[_\s]+/).filter((w) => w.length > 2);
-  const pool = catalog.filter((s) => s.department === req.department || s.department === "General");
 
-  const scored: ScoredSkill[] = pool
+  const scored: ScoredSkill[] = catalog
     .map((s) => {
       const name = s.name.toLowerCase();
       const hay = `${name} ${s.description.toLowerCase()}`;
@@ -50,11 +55,19 @@ export function compareSkills(req: {
 
       let hits = 0;
       for (const w of taskWords) {
+        // stem tolerates morphology (animate/animation/animated, design/designer)
+        const stem = w.length >= 6 ? w.slice(0, 5) : w;
         if (name.includes(w)) {
-          score += 10; // a name hit is the strongest signal
+          score += 10; // an exact name hit is the strongest signal
+          hits++;
+        } else if (stem !== w && name.includes(stem)) {
+          score += 7;
           hits++;
         } else if (hay.includes(w)) {
           score += 5;
+          hits++;
+        } else if (stem !== w && hay.includes(stem)) {
+          score += 3;
           hits++;
         }
       }
@@ -63,6 +76,9 @@ export function compareSkills(req: {
       if (s.department === req.department) {
         score += 6;
         reasons.push("department fit");
+      } else if (s.department === "General") {
+        score += 2;
+        reasons.push("cross-cutting");
       }
       for (const kw of kindWords) {
         if (hay.includes(kw)) {
@@ -70,13 +86,21 @@ export function compareSkills(req: {
           reasons.push(`${kw} skill`);
         }
       }
-      if (s.source && s.source !== "community" && s.source !== "unknown") {
-        score += 1; // slight nudge for curated/official sources
+      if (s.source?.startsWith("github:")) {
+        score += 1; // trending-repo provenance
+        reasons.push("from GitHub repo");
+      } else if (s.source && s.source !== "community" && s.source !== "unknown") {
+        score += 1; // curated/official source
       }
       return { ...s, score, reasons: [...new Set(reasons)] };
     })
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 
-  return { chosen: scored[0] ?? null, candidates: scored.slice(0, 8) };
+  const chosen = scored[0] ?? null;
+  // Make a cross-department winner explicit in the rationale.
+  if (chosen && chosen.department !== req.department && chosen.department !== "General") {
+    chosen.reasons = [...new Set([...chosen.reasons, `best overall — from ${chosen.department}`])];
+  }
+  return { chosen, candidates: scored.slice(0, 8) };
 }

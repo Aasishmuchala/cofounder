@@ -58,8 +58,8 @@ export default function SkillsTab({ cf }: { cf: UseCofounder }) {
         {overview && <span className="font-mono text-[10px] text-[var(--text-50)]">{overview.total} preloaded</span>}
       </div>
       <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--text-50)]">
-        Every agent equips the best-matching skill for its task. Skills are segregated by department; for each task the
-        candidates are compared and the top one is chosen.
+        Every agent equips the single best-matching skill for its task — compared across the entire catalog (trending
+        GitHub repos + preloaded), not siloed by department. Skills stay grouped by department for browsing.
       </p>
 
       {/* Per-task comparison */}
@@ -88,7 +88,10 @@ export default function SkillsTab({ cf }: { cf: UseCofounder }) {
                   <div className="flex items-center gap-1.5">
                     <span className="rounded-[6px] bg-[var(--green-tint)] px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-[0.06em] text-[#2c7a3f]">★ chosen</span>
                     <span className="font-mono text-[13px] text-[var(--text)]">{cmp.chosen.name}</span>
-                    <span className="ml-auto font-mono text-[10px] text-[var(--text-50)]">score {cmp.chosen.score}</span>
+                    <span className="truncate rounded-[5px] bg-[var(--surface-raised)] px-1.5 py-0.5 font-mono text-[8px] text-[var(--text-50)] shadow-raised" title={cmp.chosen.source}>
+                      {cmp.chosen.source.startsWith("github:") ? cmp.chosen.source.slice(7) : cmp.chosen.source}
+                    </span>
+                    <span className="ml-auto shrink-0 font-mono text-[10px] text-[var(--text-50)]">score {cmp.chosen.score}</span>
                   </div>
                   <p className="mt-1 text-[12px] leading-snug text-[var(--text-50)]">{cmp.chosen.description}</p>
                   <div className="mt-1 flex flex-wrap gap-1">
@@ -124,7 +127,7 @@ export default function SkillsTab({ cf }: { cf: UseCofounder }) {
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Search 1,300+ skills…"
+        placeholder="Search 1,500+ skills…"
         className="mt-2 w-full rounded-[10px] bg-white px-3 py-2 font-display text-[13px] text-[var(--text)] shadow-raised outline-none placeholder:text-[var(--text-50)]"
       />
       {!q.trim() && (
