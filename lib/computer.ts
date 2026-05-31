@@ -27,7 +27,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ExecFileException } from "node:child_process";
 
-import { sanitizeToolOutput } from "@/lib/connectors";
+import { sanitizeToolOutput, isAllowedEndpoint } from "@/lib/connectors";
 
 // node:os and node:path above are PURE (string/host math, no filesystem reads),
 // so they're safe as static imports and let computerRoot()/resolvePath() stay
@@ -402,6 +402,20 @@ async function editFileExec(input: Record<string, unknown>): Promise<string> {
 
 /* ──────────────────────────── shell executor ──────────────────────────── */
 
+/** A SCRUBBED environment for run_shell: a benign allowlist only, so the spawned
+ *  command never sees the server's secrets (ANTHROPIC_*, SUPABASE_*, APP_SECRET,
+ *  …). Without this the child inherits process.env, and an approved `printenv` /
+ *  `echo $ANTHROPIC_API_KEY` would exfiltrate credentials. */
+function shellEnv(): NodeJS.ProcessEnv {
+  const allow = ["PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP", "USER", "LOGNAME", "SHELL", "TERM", "TZ", "PWD", "NODE_ENV"];
+  const out: Record<string, string | undefined> = {};
+  for (const k of allow) {
+    const v = process.env[k];
+    if (typeof v === "string") out[k] = v;
+  }
+  return out as NodeJS.ProcessEnv;
+}
+
 async function runShellExec(input: Record<string, unknown>): Promise<string> {
   const command = str(input, "command");
   if (command.length === 0) return errorOut("run_shell requires a non-empty command string.");
@@ -421,6 +435,8 @@ async function runShellExec(input: Record<string, unknown>): Promise<string> {
       timeout: SHELL_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER,
       encoding: "utf-8",
+      // Scrubbed env — the child never sees the server's secrets.
+      env: shellEnv(),
     });
     // Command OUTPUT is UNTRUSTED — sanitize before returning to the model.
     return sanitizeToolOutput(stdout + (stderr ? `\n[stderr]\n${stderr}` : ""));
@@ -633,6 +649,12 @@ function browserUnavailable(): string {
 async function browseExec(input: Record<string, unknown>): Promise<string> {
   const url = str(input, "url").trim();
   if (!/^https?:\/\//i.test(url)) return errorOut("browse requires an http(s) URL.");
+  // browse/screenshot are SAFE (auto-run, no approval) — apply the SAME SSRF guard
+  // as the http-mcp connector: no loopback / RFC-1918 / link-local / cloud metadata.
+  // Set MCP_ALLOW_PRIVATE=1 to allow local browsing in dev.
+  if (!isAllowedEndpoint(url)) {
+    return blocked("PROHIBITED: SSRF policy blocks this destination (loopback / private / cloud-metadata). Set MCP_ALLOW_PRIVATE=1 to allow in dev.");
+  }
   const page = await getPage();
   if (!page) return browserUnavailable();
   try {

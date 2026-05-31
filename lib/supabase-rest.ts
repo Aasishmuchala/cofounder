@@ -115,11 +115,18 @@ export function encodeDetail(detail: string, meta: DetailMeta): string {
  * is returned untouched, so normal text like "cf: see config" is preserved.
  */
 export function stripDetailEnvelope(detail: string): string {
-  if (typeof detail !== "string" || !detail.startsWith(DETAIL_PREFIX)) return detail;
-  const { meta, detail: bare } = decodeDetail(detail);
-  // A real envelope decoded to at least one orchestration field -> drop it,
-  // returning only the bare remainder the user actually typed after the pipe.
-  return Object.keys(meta).length > 0 ? bare : detail;
+  if (typeof detail !== "string") return detail;
+  // Strip to a FIXED POINT (bounded loop) — a nested `cf:{...}|cf:{...}|text`
+  // must not smuggle a privileged envelope (executor/deps/objectiveId) past a
+  // single decode pass. Each iteration peels one real envelope; a plain detail
+  // that merely starts with "cf:" but isn't an envelope is returned untouched.
+  let cur = detail;
+  for (let i = 0; i < 8 && cur.startsWith(DETAIL_PREFIX); i++) {
+    const { meta, detail: bare } = decodeDetail(cur);
+    if (Object.keys(meta).length === 0) break;
+    cur = bare;
+  }
+  return cur;
 }
 
 function rowToTask(r: DbTaskRow): Task {
@@ -212,6 +219,28 @@ export async function getWorkspaceEditKey(id: string): Promise<string | null> {
   if (!res.ok) throw new Error(`getWorkspaceEditKey failed (${res.status})`);
   const rows = (await res.json()) as { edit_key: string | null }[];
   return rows[0]?.edit_key ?? null;
+}
+
+/* ──────────────────────────── per-workspace mutex ──────────────────────────── *
+ * updateWorkspaceMeta is a read-modify-write on the meta jsonb (PostgREST can't
+ * merge server-side), so two concurrent writers to the SAME workspace lost-update
+ * (drop objectives, corrupt the spend ledger, double-record, resurrect approvals).
+ * withWorkspaceLock serializes a multi-step RMW span (approval execute+record,
+ * queued-approval append, plan materialize) per workspace WITHIN this process.
+ * Single-process scope — a multi-instance deploy would also want DB-level
+ * optimistic concurrency, but a self-hosted single server is the common case.
+ * --------------------------------------------------------------------- */
+const _wsLocks = new Map<string, Promise<unknown>>();
+export function withWorkspaceLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const prev = _wsLocks.get(id) ?? Promise.resolve();
+  const run = prev.then(fn, fn); // run after the prior op regardless of its outcome
+  const tail = run.then(() => undefined, () => undefined);
+  _wsLocks.set(id, tail);
+  // Drop the entry once settled (if still the tail) so the map can't grow unbounded.
+  void tail.then(() => {
+    if (_wsLocks.get(id) === tail) _wsLocks.delete(id);
+  });
+  return run;
 }
 
 /**

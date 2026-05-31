@@ -1,7 +1,7 @@
 import { coerceText, redactArgs, coerceDepartment, SPEND_MAX_RECORDS } from "@/lib/agent-types";
 import type { PendingApproval, AuditEntry, SpendRecord } from "@/lib/agent-types";
 import { authorizeWrite } from "@/lib/auth";
-import { dbConfigured, getWorkspace, updateWorkspaceMeta, patchTask } from "@/lib/supabase-rest";
+import { dbConfigured, getWorkspace, updateWorkspaceMeta, patchTask, withWorkspaceLock } from "@/lib/supabase-rest";
 import { getConnectorRegistry, classifyTool, isContentProhibited, dispatchConnectorTool } from "@/lib/connectors";
 
 /** Build a governance SpendRecord from an approved propose_spend (NO payment).
@@ -83,6 +83,11 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ ok: true, persisted: false });
   }
 
+  return withWorkspaceLock(workspaceId, async (): Promise<Response> => {
+  // Serialize the read -> execute -> write span per workspace: concurrent approves
+  // run one-at-a-time, so an approval can't double-execute / double-record a spend,
+  // and the meta read-modify-write can't lost-update. A 2nd concurrent approve for
+  // the same id re-reads here, finds it gone, and returns 404 (no-op) below.
   const ws = await getWorkspace(workspaceId).catch(() => null);
   if (!ws) {
     return Response.json({ ok: false, error: "not found" }, { status: 404 });
@@ -165,4 +170,5 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   return Response.json({ ok: true, persisted: true, ...(result !== undefined ? { result } : {}) });
+  });
 }

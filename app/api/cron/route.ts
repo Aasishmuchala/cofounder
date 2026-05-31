@@ -29,7 +29,15 @@ const MAX_PER_TICK = 3;
  */
 async function handle(req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET || "";
-  if (secret) {
+  const isProd = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL);
+  // Fail CLOSED on a real deployment: an unset CRON_SECRET in production DISABLES
+  // the drain endpoint (no unauthenticated AI-cost amplification). In dev it stays
+  // open for convenience.
+  if (!secret) {
+    if (isProd) {
+      return Response.json({ ok: false, error: "cron disabled: set CRON_SECRET" }, { status: 401 });
+    }
+  } else {
     const auth = req.headers.get("authorization") || "";
     if (auth !== `Bearer ${secret}`) {
       return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });

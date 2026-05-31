@@ -10,6 +10,7 @@ import {
   listArtifacts,
   getWorkspace,
   updateWorkspaceMeta,
+  withWorkspaceLock,
 } from "@/lib/supabase-rest";
 import {
   getConnectorRegistry,
@@ -673,7 +674,6 @@ export async function produceDeliverable(
       // return WITHOUT inserting an artifact. The human approves the concrete
       // { tool, args } in the Inbox; the system executes it deterministically.
       if (gen.queuedApprovals.length > 0 && dbConfigured && workspaceId) {
-        const existing = (await getWorkspace(workspaceId).then((w) => w?.meta?.pendingApprovals ?? []).catch(() => [])) as PendingApproval[];
         const fresh: PendingApproval[] = gen.queuedApprovals.map((q) => ({
           id: `ap_${Math.random().toString(36).slice(2, 12)}`,
           taskId: task.id,
@@ -682,8 +682,13 @@ export async function produceDeliverable(
           args: q.args,
           ts: Date.now(),
         }));
-        await updateWorkspaceMeta(workspaceId, {
-          pendingApprovals: [...existing, ...fresh].slice(-50),
+        // Serialize the read-modify-write per workspace so a concurrent producer
+        // can't lost-update meta.pendingApprovals (drop another task's queued action).
+        await withWorkspaceLock(workspaceId, async () => {
+          const existing = (await getWorkspace(workspaceId).then((w) => w?.meta?.pendingApprovals ?? []).catch(() => [])) as PendingApproval[];
+          await updateWorkspaceMeta(workspaceId, {
+            pendingApprovals: [...existing, ...fresh].slice(-50),
+          });
         }).catch(() => {});
         await patchTask(task.id, { status: "needs_action" }, workspaceId).catch(() => {});
         return {

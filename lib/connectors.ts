@@ -516,9 +516,13 @@ export function classifyTool(
   toolName: string,
   registry: ConnectorDef[],
 ): "safe" | "sensitive" | "prohibited" | null {
+  // A prohibited-looking NAME is blocked even for an UNREGISTERED tool — so the
+  // approval gate can never replay e.g. transfer_money just because no connector
+  // currently declares it. Checked BEFORE the registry lookup (defense-in-depth).
+  if (PROHIBITED_NAME.test(toolName)) return "prohibited";
   const hit = findTool(toolName, registry);
   if (!hit) return null;
-  if (hit.tool.risk === "prohibited" || PROHIBITED_NAME.test(toolName)) return "prohibited";
+  if (hit.tool.risk === "prohibited") return "prohibited";
   return hit.tool.risk;
 }
 
@@ -626,8 +630,21 @@ export function isAllowedEndpoint(raw: string): boolean {
   if (u.protocol !== "http:" && u.protocol !== "https:") return false;
   if (process.env.MCP_ALLOW_PRIVATE === "1") return true;
   const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (h === "localhost" || h.endsWith(".localhost") || h === "::1" || h === "0.0.0.0") return false;
-  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (h === "localhost" || h.endsWith(".localhost") || h === "::1" || h === "::" || h === "0.0.0.0") return false;
+  // Normalize IPv4-mapped / -compatible IPv6 (::ffff:1.2.3.4, the Node-normalized
+  // ::ffff:hhhh:hhhh hex form, and ::1.2.3.4) to the embedded IPv4 so the v4 rules
+  // below can't be bypassed by wrapping a private/metadata address in IPv6.
+  let v4src = h;
+  const mappedDotted = h.match(/^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedDotted) {
+    v4src = mappedDotted[1];
+  } else if (mappedHex) {
+    const n1 = parseInt(mappedHex[1], 16);
+    const n2 = parseInt(mappedHex[2], 16);
+    v4src = `${(n1 >> 8) & 255}.${n1 & 255}.${(n2 >> 8) & 255}.${n2 & 255}`;
+  }
+  const v4 = v4src.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (v4) {
     const a = Number(v4[1]);
     const b = Number(v4[2]);

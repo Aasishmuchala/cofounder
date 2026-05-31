@@ -92,7 +92,7 @@ describe("connector meta sanitizer", () => {
     expect(first.args.api_key).toBe("[redacted]");
     expect(first.args.password).toBe("[redacted]");
     expect(first.args.body).toBe("hi");
-    expect((first as Record<string, unknown>).bogusField).toBeUndefined();
+    expect((first as unknown as Record<string, unknown>).bogusField).toBeUndefined();
   });
 
   it("caps auditLog at 200 (keeps newest), validates action enum", () => {

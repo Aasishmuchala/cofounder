@@ -242,15 +242,17 @@ async function captureDiff(repoRoot: string, dir: string): Promise<string> {
     }).catch(() => ({ stdout: "", stderr: "" }));
     const { stdout } = await execFileP(
       "git",
-      // --no-pager + neutralized external-diff/pager (mirrors computer.ts gitExec)
-      // so a repo-level config can't turn `git diff` into a command execution.
-      ["-C", dir, "--no-pager", "-c", "diff.external=", "-c", "core.pager=cat", "diff", "--cached", "--no-color"],
+      // --no-ext-diff is the CORRECT way to disable external-diff drivers (so a
+      // repo-level diff.external config can't exec a command). The previous
+      // `-c diff.external=` set an EMPTY external-diff driver, which made git emit
+      // an EMPTY diff — silently defeating the "human reviews the diff" guarantee.
+      ["-C", dir, "--no-pager", "diff", "--cached", "--no-color", "--no-ext-diff"],
       {
         cwd: dir,
         timeout: GIT_TIMEOUT_MS,
         maxBuffer: MAX_BUFFER,
         encoding: "utf-8",
-        env: { ...process.env, GIT_EXTERNAL_DIFF: "", GIT_PAGER: "cat" },
+        env: { ...process.env, GIT_PAGER: "cat" },
       },
     );
     return stdout;
