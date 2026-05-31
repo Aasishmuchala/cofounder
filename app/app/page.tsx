@@ -65,6 +65,23 @@ export default function AppPage() {
     setPicked("Home");
   }
 
+  // Publish: the company's landing-page deliverable is served at a public,
+  // chrome-free URL (/p/<id>) — copy the link and open it.
+  const site = cf.artifacts.find((a) => a.kind === "landing_page" && a.id);
+  const [published, setPublished] = React.useState(false);
+  function handlePublish() {
+    if (!site || typeof window === "undefined") return;
+    const url = `${window.location.origin}/p/${site.id}`;
+    try {
+      navigator.clipboard?.writeText(url)?.catch(() => {});
+    } catch {
+      /* clipboard unavailable (non-secure context) — still open the page */
+    }
+    window.open(url, "_blank", "noopener");
+    setPublished(true);
+    setTimeout(() => setPublished(false), 2500);
+  }
+
   // Live agent simulation: "todo" agents auto-start after a stagger, "running"
   // agents do real work (generate + persist a deliverable, then flip to done).
   // "needs_action" agents wait for approval (handled in the Tasks tab).
@@ -109,7 +126,19 @@ export default function AppPage() {
             setPicked("Company");
           }}
         />
-        <div className="absolute right-5 top-4 z-30">
+        <div className="absolute right-5 top-4 z-30 flex items-center gap-2">
+          <button
+            onClick={handlePublish}
+            disabled={!site}
+            title={site ? "Publish the landing page to a shareable link" : "No landing page to publish yet"}
+            className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)] disabled:opacity-45"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+              <path d="M12 16V4M7 9l5-5 5 5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M5 20h14" strokeLinecap="round" />
+            </svg>
+            {published ? "Link copied ✓" : "Publish"}
+          </button>
           <Link
             href="/pricing"
             className="inline-flex items-center gap-1.5 rounded-[10px] bg-[var(--text)] px-3 py-1.5 font-display text-[13px] text-white shadow-deep transition-opacity hover:opacity-90"
