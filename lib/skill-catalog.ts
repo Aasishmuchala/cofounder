@@ -5,6 +5,11 @@
 //
 // Graceful: if the dirs don't exist (e.g. a deploy without the library), the
 // catalog is empty and callers fall back to open-design + live discovery.
+//
+// To grow the catalog from trending GitHub skill repos, run the one-shot
+// importer: `npm run skills:import` (see scripts/import-skills.mjs). It writes
+// new SKILL.md files into ~/.claude/skills/<slug>/ with `source: github:...`,
+// deduped + injection-scanned, which this loader then picks up automatically.
 
 import fs from "node:fs";
 import os from "node:os";
