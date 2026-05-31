@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getArtifact } from "@/lib/supabase-rest";
+import { buildReactHarness } from "@/lib/react-preview";
 
 export const runtime = "nodejs";
 
@@ -49,9 +50,9 @@ export default async function PreviewPage({
         {artifact.kind === "landing_page" ? (
           <iframe
             title={artifact.title}
-            srcDoc={artifact.content}
+            srcDoc={buildReactHarness(artifact.content, artifact.title)}
             className="h-full w-full border-0 bg-white"
-            sandbox="allow-same-origin"
+            sandbox="allow-scripts"
           />
         ) : (
           <pre className="h-full overflow-auto whitespace-pre-wrap px-6 py-5 font-mono text-[13px] leading-relaxed text-[var(--text-70)]">

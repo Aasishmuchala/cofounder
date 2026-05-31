@@ -57,7 +57,7 @@ export const DEPARTMENT_DELIVERABLE: Record<
   string,
   { kind: ArtifactKind; noun: string }
 > = {
-  Engineering: { kind: "landing_page", noun: "landing page" },
+  Engineering: { kind: "landing_page", noun: "Next.js landing page" },
   Design: { kind: "brand_spec", noun: "brand spec" },
   Marketing: { kind: "markdown", noun: "launch announcement" },
   Sales: { kind: "email", noun: "outbound email" },

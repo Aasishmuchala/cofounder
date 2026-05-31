@@ -14,6 +14,7 @@ import { getAnthropic, MODEL } from "@/lib/anthropic";
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
 import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
 import { houseSkill, synthesizeSkill } from "@/lib/skill-foundry";
+import { generateImageUrl } from "@/lib/images";
 import { runChecks, judgeDeliverable, heuristicScore, QUALITY_BAR } from "@/lib/verify";
 
 export interface RunnerTask {
@@ -69,20 +70,29 @@ Task: "${task.title}" (department: ${task.department}). ${task.detail ?? ""}`.tr
   if (kind === "landing_page") {
     return `${ctx}
 
-You are a world-class frontend designer. BUILD a complete HTML5 marketing landing page for this company (one document; inline <style>; you MAY <link> Google Fonts; absolutely NO <script>).
+You are a world-class product designer + senior Next.js/React engineer. BUILD a complete, single-file Next.js page component for this company's marketing landing page.
 
-First COMMIT to a bold aesthetic direction derived from THIS idea — pick and fully execute one extreme that genuinely fits the product (editorial, brutalist, retro/analog, luxury/refined, organic, playful, art-deco, industrial, soft/pastel…). Avoid generic AI slop at all costs; make it UNFORGETTABLE.
+OUTPUT CONTRACT (the live preview compiles this directly — follow EXACTLY):
+- Output ONLY the component code. No markdown fences, no prose, no commentary.
+- First line: "use client"; — then a default export named EXACTLY Page: export default function Page() { ... }
+- ONE self-contained file. You MAY define small helper components/consts above Page. NO external UI/animation libraries (no framer-motion, no shadcn) — React + Tailwind only.
+- KEEP IT COMPLETE: use SIMPLE inline SVG icons (a few short stroke paths each, viewBox 0 0 24 24) — NEVER paste long brand-logo path data. Finish every tag, string, and brace. A complete, focused page beats an enormous truncated one.
+- Style EVERYTHING with Tailwind CSS utility classes (Tailwind is available). Behavior uses ONLY React hooks (useState/useEffect/useRef — already in scope).
 
-Non-negotiables:
-- DISTINCTIVE typography via Google Fonts (<link> to fonts.googleapis.com). NEVER system fonts, Inter, Roboto, or Arial. Pair a characterful display face with a refined body face; fluid clamp() scale.
-- A cohesive CSS-variable palette: a dominant color + sharp accents. NOT a timid even palette, and NEVER the cliché purple-gradient-on-white.
-- An atmospheric background with depth (gradient mesh, grain/noise, geometric pattern, layered shadows) — not a flat fill.
-- An orchestrated page load: staggered CSS reveal animations (animation-delay) + hover micro-interactions that surprise. Wrap motion in @media (prefers-reduced-motion: reduce).
-- Real, specific, benefit-led copy for THIS idea (no lorem, no "revolutionary/cutting-edge").
-- Rich structure: sticky nav, a striking hero with a memorable signature element, social proof, a 3+ feature section with inline-SVG icons, a stats or how-it-works band, a testimonial, a strong CTA band, and a real footer.
-- Responsive (clamp + CSS grid, 360→1440px), AA contrast, semantic HTML.
+ANIMATIONS (required — make it feel alive, this is a key goal):
+- Include a local <style> tag (rendered inside the component) with @keyframes — e.g. an aurora/gradient drift, float, shimmer, and fade-up — and apply them via inline style or Tailwind arbitrary values.
+- Staggered entrance reveals on load (per-element animation-delay).
+- Scroll-triggered reveals: a useEffect with IntersectionObserver that toggles a reveal class on sections as they enter the viewport.
+- Hover micro-interactions (transition + hover:/group-hover:) on buttons and cards; an atmospheric ANIMATED background (moving gradient mesh / aurora / grain), not a flat fill.
+- Disable motion under @media (prefers-reduced-motion: reduce).
 
-Make it look like a funded startup's real site — distinctive, not a template. Output ONLY raw HTML starting with <!DOCTYPE html> — no markdown fences, no commentary.`;
+IMAGERY (required — generate real images):
+- Call the generate_image tool to create the visuals this page needs (at minimum a hero image; optionally a feature/section image). Give it a vivid, art-directed prompt matching the brand, and embed the returned URL in <img className="... object-cover" /> with width/height.
+- If the tool is unavailable, embed images of the form: https://image.pollinations.ai/prompt/<URL-ENCODED vivid description>?width=1280&height=720&nologo=true&model=flux
+
+STRUCTURE: sticky translucent nav; a striking hero (headline derived from the idea, subhead, primary + secondary CTA, the generated hero image); a 3+ feature section with inline-SVG icons; a stats or how-it-works band; social proof / testimonial; a strong CTA band; a real footer. Real, specific, benefit-led copy for THIS idea — no lorem, no "revolutionary/cutting-edge". Commit to a bold, on-brand aesthetic (not generic AI slop).
+
+Responsive (mobile→desktop with Tailwind), AA contrast, semantic elements. Make it look like a funded startup's real site. Output ONLY the component code, starting with: "use client";`;
   }
   if (kind === "brand_spec") {
     return `${ctx}
@@ -254,6 +264,26 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
       required: ["kind"],
     },
   },
+  {
+    name: "generate_image",
+    description:
+      "Generate a real image for the design (hero, section background, OG card, etc.) and get back a ready-to-embed image URL. Call it for the visuals your deliverable needs — pass a vivid, art-directed prompt (subject, style, mood, palette, lighting).",
+    input_schema: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description: "Vivid, specific art-direction for the image.",
+        },
+        aspect_ratio: {
+          type: "string",
+          enum: ["16:9", "1:1", "4:3", "3:2", "9:16", "4:5"],
+          description: "Aspect ratio (default 16:9).",
+        },
+      },
+      required: ["prompt"],
+    },
+  },
 ];
 
 /** Execute one agent tool call against the workspace's data. Returns a string
@@ -294,6 +324,11 @@ export async function runAgentTool(
       if (!hit) return `No ${kind || "matching"} deliverable exists yet.`;
       return hit.content.slice(0, 4000);
     }
+    if (name === "generate_image") {
+      const prompt = typeof input.prompt === "string" ? input.prompt : "";
+      const aspect = typeof input.aspect_ratio === "string" ? input.aspect_ratio : "16:9";
+      return await generateImageUrl(prompt, aspect);
+    }
   } catch {
     return "Tool error.";
   }
@@ -307,10 +342,11 @@ async function runHop(
   messages: Anthropic.MessageParam[],
   useTools: boolean,
   hooks?: StreamHooks,
+  maxTokens = 8000,
 ): Promise<Anthropic.Message> {
   const params = {
     model: MODEL,
-    max_tokens: 8000,
+    max_tokens: maxTokens,
     messages,
     ...(useTools ? { tools: AGENT_TOOLS } : {}),
   };
@@ -335,13 +371,17 @@ export async function generateWithTools(
   workspaceId: string | undefined,
   idea: string,
   hooks?: StreamHooks,
+  allowTools = true,
+  maxTokens = 8000,
 ): Promise<string> {
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: basePrompt }];
-  if (!dbConfigured || !workspaceId) {
-    return cleanText(await runHop(client, messages, false, hooks));
+  // No tools -> a single (optionally streamed) generation. Used for large
+  // deliverables (landing pages) where extra round-trips blow the time budget.
+  if (!allowTools || !dbConfigured || !workspaceId) {
+    return cleanText(await runHop(client, messages, false, hooks, maxTokens));
   }
   for (let hop = 0; hop < 4; hop++) {
-    const resp = await runHop(client, messages, true, hooks);
+    const resp = await runHop(client, messages, true, hooks, maxTokens);
     if (resp.stop_reason !== "tool_use") return cleanText(resp);
     hooks?.onTool?.(
       resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use").map((b) => b.name),
@@ -370,6 +410,7 @@ export async function generateWithTools(
     ],
     false,
     hooks,
+    maxTokens,
   );
   return cleanText(final);
 }
@@ -389,17 +430,37 @@ export async function produceDeliverable(
   const { kind, noun } = deliverableFor(task.department);
 
   const house = houseSkill(kind);
-  // Discover a generic craft skill + read the company's brand vibe in parallel.
-  const [discovered, vibeId] = await Promise.all([
+  // Discover a generic craft skill + read the company's meta (brand + plan) in parallel.
+  const [discovered, meta] = await Promise.all([
     discoverSkill({ department: task.department, title: task.title, idea, kind }),
     dbConfigured && workspaceId
       ? getWorkspace(workspaceId)
-          .then((w) => w?.meta?.vibeId ?? null)
+          .then((w) => w?.meta ?? null)
           .catch(() => null)
       : Promise.resolve(null),
   ]);
+  const vibeId = meta?.vibeId ?? null;
   const authored =
     dbConfigured && workspaceId ? await findAuthoredSkill(workspaceId, kind).catch(() => null) : null;
+
+  // A compact company brief injected straight into the prompt — so agents rarely
+  // need a get_company_brief round-trip (faster, esp. for landing pages).
+  const plan = meta?.plan ?? null;
+  const brief = plan
+    ? `\n\nCompany brief — product: ${(plan.context?.product ?? idea ?? "").slice(0, 160)}; ICP: ${plan.context?.icp ?? "—"}; model: ${plan.context?.model ?? "—"}; brand vibe: ${vibeId ?? "modern"}.`
+    : vibeId
+      ? `\n\nBrand vibe: ${vibeId}.`
+      : "";
+
+  // Landing pages skip the tool loop for speed; pre-generate a hero image so the
+  // page still ships real generated imagery without a generate_image round-trip.
+  const heroUrl =
+    kind === "landing_page"
+      ? await generateImageUrl(
+          `cinematic hero image for ${idea || "a startup"}; ${vibeId ?? "modern"} brand aesthetic; high detail, professional, no text`,
+          "16:9",
+        ).catch(() => "")
+      : "";
 
   // Ground the deliverable in open-design: the SKILL chosen for this request +
   // the DESIGN.md system chosen for the brand vibe. Becomes the headline skill.
@@ -423,10 +484,12 @@ export async function produceDeliverable(
 
   const basePrompt =
     genPrompt(kind, noun, task, idea) +
+    brief +
     `\n\nApply this house standard — your team's craft bar:\n${house.content}` +
     (authored ? `\n\nYour company's own authored skill — apply it:\n${authored.content}` : "") +
     // Prefer open-design grounding; fall back to the generically-discovered skill.
-    (openDesign ? openDesign.content : discovered ? buildSkillBlock(discovered) : "");
+    (openDesign ? openDesign.content : discovered ? buildSkillBlock(discovered) : "") +
+    (heroUrl ? `\n\nPRE-GENERATED HERO IMAGE — embed this EXACT url in the hero <img src>: ${heroUrl}` : "");
 
   let title = "";
   let content = "";
@@ -435,7 +498,19 @@ export async function produceDeliverable(
   const client = getAnthropic();
   if (client) {
     try {
-      content = await generateWithTools(client, basePrompt, workspaceId, idea, hooks);
+      // Landing pages: single fast generation (no tool round-trips). Others: the
+      // full tool-use loop for cross-deliverable context.
+      content = await generateWithTools(
+        client,
+        basePrompt,
+        workspaceId,
+        idea,
+        hooks,
+        kind !== "landing_page",
+        // A full React page (JSX + inline SVG + Tailwind) needs more headroom
+        // than text deliverables, or it truncates mid-component and won't compile.
+        kind === "landing_page" ? 16000 : 8000,
+      );
       title = `${(idea || "Company").slice(0, 50)} — ${noun}`;
       mock = content.length === 0;
 
@@ -472,13 +547,20 @@ export async function produceDeliverable(
     mock = true;
   }
 
+  // Strip control/NUL chars (keep tab/newline/return) — Postgres `text`
+  // rejects them, else insertArtifact throws and the deliverable fails to persist.
+  content = content.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+
   // ---- Verification / quality loop ----
   hooks?.onPhase?.("reviewing");
   let evaluation: DeliverableEval;
   if (!mock && client) {
     let judged = await judgeDeliverable(client, { kind, idea, task: task.title, content });
     let iterations = 1;
-    if (judged && judged.score < QUALITY_BAR) {
+    // Regenerating a full React page (after tool-use + image gen) is too slow to
+    // fit serverless limits, so landing pages are judged once with no auto-retry.
+    // Cheaper text deliverables still get the regenerate-once-below-bar pass.
+    if (judged && judged.score < QUALITY_BAR && kind !== "landing_page") {
       try {
         const retryPrompt = `${basePrompt}\n\nA strict reviewer scored your previous attempt ${judged.score}/10. The most important things to FIX: ${judged.notes}\nProduce a clearly better version that fully addresses this feedback. Use the exact same output format as before.`;
         const resp2 = await client.messages.create({

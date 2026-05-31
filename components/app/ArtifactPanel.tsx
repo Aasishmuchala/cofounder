@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import type { Artifact } from "@/lib/agent-types";
+import { buildReactHarness } from "@/lib/react-preview";
 
 const KIND_LABEL: Record<string, string> = {
-  landing_page: "Landing page · HTML",
+  landing_page: "Landing page · Next.js",
   brand_spec: "Brand spec",
   markdown: "Document",
   email: "Email",
@@ -74,7 +75,7 @@ export default function ArtifactPanel({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const isHtml = artifact.kind === "landing_page";
+  const isSite = artifact.kind === "landing_page";
 
   return (
     <div className="absolute inset-0 z-40 flex justify-end">
@@ -117,7 +118,7 @@ export default function ArtifactPanel({
               })()}
           </div>
           <div className="flex items-center gap-2">
-            {isHtml && (
+            {isSite && (
               <a
                 href={`/app/preview/${artifact.id}`}
                 target="_blank"
@@ -191,12 +192,12 @@ export default function ArtifactPanel({
         )}
 
         <div className="min-h-0 flex-1 overflow-auto">
-          {isHtml ? (
+          {isSite ? (
             <iframe
               title={artifact.title}
-              srcDoc={artifact.content}
+              srcDoc={buildReactHarness(artifact.content, artifact.title)}
               className="h-full w-full border-0 bg-white"
-              sandbox="allow-same-origin"
+              sandbox="allow-scripts"
             />
           ) : (
             <div className="px-5 py-4">{renderMarkdown(artifact.content)}</div>

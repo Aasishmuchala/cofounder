@@ -1,4 +1,5 @@
 import { getArtifact } from "@/lib/supabase-rest";
+import { buildIsolatedReactPage } from "@/lib/react-preview";
 
 export const runtime = "nodejs";
 
@@ -28,8 +29,9 @@ export async function GET(
   }
 
   if (artifact.kind === "landing_page") {
-    // The deliverable IS a full HTML document — serve it verbatim.
-    return new Response(artifact.content, { headers: HTML });
+    // The deliverable is a React/Next page component — render it live inside a
+    // sandboxed, null-origin iframe (its JS can't touch this origin).
+    return new Response(buildIsolatedReactPage(artifact.content, artifact.title), { headers: HTML });
   }
 
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>

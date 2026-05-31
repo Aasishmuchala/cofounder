@@ -26,6 +26,26 @@ spacing, layout, and component tokens). Cofounder mirrors that exactly.
   (e.g. `open-design: saas-landing · glassmorphism`). open-design is the headline
   design source; the generic live-discovered skill is the fallback.
 
+## Output format & imagery
+
+- **Landing pages are React / Next.js, not HTML.** The Engineering deliverable is
+  a single self-contained `"use client"` page component (`export default function Page`)
+  styled with Tailwind. It's rendered live — no build step — by an in-browser
+  harness (`lib/react-preview.ts`: React + ReactDOM + Tailwind + Babel-standalone
+  from CDN) inside a `sandbox="allow-scripts"` (null-origin) iframe, used by the
+  in-app preview and the public `/p/<id>` page.
+- **Animations are required.** Components ship CSS `@keyframes` (aurora/float/
+  shimmer/fade-up), staggered entrance reveals, scroll-triggered reveals via an
+  `IntersectionObserver` effect, and hover micro-interactions — all gated behind
+  `prefers-reduced-motion`. No animation library dependency (portable to any
+  Next.js app).
+- **Real generated imagery.** Agents call the `generate_image` tool
+  (`lib/images.ts`) for heroes / section art and embed the returned URLs.
+  Default provider is **keyless** (Pollinations — instant text-to-image URLs);
+  set `HIGGSFIELD_API_KEY` to route through **Higgsfield** instead (it falls back
+  to keyless on any error). Note: the Claude-session Higgsfield MCP can't be
+  reached from the server, so the app uses its own key — see `.env.example`.
+
 ## Selection map
 
 **Request → SKILL** (first keyword match wins; otherwise the default)

@@ -30,10 +30,19 @@ export function runChecks(kind: ArtifactKind, content: string): { name: string; 
   const noNoise = !/\[object Object\]|lorem ipsum|undefined<|TODO:/i.test(content);
   if (kind === "landing_page") {
     return [
-      { name: "Valid HTML document", pass: /<!doctype html>/i.test(content) && /<\/html>/i.test(content) },
-      { name: "Has hero & headings", pass: /<body[\s>]/i.test(content) && /<h1[\s>]/i.test(content) },
-      { name: "Distinctive typography (web fonts)", pass: /fonts\.googleapis\.com|@font-face/i.test(content) },
-      { name: "No injected <script>", pass: !/<script[\s>]/i.test(content) },
+      {
+        name: "React/Next page component",
+        pass: /export\s+default\s+(function\s+Page|Page\b)/.test(content) && /return\s*\(/.test(content),
+      },
+      { name: "Tailwind styling", pass: /className=/.test(content) },
+      {
+        name: "Animations present",
+        pass: /@keyframes|IntersectionObserver|animation|animate-|transition/i.test(content),
+      },
+      {
+        name: "Generated imagery",
+        pass: /<img[\s>]|image\.pollinations\.ai|https?:\/\/\S+\.(png|jpe?g|webp|avif)/i.test(content),
+      },
       { name: "Substantial build (>1.5KB)", pass: len > 1500 },
       { name: "No template noise", pass: noNoise },
     ];
