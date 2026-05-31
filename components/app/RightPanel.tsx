@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { departmentColor, DEPARTMENTS } from "@/lib/agent-types";
 import type { Task } from "@/lib/agent-types";
 import type { UseCofounder } from "@/lib/use-cofounder";
@@ -11,12 +11,14 @@ import {
   DEFAULT_SUGGESTED_NEXT,
   FOUNDER_FIRST_NAME,
   LIBRARY_COVERS,
+  greeting,
 } from "@/lib/cofounder-data";
 import type { UseOnboarding } from "@/lib/use-onboarding";
 import { OnboardingFlow, BusinessPlanCard } from "@/components/app/Onboarding";
 import { IdentityFlow, BrandKitCard } from "@/components/app/Identity";
 import { vibeById } from "@/lib/vibes";
 import DepartmentView from "@/components/app/DepartmentView";
+import type { CustomAgent } from "@/lib/use-custom-agents";
 
 type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Library";
 const TABS: TabKey[] = ["Home", "Cofounder", "Company", "Tasks", "Library"];
@@ -33,6 +35,7 @@ export default function RightPanel({
   selectedDept,
   onSelectDepartment,
   onClearDept,
+  customAgents,
 }: {
   cf: UseCofounder;
   brand: string;
@@ -45,6 +48,7 @@ export default function RightPanel({
   selectedDept: string | null;
   onSelectDepartment: (d: string) => void;
   onClearDept: () => void;
+  customAgents: CustomAgent[];
 }) {
   const { messages, tasks, loading } = cf;
   const [draft, setDraft] = useState("");
@@ -94,7 +98,7 @@ export default function RightPanel({
           <DepartmentView department={selectedDept} cf={cf} brand={brand} onBack={onClearDept} />
         ) : (
           <>
-            {tab === "Home" && <HomeTab cf={cf} brand={brand} plan={onb.plan} vibeId={onb.vibeId} />}
+            {tab === "Home" && <HomeTab cf={cf} brand={brand} plan={onb.plan} vibeId={onb.vibeId} onSelectDepartment={onSelectDepartment} />}
             {tab === "Cofounder" && (
               <CofounderTab
                 cf={cf}
@@ -105,7 +109,7 @@ export default function RightPanel({
                 hasCompany={hasCompany}
               />
             )}
-            {tab === "Company" && <CompanyTab brand={brand} />}
+            {tab === "Company" && <CompanyTab brand={brand} customAgents={customAgents} />}
             {tab === "Tasks" && <TasksTab cf={cf} onSelectDepartment={onSelectDepartment} />}
             {tab === "Library" && <LibraryTab cf={cf} vibeId={onb.vibeId} brand={brand} />}
           </>
@@ -165,14 +169,22 @@ function HomeTab({
   brand,
   plan,
   vibeId,
+  onSelectDepartment,
 }: {
   cf: UseCofounder;
   brand: string;
   plan: import("@/lib/onboarding").BusinessPlan | null;
   vibeId: string | null;
+  onSelectDepartment: (d: string) => void;
 }) {
   const { tasks } = cf;
   const [showPlan, setShowPlan] = useState(false);
+  // Time-aware greeting (client-only; deferred to avoid hydration mismatch + setState-in-effect).
+  const [greet, setGreet] = useState("Good morning");
+  useEffect(() => {
+    const t = setTimeout(() => setGreet(greeting(new Date().getHours())), 0);
+    return () => clearTimeout(t);
+  }, []);
   const vibe = vibeById(vibeId);
   const done = tasks.filter((t) => t.status === "done");
   const active = tasks.filter((t) => t.status !== "done");
@@ -187,19 +199,17 @@ function HomeTab({
   return (
     <div>
       <h1 className="font-display text-[26px] font-normal leading-tight text-[var(--text)]">
-        Good morning, {FOUNDER_FIRST_NAME}
+        {greet}, {FOUNDER_FIRST_NAME}
       </h1>
 
       {/* Roadmap banner */}
-      <div
-        className="relative mt-4 h-[120px] overflow-hidden rounded-[14px] shadow-raised"
-        style={{ background: "linear-gradient(120deg,#bfe0ff 0%,#dfeffd 42%,#fbeede 100%)" }}
-      >
-        <div className="absolute right-6 top-5 h-12 w-12 rounded-full bg-white/55 blur-[2px]" />
-        <div className="absolute left-8 top-8 h-8 w-20 rounded-full bg-white/45 blur-[3px]" />
+      <div className="relative mt-4 h-[120px] overflow-hidden rounded-[14px] shadow-raised">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/home-banner.jpg" alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-white/55 to-transparent" />
         <div className="absolute inset-x-0 bottom-0 flex items-end justify-between p-4">
-          <span className="font-display text-[16px] text-[var(--text)]">{brand} Roadmap</span>
-          <span className="font-mono text-[12px] text-[var(--text-70)]">{pct}% ›</span>
+          <span className="font-display text-[16px] text-[var(--text)] [text-shadow:0_1px_2px_rgba(255,255,255,0.5)]">{brand} Roadmap</span>
+          <span className="font-mono text-[12px] text-[var(--text-70)] [text-shadow:0_1px_2px_rgba(255,255,255,0.5)]">{pct}% ›</span>
         </div>
         <div className="absolute bottom-0 left-0 h-[3px] bg-[var(--text)]/40" style={{ width: `${Math.max(pct, 3)}%` }} />
       </div>
@@ -254,7 +264,14 @@ function HomeTab({
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: departmentColor(t.department) }} />
               )}
               <span className="flex-1 truncate font-display text-[14px] text-[var(--text-80)]">{t.title}</span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--text-50)]">{t.department}</span>
+              <button
+                onClick={() => onSelectDepartment(t.department)}
+                className="flex shrink-0 items-center gap-0.5 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--blue)] transition-opacity hover:opacity-70"
+                title={`Open ${t.department}`}
+              >
+                View
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
             </div>
           ))}
         </div>
@@ -378,7 +395,7 @@ function CofounderTab({
 }
 
 /* ──────────────────────── Company ──────────────────────── */
-function CompanyTab({ brand }: { brand: string }) {
+function CompanyTab({ brand, customAgents }: { brand: string; customAgents: CustomAgent[] }) {
   const slug = brand.toLowerCase();
   const links = [
     { label: "Staging", value: `staging.${slug}.cofounder.company` },
@@ -412,6 +429,18 @@ function CompanyTab({ brand }: { brand: string }) {
         <h3 className="font-display text-[16px] text-[var(--text)]">Agents</h3>
       </div>
       <div className="mt-3 space-y-3">
+        {customAgents.map((a, i) => (
+          <div key={`c-${i}-${a.name}`} className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-mono text-[12px] text-[var(--text-80)]">{a.name}</div>
+              <div className="truncate text-[12px] leading-snug text-[var(--text-50)]">{a.blurb}</div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="rounded-[6px] bg-[var(--surface-raised)] px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--text-70)] shadow-raised">Edit</span>
+              <span className="rounded-[6px] bg-[var(--green-tint)] px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.06em] text-[#2c7a3f]">{a.department} · Active</span>
+            </div>
+          </div>
+        ))}
         {AGENTS.map((a) => (
           <div key={a.name} className="flex items-start justify-between gap-3">
             <div className="min-w-0">

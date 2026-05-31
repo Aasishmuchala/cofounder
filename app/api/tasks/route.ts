@@ -1,8 +1,44 @@
-import { listTasks, patchTask, dbConfigured } from "@/lib/supabase-rest";
-import { coerceText, VALID_STATUSES, matchDepartment } from "@/lib/agent-types";
+import { listTasks, patchTask, insertTasks, dbConfigured } from "@/lib/supabase-rest";
+import {
+  coerceText,
+  coerceStatus,
+  coerceDepartment,
+  VALID_STATUSES,
+  matchDepartment,
+} from "@/lib/agent-types";
 import { verifyWorkspaceToken } from "@/lib/auth";
 
 export const runtime = "nodejs";
+
+// POST /api/tasks  { workspaceId, workspaceSecret, title, department, detail?, status? }
+//   -> create a single task agent (used by the canvas "+ New Task").
+export async function POST(req: Request) {
+  try {
+    const raw = await req.json();
+    const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const workspaceId = coerceText(body.workspaceId, 100) || undefined;
+    const workspaceSecret = coerceText(body.workspaceSecret, 200) || undefined;
+    if (!verifyWorkspaceToken(workspaceId, workspaceSecret)) {
+      return Response.json({ ok: false, error: "unauthorized" }, { status: 403 });
+    }
+    const title = coerceText(body.title, 200);
+    if (!title) return Response.json({ ok: false, error: "missing title" }, { status: 400 });
+    const row = {
+      title,
+      department: coerceDepartment(body.department),
+      status: coerceStatus(body.status), // defaults to "todo"
+      detail: coerceText(body.detail, 1000),
+    };
+    if (dbConfigured && workspaceId) {
+      const [task] = await insertTasks(workspaceId, [row]);
+      return Response.json({ ok: true, task, persisted: true });
+    }
+    const task = { id: `t_${Math.random().toString(36).slice(2, 10)}`, ...row };
+    return Response.json({ ok: true, task, persisted: false });
+  } catch {
+    return Response.json({ ok: false, persisted: false });
+  }
+}
 
 // GET /api/tasks?workspace=<id>  -> hydrate a workspace's task agents
 export async function GET(req: Request) {

@@ -5,7 +5,7 @@ export const NAV_LINKS = [
   { label: "Build", href: "#build" },
   { label: "Sell", href: "#sell" },
   { label: "Scale", href: "#scale" },
-  { label: "Resources", href: "#resources" },
+  { label: "Resources", href: "#tools" },
   { label: "Pricing", href: "/pricing" },
 ];
 

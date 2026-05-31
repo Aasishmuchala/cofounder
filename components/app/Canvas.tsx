@@ -12,6 +12,7 @@ import { departmentColor } from "@/lib/agent-types";
 import type { UseCofounder } from "@/lib/use-cofounder";
 import ArtifactPanel from "@/components/app/ArtifactPanel";
 import InboxPanel from "@/components/app/InboxPanel";
+import CreateMenu from "@/components/app/CreateMenu";
 
 /* ---------- geometry ---------- */
 const NODE_W = 224;
@@ -53,10 +54,16 @@ export default function Canvas({
   cf,
   brand,
   onSelectDepartment,
+  addAgent = () => {},
+  onCreatedTask,
+  onCreatedAgent,
 }: {
   cf: UseCofounder;
   brand?: string;
   onSelectDepartment?: (dept: string) => void;
+  addAgent?: (name: string, department: string, blurb: string) => void;
+  onCreatedTask?: () => void;
+  onCreatedAgent?: () => void;
 }) {
   const {
     tasks,
@@ -480,6 +487,14 @@ export default function Canvas({
 
       {/* Inbox / agent activity (bottom-left) — folds in the approval queue */}
       <InboxPanel cf={cf} onSelectDepartment={onSelectDepartment} />
+
+      {/* Create menu (+ bottom-center): New Agent / New Task */}
+      <CreateMenu
+        addTask={cf.addTask}
+        addAgent={addAgent}
+        onCreatedTask={onCreatedTask}
+        onCreatedAgent={onCreatedAgent}
+      />
 
       {/* deliverables counter */}
       {artifacts.length > 0 && (

@@ -29,6 +29,7 @@ export interface UseCofounder {
   reset: () => void;
   updateTask: (id: string, patch: Partial<Task>) => void;
   executeTask: (task: Task) => Promise<void>;
+  addTask: (title: string, department: string, detail?: string) => Promise<void>;
 }
 
 /**
@@ -271,6 +272,43 @@ export function useCofounder(): UseCofounder {
     pumpRef.current();
   }, []);
 
+  /** Create a single task agent (canvas "+ New Task"). Persists when possible. */
+  const addTask = useCallback(
+    async (title: string, department: string, detail = "") => {
+      const t = title.trim();
+      if (!t) return;
+      let task: Task = {
+        id: `t_${Math.random().toString(36).slice(2, 10)}`,
+        title: t,
+        department,
+        status: "todo",
+        detail,
+      };
+      if (persisted && workspaceId) {
+        try {
+          const res = await fetch("/api/tasks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              workspaceId,
+              workspaceSecret: secretRef.current ?? undefined,
+              title: t,
+              department,
+              detail,
+              status: "todo",
+            }),
+          });
+          const data = (await res.json()) as { ok: boolean; task?: Task };
+          if (data.ok && data.task) task = data.task;
+        } catch {
+          /* fall back to the local task */
+        }
+      }
+      setTasks((prev) => mergeTasks(prev, [task]));
+    },
+    [persisted, workspaceId],
+  );
+
   const updateTask = useCallback(
     (id: string, patch: Partial<Task>) => {
       // optimistic local update
@@ -307,5 +345,6 @@ export function useCofounder(): UseCofounder {
     reset,
     updateTask,
     executeTask,
+    addTask,
   };
 }

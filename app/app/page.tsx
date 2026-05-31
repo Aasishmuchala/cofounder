@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useCofounder } from "@/lib/use-cofounder";
 import { useOnboarding } from "@/lib/use-onboarding";
+import { useCustomAgents } from "@/lib/use-custom-agents";
 import Canvas from "@/components/app/Canvas";
 import RightPanel from "@/components/app/RightPanel";
 import { brandName } from "@/lib/cofounder-data";
@@ -13,14 +14,24 @@ type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Library";
 export default function AppPage() {
   const cf = useCofounder();
   const onb = useOnboarding();
+  const { customAgents, addAgent } = useCustomAgents();
+
+  // Client-mounted flag: the localStorage fallback below must NOT run during SSR
+  // or the first client render, or the brand text diverges (server "Untitled" vs
+  // client brand) and React regenerates the tree — which also wiped custom agents.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => {
+    const id = setTimeout(() => setMounted(true), 0);
+    return () => clearTimeout(id);
+  }, []);
 
   const idea = React.useMemo(() => {
     if (onb.idea) return onb.idea;
     const firstUser = cf.messages.find((m) => m.role === "user");
     if (firstUser?.content) return firstUser.content;
-    if (typeof window !== "undefined") return window.localStorage.getItem("cf_idea") ?? "";
+    if (mounted && typeof window !== "undefined") return window.localStorage.getItem("cf_idea") ?? "";
     return "";
-  }, [cf.messages, onb.idea]);
+  }, [cf.messages, onb.idea, mounted]);
   const brand = brandName(idea || null);
   const hasCompany = cf.messages.length > 0 || cf.tasks.length > 0;
 
@@ -84,7 +95,20 @@ export default function AppPage() {
     <div className="flex h-screen w-full overflow-hidden bg-[var(--background)] text-[var(--text)]">
       {/* Left — radial department canvas */}
       <div className="relative hidden min-w-0 flex-1 md:block">
-        <Canvas cf={cf} brand={brand} onSelectDepartment={setSelectedDept} />
+        <Canvas
+          cf={cf}
+          brand={brand}
+          onSelectDepartment={setSelectedDept}
+          addAgent={addAgent}
+          onCreatedTask={() => {
+            setSelectedDept(null);
+            setPicked("Tasks");
+          }}
+          onCreatedAgent={() => {
+            setSelectedDept(null);
+            setPicked("Company");
+          }}
+        />
         <div className="absolute right-5 top-4 z-30">
           <Link
             href="/pricing"
@@ -112,6 +136,7 @@ export default function AppPage() {
           selectedDept={selectedDept}
           onSelectDepartment={setSelectedDept}
           onClearDept={() => setSelectedDept(null)}
+          customAgents={customAgents}
         />
       </aside>
     </div>

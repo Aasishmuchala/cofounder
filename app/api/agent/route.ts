@@ -93,6 +93,29 @@ function parseAgentJson(text: string): AgentResult | null {
   }
 }
 
+const APPROVAL_RE =
+  /incorporat|contract|\bbank\b|payment|\blegal\b|complianc|budget|fundrais|invoice|\bterms\b|privacy|trademark|licen[sc]e/i;
+
+/**
+ * Keep a human in the loop: if the model marked nothing as "needs_action",
+ * gate the most approval-worthy task (Legal/Finance dept or a risky keyword)
+ * so the Approve/Decline flow reliably surfaces. Leaves plans with no risky
+ * task untouched.
+ */
+function ensureApproval(tasks: Omit<Task, "id">[]): Omit<Task, "id">[] {
+  if (tasks.length === 0 || tasks.some((t) => t.status === "needs_action")) return tasks;
+  const idx = tasks.findIndex(
+    (t) =>
+      t.department === "Legal" ||
+      t.department === "Finance" ||
+      APPROVAL_RE.test(t.title) ||
+      APPROVAL_RE.test(t.detail),
+  );
+  return idx >= 0
+    ? tasks.map((t, i) => (i === idx ? { ...t, status: "needs_action" } : t))
+    : tasks;
+}
+
 /** Deterministic fallback so the UI always works without an API key. */
 function mockResult(lastUserMessage: string): AgentResult {
   const goal = coerceText(lastUserMessage) || "your new company";
@@ -262,11 +285,10 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
-    return finalize(parsed, {
-      mock: false,
-      workspaceId,
-      idea: lastUser,
-    });
+    return finalize(
+      { reply: parsed.reply, tasks: ensureApproval(parsed.tasks) },
+      { mock: false, workspaceId, idea: lastUser },
+    );
   } catch {
     // Any API/network failure -> mock, never throw to the client.
     return finalize(mockResult(lastUser), {
