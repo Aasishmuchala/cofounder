@@ -7,6 +7,8 @@ import {
   patchTask,
   findAuthoredSkill,
   insertAuthoredSkill,
+  listArtifacts,
+  getWorkspace,
 } from "@/lib/supabase-rest";
 import { getAnthropic, MODEL } from "@/lib/anthropic";
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
@@ -204,6 +206,142 @@ This is a generated starting point you can act on immediately.`,
   };
 }
 
+/* ─────────────────────────── agent tools ───────────────────────────── *
+ * Department agents call these (server-side, against the DB) so a deliverable
+ * is grounded in the real company: its plan, brand, and the work other agents
+ * have already shipped. This is what makes outputs consistent instead of each
+ * agent inventing its own facts.
+ * --------------------------------------------------------------------- */
+export const AGENT_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "get_company_brief",
+    description:
+      "Get this company's core brief — the founding idea, the business plan (product, ICP, model, values, GTM), and the chosen brand identity. Call this FIRST to ground your deliverable in the real company.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "list_deliverables",
+    description:
+      "List the deliverables other department agents have already produced for this company (type + title). Use it to stay consistent with existing work and avoid contradicting it.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "read_deliverable",
+    description:
+      "Read the full text of a prior deliverable by type, so you can reference its details, voice, and decisions and build on them.",
+    input_schema: {
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          enum: ["landing_page", "brand_spec", "markdown", "email"],
+          description: "Which deliverable type to read.",
+        },
+      },
+      required: ["kind"],
+    },
+  },
+];
+
+/** Execute one agent tool call against the workspace's data. Returns a string
+ *  (the tool_result content). Bounded in size to keep the context lean. */
+export async function runAgentTool(
+  name: string,
+  input: Record<string, unknown>,
+  workspaceId: string,
+  idea: string,
+): Promise<string> {
+  try {
+    if (name === "get_company_brief") {
+      const ws = await getWorkspace(workspaceId).catch(() => null);
+      const plan = ws?.meta?.plan ?? null;
+      return JSON.stringify({
+        idea: idea || ws?.idea || "",
+        brandVibe: ws?.meta?.vibeId ?? null,
+        plan: plan
+          ? {
+              product: plan.context?.product,
+              icp: plan.context?.icp,
+              model: plan.context?.model,
+              values: plan.values?.slice(0, 4),
+              gtm: plan.gtm?.map((g) => `${g.label}: ${g.text}`),
+            }
+          : null,
+      }).slice(0, 1800);
+    }
+    if (name === "list_deliverables") {
+      const arts = await listArtifacts(workspaceId).catch(() => []);
+      if (!arts.length) return "No deliverables have been produced yet.";
+      return JSON.stringify(arts.map((a) => ({ kind: a.kind, title: a.title }))).slice(0, 1500);
+    }
+    if (name === "read_deliverable") {
+      const kind = typeof input.kind === "string" ? input.kind : "";
+      const arts = await listArtifacts(workspaceId).catch(() => []);
+      const hit = arts.find((a) => a.kind === kind);
+      if (!hit) return `No ${kind || "matching"} deliverable exists yet.`;
+      return hit.content.slice(0, 4000);
+    }
+  } catch {
+    return "Tool error.";
+  }
+  return "Unknown tool.";
+}
+
+/**
+ * Generate the deliverable text. When the workspace is DB-backed, the agent is
+ * given context tools (above) and may call them before producing its final
+ * answer — a tool_use loop. Without a workspace it's a single straight call.
+ */
+export async function generateWithTools(
+  client: Anthropic,
+  basePrompt: string,
+  workspaceId: string | undefined,
+  idea: string,
+): Promise<string> {
+  if (!dbConfigured || !workspaceId) {
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      messages: [{ role: "user", content: basePrompt }],
+    });
+    return cleanText(resp);
+  }
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: basePrompt }];
+  for (let hop = 0; hop < 4; hop++) {
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      tools: AGENT_TOOLS,
+      messages,
+    });
+    if (resp.stop_reason !== "tool_use") return cleanText(resp);
+    messages.push({ role: "assistant", content: resp.content });
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const block of resp.content) {
+      if (block.type === "tool_use") {
+        const out = await runAgentTool(
+          block.name,
+          (block.input ?? {}) as Record<string, unknown>,
+          workspaceId,
+          idea,
+        );
+        results.push({ type: "tool_result", tool_use_id: block.id, content: out });
+      }
+    }
+    messages.push({ role: "user", content: results });
+  }
+  // Still calling tools after the hop budget — force a final, tool-free answer.
+  const final = await client.messages.create({
+    model: MODEL,
+    max_tokens: 8000,
+    messages: [
+      ...messages,
+      { role: "user", content: "Output the final deliverable now, in the required format. Do not call any more tools." },
+    ],
+  });
+  return cleanText(final);
+}
+
 /**
  * Produce one deliverable for a task: resolve skills → generate (or mock) →
  * verify (checks + LLM judge, regenerate once below the bar) → persist the
@@ -241,12 +379,7 @@ export async function produceDeliverable(
   const client = getAnthropic();
   if (client) {
     try {
-      const resp = await client.messages.create({
-        model: MODEL,
-        max_tokens: 8000,
-        messages: [{ role: "user", content: basePrompt }],
-      });
-      content = cleanText(resp);
+      content = await generateWithTools(client, basePrompt, workspaceId, idea);
       title = `${(idea || "Company").slice(0, 50)} — ${noun}`;
       mock = content.length === 0;
 
