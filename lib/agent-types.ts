@@ -1,5 +1,9 @@
 // Shared types for the Helm agent backend.
 
+// Type-only import (erased at runtime, so no import cycle with onboarding.ts,
+// which imports coerceText from here).
+import type { BusinessPlan } from "@/lib/onboarding";
+
 export type TaskStatus = "todo" | "running" | "needs_action" | "done";
 
 export interface Task {
@@ -151,4 +155,67 @@ export function matchDepartment(value: unknown): string | null {
 /** Coerce to a canonical department, defaulting to "Operations". */
 export function coerceDepartment(value: unknown): string {
   return matchDepartment(value) ?? "Operations";
+}
+
+/* ------------------------------------------------------------------ *
+ * Workspace meta — durable per-company state that used to live only in
+ * the browser's localStorage (brand identity, business plan, and the
+ * custom agents the founder created). Persisting it on the workspace row
+ * makes it survive a cache clear, scopes it to the right company, and
+ * lets the server be the source of truth.
+ * ------------------------------------------------------------------ */
+
+/** A founder-created custom agent (canvas "+ New Agent"). */
+export interface CustomAgentSpec {
+  name: string;
+  blurb: string;
+  department: string;
+}
+
+/** The JSON blob stored in cofounder_workspaces.meta. All fields optional. */
+export interface WorkspaceMeta {
+  /** Chosen visual-identity vibe id (drives the brand kit). */
+  vibeId?: string | null;
+  /** Founder approved the brand kit. */
+  brandReady?: boolean;
+  /** The accepted business plan (shown on Home). */
+  plan?: BusinessPlan | null;
+  /** Founder-created custom agents. */
+  customAgents?: CustomAgentSpec[];
+}
+
+/**
+ * Bound an untrusted meta payload before persisting it. The workspace API is
+ * unauthenticated (capability-token at most), so never trust shape or size:
+ * cap string lengths, the agent count, and the serialized plan.
+ */
+export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
+  const m = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const out: WorkspaceMeta = {};
+
+  if (typeof m.vibeId === "string") out.vibeId = m.vibeId.slice(0, 40);
+  else if (m.vibeId === null) out.vibeId = null;
+
+  if (typeof m.brandReady === "boolean") out.brandReady = m.brandReady;
+
+  if (Array.isArray(m.customAgents)) {
+    out.customAgents = (m.customAgents as unknown[]).slice(0, 50).map((a) => {
+      const o = (a && typeof a === "object" ? a : {}) as Record<string, unknown>;
+      return {
+        name: coerceText(o.name, 80) || "Agent",
+        department: coerceDepartment(o.department),
+        blurb: coerceText(o.blurb, 300),
+      };
+    });
+  }
+
+  if (m.plan && typeof m.plan === "object") {
+    try {
+      if (JSON.stringify(m.plan).length <= 8000) out.plan = m.plan as BusinessPlan;
+    } catch {
+      /* circular / non-serializable -> drop */
+    }
+  }
+
+  return out;
 }

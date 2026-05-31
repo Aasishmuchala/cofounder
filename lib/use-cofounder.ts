@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Task, ChatMessage, Artifact } from "@/lib/agent-types";
+import type { Task, ChatMessage, Artifact, WorkspaceMeta } from "@/lib/agent-types";
 
 interface AgentResponse {
   reply: string;
@@ -24,12 +24,14 @@ export interface UseCofounder {
   mock: boolean;
   persisted: boolean;
   workspaceId: string | null;
+  meta: WorkspaceMeta;
   error: string | null;
-  send: (text: string) => Promise<void>;
+  send: (text: string, creationMeta?: WorkspaceMeta) => Promise<void>;
   reset: () => void;
   updateTask: (id: string, patch: Partial<Task>) => void;
   executeTask: (task: Task) => Promise<void>;
   addTask: (title: string, department: string, detail?: string) => Promise<void>;
+  saveMeta: (patch: WorkspaceMeta) => void;
   drive: () => Promise<void>;
 }
 
@@ -63,6 +65,7 @@ export function useCofounder(): UseCofounder {
   const [mock, setMock] = useState(false);
   const [persisted, setPersisted] = useState(false);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [meta, setMeta] = useState<WorkspaceMeta>({});
   const [error, setError] = useState<string | null>(null);
   const ideaRef = useRef<string>("");
   const secretRef = useRef<string | null>(null);
@@ -86,9 +89,10 @@ export function useCofounder(): UseCofounder {
     (async () => {
       setWorkspaceId(saved);
       try {
-        const [tRes, aRes] = await Promise.all([
+        const [tRes, aRes, wRes] = await Promise.all([
           fetch(`/api/tasks?workspace=${encodeURIComponent(saved)}`),
           fetch(`/api/artifacts?workspace=${encodeURIComponent(saved)}`),
+          fetch(`/api/workspace?id=${encodeURIComponent(saved)}`),
         ]);
         const tData = tRes.ok
           ? ((await tRes.json()) as { tasks: Task[]; persisted?: boolean })
@@ -96,6 +100,18 @@ export function useCofounder(): UseCofounder {
         const aData = aRes.ok
           ? ((await aRes.json()) as { artifacts: Artifact[] })
           : { artifacts: [] };
+        const wData = wRes.ok
+          ? ((await wRes.json()) as { idea?: string; meta?: WorkspaceMeta })
+          : { idea: undefined, meta: undefined };
+        if (wData.meta && typeof wData.meta === "object") setMeta(wData.meta);
+        // Restore the founding idea from the server when the browser lost it
+        // (drives the brand name + execution prompts cross-device).
+        if (wData.idea && !ideaRef.current) {
+          ideaRef.current = wData.idea;
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(IDEA_KEY, wData.idea);
+          }
+        }
         if (Array.isArray(tData.tasks) && tData.tasks.length) {
           setTasks(tData.tasks);
           setPersisted(Boolean(tData.persisted));
@@ -114,7 +130,7 @@ export function useCofounder(): UseCofounder {
   }, []);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, creationMeta?: WorkspaceMeta) => {
       const trimmed = text.trim();
       if (!trimmed || loading) return;
 
@@ -141,6 +157,7 @@ export function useCofounder(): UseCofounder {
             messages: history,
             workspaceId,
             workspaceSecret: secretRef.current ?? undefined,
+            meta: creationMeta,
           }),
         });
         if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -166,6 +183,8 @@ export function useCofounder(): UseCofounder {
         setTasks((prev) => mergeTasks(prev, data.tasks ?? []));
         setMock(Boolean(data.mock));
         setPersisted(Boolean(data.persisted));
+        // Reflect the brand/plan we just stamped onto the new workspace.
+        if (creationMeta) setMeta((m) => ({ ...m, ...creationMeta }));
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong.");
         setMessages((prev) => [
@@ -190,6 +209,7 @@ export function useCofounder(): UseCofounder {
     setMock(false);
     setPersisted(false);
     setWorkspaceId(null);
+    setMeta({});
     setError(null);
     ideaRef.current = "";
     secretRef.current = null;
@@ -405,6 +425,26 @@ export function useCofounder(): UseCofounder {
     [persisted, workspaceId],
   );
 
+  /** Persist a patch to the durable workspace meta (brand, plan, custom agents).
+   *  Optimistic locally; fire-and-forget to the server when DB-backed. */
+  const saveMeta = useCallback(
+    (patch: WorkspaceMeta) => {
+      setMeta((m) => ({ ...m, ...patch }));
+      if (persisted && workspaceId) {
+        fetch("/api/workspace", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            meta: patch,
+          }),
+        }).catch(() => {});
+      }
+    },
+    [persisted, workspaceId],
+  );
+
   return {
     messages,
     tasks,
@@ -413,12 +453,14 @@ export function useCofounder(): UseCofounder {
     mock,
     persisted,
     workspaceId,
+    meta,
     error,
     send,
     reset,
     updateTask,
     executeTask,
     addTask,
+    saveMeta,
     drive,
   };
 }

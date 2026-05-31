@@ -42,6 +42,7 @@ export interface UseOnboarding {
   chooseVibe: (id: string) => void;
   markBrandReady: () => void;
   approveBrand: () => void;
+  hydrateFromMeta: (m: { idea?: string; vibeId?: string | null; plan?: BusinessPlan | null }) => void;
   reset: () => void;
 }
 
@@ -152,6 +153,22 @@ export function useOnboarding(): UseOnboarding {
   const markBrandReady = useCallback(() => setStatus("brand"), []);
   const approveBrand = useCallback(() => setStatus("accepted"), []);
 
+  /**
+   * Restore the post-launch view-state (brand kit + business plan) from the
+   * server's workspace meta when localStorage has nothing — e.g. on a different
+   * device or after a cache clear. Lands directly in the "accepted" state so
+   * Home shows the brand kit and plan without replaying the flow.
+   */
+  const hydrateFromMeta = useCallback(
+    (m: { idea?: string; vibeId?: string | null; plan?: BusinessPlan | null }) => {
+      setStatus("accepted");
+      if (m.idea) setIdea(m.idea);
+      if (m.vibeId !== undefined) setVibeId(m.vibeId);
+      if (m.plan !== undefined) setPlan(m.plan ?? null);
+    },
+    [],
+  );
+
   const reset = useCallback(() => {
     setStatus("idle");
     setIdea("");
@@ -187,6 +204,7 @@ export function useOnboarding(): UseOnboarding {
     chooseVibe,
     markBrandReady,
     approveBrand,
+    hydrateFromMeta,
     reset,
   };
 }

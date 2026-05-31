@@ -1,7 +1,7 @@
 // Server-only Supabase access via PostgREST (no SDK dependency).
 // Used exclusively from API route handlers — never imported into client code.
 
-import type { Task, TaskStatus, Artifact, ArtifactKind, SkillRef, DeliverableEval } from "@/lib/agent-types";
+import type { Task, TaskStatus, Artifact, ArtifactKind, SkillRef, DeliverableEval, WorkspaceMeta } from "@/lib/agent-types";
 
 const URL = process.env.SUPABASE_URL;
 const KEY = process.env.SUPABASE_KEY;
@@ -45,15 +45,67 @@ async function rest(path: string, init: RequestInit): Promise<Response> {
 }
 
 /** Create a workspace (a company run). Returns its id. */
-export async function createWorkspace(name: string, idea: string): Promise<string> {
+export async function createWorkspace(
+  name: string,
+  idea: string,
+  meta: WorkspaceMeta = {},
+): Promise<string> {
   const res = await rest("cofounder_workspaces", {
     method: "POST",
     headers: headers({ Prefer: "return=representation" }),
-    body: JSON.stringify({ name: name.slice(0, 120), idea: idea.slice(0, 600) }),
+    body: JSON.stringify({ name: name.slice(0, 120), idea: idea.slice(0, 600), meta }),
   });
   if (!res.ok) throw new Error(`createWorkspace failed (${res.status})`);
   const rows = (await res.json()) as { id: string }[];
   return rows[0].id;
+}
+
+interface DbWorkspaceRow {
+  id: string;
+  name: string;
+  idea: string | null;
+  meta: WorkspaceMeta | null;
+}
+
+export interface WorkspaceRecord {
+  id: string;
+  name: string;
+  idea: string;
+  meta: WorkspaceMeta;
+}
+
+/** Fetch a workspace row (name + idea + the durable meta blob). */
+export async function getWorkspace(id: string): Promise<WorkspaceRecord | null> {
+  const res = await rest(
+    `cofounder_workspaces?id=eq.${encodeURIComponent(id)}&select=id,name,idea,meta&limit=1`,
+    { method: "GET", headers: headers() },
+  );
+  if (!res.ok) return null;
+  const rows = (await res.json()) as DbWorkspaceRow[];
+  const r = rows[0];
+  if (!r) return null;
+  return { id: r.id, name: r.name, idea: r.idea ?? "", meta: r.meta ?? {} };
+}
+
+/**
+ * Shallow-merge a patch into a workspace's meta and persist it. Read-modify-write
+ * (PostgREST can't do a partial jsonb merge in one PATCH); the patch wins on
+ * conflicting top-level keys (e.g. the full customAgents array is replaced).
+ * Returns the merged meta.
+ */
+export async function updateWorkspaceMeta(
+  id: string,
+  patch: WorkspaceMeta,
+): Promise<WorkspaceMeta> {
+  const current = (await getWorkspace(id))?.meta ?? {};
+  const next: WorkspaceMeta = { ...current, ...patch };
+  const res = await rest(`cofounder_workspaces?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: headers({ Prefer: "return=minimal" }),
+    body: JSON.stringify({ meta: next }),
+  });
+  if (!res.ok) throw new Error(`updateWorkspaceMeta failed (${res.status})`);
+  return next;
 }
 
 /** Insert task agents for a workspace. Returns the persisted rows as Task[]. */

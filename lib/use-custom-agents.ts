@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CustomAgentSpec } from "@/lib/agent-types";
 
-export interface CustomAgent {
-  name: string;
-  blurb: string;
-  department: string;
-}
+// Same shape as the workspace-persisted agent; aliased so the localStorage and
+// DB-backed sources are interchangeable in the UI.
+export type CustomAgent = CustomAgentSpec;
 
 const KEY = "cf_custom_agents_v1";
 

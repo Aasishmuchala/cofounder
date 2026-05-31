@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Task, ChatMessage } from "@/lib/agent-types";
-import { coerceText, coerceStatus, coerceDepartment } from "@/lib/agent-types";
+import type { Task, ChatMessage, WorkspaceMeta } from "@/lib/agent-types";
+import { coerceText, coerceStatus, coerceDepartment, sanitizeWorkspaceMeta } from "@/lib/agent-types";
 import {
   dbConfigured,
   createWorkspace,
@@ -54,6 +54,8 @@ interface AgentBody {
   companyContext?: string;
   workspaceId?: string;
   workspaceSecret?: string;
+  // Brand/plan/custom-agent state to stamp onto the workspace at creation.
+  meta?: WorkspaceMeta;
 }
 
 interface AgentResult {
@@ -174,13 +176,13 @@ function withIds(result: AgentResult): { reply: string; tasks: Task[] } {
  */
 async function finalize(
   result: AgentResult,
-  opts: { mock: boolean; workspaceId?: string; idea: string },
+  opts: { mock: boolean; workspaceId?: string; idea: string; meta?: WorkspaceMeta },
 ): Promise<Response> {
   if (dbConfigured) {
     try {
       const workspaceId =
         opts.workspaceId ||
-        (await createWorkspace(opts.idea || "Untitled company", opts.idea));
+        (await createWorkspace(opts.idea || "Untitled company", opts.idea, opts.meta ?? {}));
       const tasks = await insertTasks(workspaceId, result.tasks);
       return Response.json({
         reply: result.reply,
@@ -216,6 +218,8 @@ export async function POST(req: Request): Promise<Response> {
   );
   const workspaceId = coerceText(body.workspaceId, 100) || undefined;
   const workspaceSecret = coerceText(body.workspaceSecret, 200) || undefined;
+  // Brand/plan/custom-agent state — only used when creating the workspace.
+  const meta = sanitizeWorkspaceMeta(body.meta);
 
   // Writing into an existing workspace requires its capability token. (First
   // turn has no workspaceId — anyone may create their own workspace.)
@@ -230,6 +234,7 @@ export async function POST(req: Request): Promise<Response> {
       mock: true,
       workspaceId,
       idea: lastUser,
+      meta,
     });
   }
 
@@ -281,13 +286,13 @@ export async function POST(req: Request): Promise<Response> {
       const fallback = mockResult(lastUser);
       return finalize(
         { reply: text || fallback.reply, tasks: fallback.tasks },
-        { mock: true, workspaceId, idea: lastUser },
+        { mock: true, workspaceId, idea: lastUser, meta },
       );
     }
 
     return finalize(
       { reply: parsed.reply, tasks: ensureApproval(parsed.tasks) },
-      { mock: false, workspaceId, idea: lastUser },
+      { mock: false, workspaceId, idea: lastUser, meta },
     );
   } catch {
     // Any API/network failure -> mock, never throw to the client.
@@ -295,6 +300,7 @@ export async function POST(req: Request): Promise<Response> {
       mock: true,
       workspaceId,
       idea: lastUser,
+      meta,
     });
   }
 }

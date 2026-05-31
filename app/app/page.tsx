@@ -14,7 +14,24 @@ type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Library";
 export default function AppPage() {
   const cf = useCofounder();
   const onb = useOnboarding();
-  const { customAgents, addAgent } = useCustomAgents();
+  const localAgents = useCustomAgents();
+
+  // Custom agents are durable on the workspace (DB) once a company exists; before
+  // that — or with no database — they fall back to browser localStorage.
+  const customAgents = cf.persisted ? cf.meta.customAgents ?? [] : localAgents.customAgents;
+  function addAgent(name: string, department: string, blurb: string) {
+    if (cf.persisted) {
+      const n = name.trim();
+      if (!n) return;
+      const next = [
+        ...(cf.meta.customAgents ?? []),
+        { name: n, department, blurb: blurb.trim() || `Custom ${department} agent.` },
+      ];
+      cf.saveMeta({ customAgents: next });
+    } else {
+      localAgents.addAgent(name, department, blurb);
+    }
+  }
 
   // Client-mounted flag: the localStorage fallback below must NOT run during SSR
   // or the first client render, or the brand text diverges (server "Untitled" vs
@@ -59,9 +76,15 @@ export default function AppPage() {
   }
 
   // Approve the brand kit (or skip) → spin up the company, land on Home.
+  // The chosen brand + business plan are stamped onto the new workspace so they
+  // persist server-side (survive a cache clear, scoped to this company).
   function handleLaunch() {
     onb.approveBrand();
-    void cf.send(onb.idea || idea || "Get started.");
+    void cf.send(onb.idea || idea || "Get started.", {
+      vibeId: onb.vibeId,
+      brandReady: true,
+      plan: onb.plan,
+    });
     setPicked("Home");
   }
 
@@ -112,6 +135,26 @@ export default function AppPage() {
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status signature + persisted
   }, [statusSig, cf.persisted]);
+
+  // Cross-device / cache-cleared restore: when the workspace exists in the DB
+  // but the onboarding view-state was lost (localStorage empty), rebuild the
+  // brand kit + business plan from the server's workspace meta so Home renders
+  // them again. One-shot, and skipped when onboarding already has local state.
+  const onbHydratedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (onbHydratedRef.current) return;
+    if (!cf.persisted || onb.status !== "idle") return;
+    const m = cf.meta;
+    if (m && (m.vibeId || m.plan)) {
+      onbHydratedRef.current = true;
+      // Prefer the idea restored into localStorage by the workspace hydrate, so
+      // the brand name is correct even when the browser had lost it.
+      const restoredIdea =
+        idea || (typeof window !== "undefined" ? window.localStorage.getItem("cf_idea") ?? "" : "");
+      onb.hydrateFromMeta({ idea: restoredIdea, vibeId: m.vibeId ?? null, plan: m.plan ?? null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot guarded restore
+  }, [cf.persisted, cf.meta, onb.status, idea]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--background)] text-[var(--text)]">
