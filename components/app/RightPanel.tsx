@@ -18,6 +18,7 @@ import { OnboardingFlow, BusinessPlanCard } from "@/components/app/Onboarding";
 import { IdentityFlow, BrandKitCard } from "@/components/app/Identity";
 import { vibeById } from "@/lib/vibes";
 import DepartmentView from "@/components/app/DepartmentView";
+import ProgressDashboard from "@/components/app/ProgressDashboard";
 import type { CustomAgent } from "@/lib/use-custom-agents";
 
 type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Library";
@@ -69,7 +70,7 @@ export default function RightPanel({
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--surface-raised)]">
       {/* Tab bar */}
-      <div className="flex items-center gap-5 px-6 pt-5">
+      <div className="flex items-center gap-5 overflow-x-auto px-6 pt-5">
         {TABS.map((t) => {
           const active = t === tab && !selectedDept;
           return (
@@ -80,7 +81,7 @@ export default function RightPanel({
                 onTabChange(t);
               }}
               className={cx(
-                "relative pb-2 font-display text-[15px] tracking-[0.1px] transition-colors",
+                "relative shrink-0 pb-2 font-display text-[15px] tracking-[0.1px] transition-colors",
                 active ? "text-[var(--text)]" : "text-[var(--text-50)] hover:text-[var(--text-70)]",
               )}
             >
@@ -205,6 +206,13 @@ function HomeTab({
       <h1 className="font-display text-[26px] font-normal leading-tight text-[var(--text)]">
         {greet}, {FOUNDER_FIRST_NAME}
       </h1>
+
+      {/* Company progress dashboard */}
+      {tasks.length > 0 && (
+        <div className="mt-4">
+          <ProgressDashboard cf={cf} />
+        </div>
+      )}
 
       {/* Roadmap banner */}
       <div className="relative mt-4 h-[120px] overflow-hidden rounded-[14px] shadow-raised">
@@ -565,6 +573,32 @@ function LibraryTab({ cf, vibeId, brand }: { cf: UseCofounder; vibeId: string | 
       <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--text-50)]">
         Your agents save their work here and are automatically referenced in future tasks unless archived.
       </p>
+
+      {/* Individual deliverables — tappable (works on mobile too) */}
+      {artifacts.filter((a) => a.id).length > 0 && (
+        <div className="mt-4 space-y-1.5">
+          {artifacts
+            .filter((a) => a.id)
+            .map((a) => (
+              <a
+                key={a.id}
+                href={`/app/preview/${a.id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2.5 rounded-[9px] bg-white px-3 py-2 shadow-raised transition-colors hover:bg-black/[0.02]"
+              >
+                <span className="shrink-0 font-mono text-[8.5px] uppercase tracking-[0.06em] text-[var(--text-50)]">
+                  {a.kind.replace(/_/g, " ")}
+                </span>
+                <span className="flex-1 truncate font-display text-[13px] text-[var(--text-80)]">{a.title}</span>
+                {a.eval && <span className="shrink-0 font-mono text-[10px] text-[var(--text-50)]">{a.eval.score.toFixed(1)}</span>}
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-[var(--text-30)]">
+                  <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </a>
+            ))}
+        </div>
+      )}
 
       {collections.length === 0 ? (
         <div className="mt-5 grid place-items-center rounded-[14px] border border-dashed border-[var(--text-30)] py-12 text-center">
