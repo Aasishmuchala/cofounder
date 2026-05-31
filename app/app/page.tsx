@@ -82,12 +82,17 @@ export default function AppPage() {
     setTimeout(() => setPublished(false), 2500);
   }
 
-  // Live agent simulation: "todo" agents auto-start after a stagger, "running"
-  // agents do real work (generate + persist a deliverable, then flip to done).
-  // "needs_action" agents wait for approval (handled in the Tasks tab).
+  // Agent execution. When the workspace is DB-backed, the SERVER-SIDE runner owns
+  // it: drive() loops /api/run (which produces one deliverable per call) and
+  // refreshes — so work resumes on reload and a cron can continue it tab-closed.
+  // With no DB, fall back to the in-memory client sim (todo→running→execute).
   const scheduled = React.useRef<Set<string>>(new Set());
   const statusSig = cf.tasks.map((t) => t.id + t.status).join("|");
   React.useEffect(() => {
+    if (cf.persisted) {
+      void cf.drive();
+      return;
+    }
     const timers: ReturnType<typeof setTimeout>[] = [];
     cf.tasks.forEach((t, i) => {
       if (scheduled.current.has(t.id)) return;
@@ -105,8 +110,8 @@ export default function AppPage() {
       }
     });
     return () => timers.forEach(clearTimeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the task status signature
-  }, [statusSig]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status signature + persisted
+  }, [statusSig, cf.persisted]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--background)] text-[var(--text)]">

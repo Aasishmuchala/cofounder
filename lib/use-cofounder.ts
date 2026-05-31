@@ -30,6 +30,7 @@ export interface UseCofounder {
   updateTask: (id: string, patch: Partial<Task>) => void;
   executeTask: (task: Task) => Promise<void>;
   addTask: (title: string, department: string, detail?: string) => Promise<void>;
+  drive: () => Promise<void>;
 }
 
 /**
@@ -70,6 +71,8 @@ export function useCofounder(): UseCofounder {
   // (firing every task at once storms the model and freezes the canvas).
   const queueRef = useRef<Task[]>([]);
   const inFlightRef = useRef(0);
+  // Guards the server-runner drive loop so only one runs at a time.
+  const drivingRef = useRef(false);
 
   /* Hydrate from the persisted workspace on first mount. */
   useEffect(() => {
@@ -259,18 +262,111 @@ export function useCofounder(): UseCofounder {
     };
   }, [workspaceId]);
 
+  const updateTask = useCallback(
+    (id: string, patch: Partial<Task>) => {
+      // optimistic local update
+      setTasks((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, ...patch, id: t.id } : t)),
+      );
+      // persist in the background (fire-and-forget)
+      if (persisted) {
+        fetch("/api/tasks", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            ...patch,
+          }),
+        }).catch(() => {});
+      }
+    },
+    [persisted, workspaceId],
+  );
+
+  /** Pull the latest tasks + artifacts from the DB (server is the source of
+   *  truth once the server-side runner is producing deliverables). */
+  const refresh = useCallback(async (): Promise<{ tasks: Task[]; artifacts: Artifact[] } | null> => {
+    if (!workspaceId) return null;
+    try {
+      const [tRes, aRes] = await Promise.all([
+        fetch(`/api/tasks?workspace=${encodeURIComponent(workspaceId)}`),
+        fetch(`/api/artifacts?workspace=${encodeURIComponent(workspaceId)}`),
+      ]);
+      const tData = tRes.ok ? ((await tRes.json()) as { tasks: Task[] }) : { tasks: [] };
+      const aData = aRes.ok ? ((await aRes.json()) as { artifacts: Artifact[] }) : { artifacts: [] };
+      const t = Array.isArray(tData.tasks) ? tData.tasks : [];
+      const a = Array.isArray(aData.artifacts) ? aData.artifacts : [];
+      setTasks(t);
+      setArtifacts(a);
+      return { tasks: t, artifacts: a };
+    } catch {
+      return null;
+    }
+  }, [workspaceId]);
+
+  /** Drive the SERVER-SIDE runner: /api/run produces one deliverable per call;
+   *  loop + refresh until nothing is actionable. Because the work runs on the
+   *  server and task state lives in the DB, pending work RESUMES on the next
+   *  load — and a cron can call /api/run to keep going with the tab closed. */
+  const drive = useCallback(async () => {
+    if (!persisted || !workspaceId || drivingRef.current) return;
+    drivingRef.current = true;
+    try {
+      for (let i = 0; i < 60; i++) {
+        const snap = await refresh();
+        if (!snap) break;
+        const withArtifact = new Set(snap.artifacts.map((a) => a.taskId).filter(Boolean));
+        const actionable = snap.tasks.filter(
+          (t) => (t.status === "todo" || t.status === "running") && !withArtifact.has(t.id),
+        );
+        if (actionable.length === 0) break;
+        // Optimistically show the next task running while the server works on it.
+        const cur = actionable[0];
+        setTasks((prev) => prev.map((t) => (t.id === cur.id ? { ...t, status: "running" } : t)));
+        let data: { ran: string | null; remaining: number; error?: string } | null = null;
+        try {
+          const res = await fetch("/api/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              workspaceId,
+              workspaceSecret: secretRef.current ?? undefined,
+              idea: ideaRef.current,
+            }),
+          });
+          data = (await res.json()) as { ran: string | null; remaining: number; error?: string };
+        } catch {
+          break;
+        }
+        if (data?.error) break;
+      }
+      await refresh();
+    } finally {
+      drivingRef.current = false;
+    }
+  }, [persisted, workspaceId, refresh]);
+
   /**
-   * Queue a task for execution: the department agent generates a real deliverable
-   * (landing page / brand spec / copy), persists it, and flips the task to done.
-   * Concurrency is capped (see pumpRef) so the canvas fills in progressively.
+   * Run a task. With a DB, hand off to the server-side runner (survives reload
+   * and is cron-drivable). Without a DB, fall back to the in-memory client pump.
    */
-  const executeTask = useCallback(async (task: Task) => {
-    if (task.status === "done") return;
-    if (executingRef.current.has(task.id)) return; // already queued or running
-    executingRef.current.add(task.id);
-    queueRef.current.push(task);
-    pumpRef.current();
-  }, []);
+  const executeTask = useCallback(
+    async (task: Task) => {
+      if (task.status === "done") return;
+      if (persisted && workspaceId) {
+        updateTask(task.id, { status: "running" });
+        void drive();
+        return;
+      }
+      if (executingRef.current.has(task.id)) return;
+      executingRef.current.add(task.id);
+      queueRef.current.push(task);
+      pumpRef.current();
+    },
+    [persisted, workspaceId, updateTask, drive],
+  );
 
   /** Create a single task agent (canvas "+ New Task"). Persists when possible. */
   const addTask = useCallback(
@@ -309,29 +405,6 @@ export function useCofounder(): UseCofounder {
     [persisted, workspaceId],
   );
 
-  const updateTask = useCallback(
-    (id: string, patch: Partial<Task>) => {
-      // optimistic local update
-      setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, ...patch, id: t.id } : t)),
-      );
-      // persist in the background (fire-and-forget)
-      if (persisted) {
-        fetch("/api/tasks", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id,
-            workspaceId,
-            workspaceSecret: secretRef.current ?? undefined,
-            ...patch,
-          }),
-        }).catch(() => {});
-      }
-    },
-    [persisted, workspaceId],
-  );
-
   return {
     messages,
     tasks,
@@ -346,5 +419,6 @@ export function useCofounder(): UseCofounder {
     updateTask,
     executeTask,
     addTask,
+    drive,
   };
 }
