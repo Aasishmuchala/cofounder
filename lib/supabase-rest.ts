@@ -161,6 +161,19 @@ export async function insertTasks(
   return rows.map(rowToTask);
 }
 
+/** Distinct workspace ids that have at least one todo/running task — the set a
+ *  cron tick should consider draining. Capped to keep one tick bounded. */
+export async function listActiveWorkspaceIds(limit = 50): Promise<string[]> {
+  const res = await rest(
+    `cofounder_tasks?status=in.(todo,running)&select=workspace_id&limit=4000`,
+    { method: "GET", headers: headers() },
+  );
+  if (!res.ok) return [];
+  const rows = (await res.json()) as { workspace_id: string }[];
+  const ids = [...new Set(rows.map((r) => r.workspace_id).filter(Boolean))];
+  return ids.slice(0, limit);
+}
+
 /** Fetch all tasks for a workspace, oldest first. */
 export async function listTasks(workspaceId: string): Promise<Task[]> {
   const res = await rest(
