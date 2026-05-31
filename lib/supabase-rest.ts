@@ -338,6 +338,29 @@ export async function claimTask(
   return rows[0] ? rowToTask(rows[0]) : null;
 }
 
+const UPLOAD_BUCKET = "cofounder-uploads";
+
+/** Upload bytes to the public Library bucket; returns the public URL or null. */
+export async function uploadToStorage(
+  path: string,
+  bytes: Buffer,
+  contentType: string,
+): Promise<string | null> {
+  if (!dbConfigured) return null;
+  const res = await fetch(`${URL}/storage/v1/object/${UPLOAD_BUCKET}/${path}`, {
+    method: "POST",
+    headers: {
+      apikey: KEY as string,
+      Authorization: `Bearer ${KEY}`,
+      "Content-Type": contentType || "application/octet-stream",
+      "x-upsert": "true",
+    },
+    body: new Uint8Array(bytes),
+  });
+  if (!res.ok) return null;
+  return `${URL}/storage/v1/object/public/${UPLOAD_BUCKET}/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 /** Edit a deliverable's content/title in place (scoped to its workspace). */
 export async function updateArtifact(
   id: string,

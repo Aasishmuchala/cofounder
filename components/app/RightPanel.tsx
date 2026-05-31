@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { departmentColor, DEPARTMENTS } from "@/lib/agent-types";
 import type { Task } from "@/lib/agent-types";
 import type { UseCofounder } from "@/lib/use-cofounder";
@@ -555,9 +555,31 @@ function StatusTag({ status }: { status: Task["status"] }) {
 function LibraryTab({ cf, vibeId, brand }: { cf: UseCofounder; vibeId: string | null; brand: string }) {
   const { artifacts } = cf;
   const vibe = vibeById(vibeId);
+  const files = cf.meta.files ?? [];
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
   const collections: { name: string; count: number; cover: string }[] = [];
   if (vibe) collections.push({ name: `${brand} Brand Kit`, count: 1, cover: vibe.board });
   if (artifacts.length > 0) collections.push({ name: "General", count: artifacts.length, cover: LIBRARY_COVERS[0] });
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("workspaceId", cf.workspaceId ?? "");
+      fd.append("workspaceSecret", (typeof window !== "undefined" ? window.localStorage.getItem("cf_secret") : "") ?? "");
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const d = (await r.json()) as { ok: boolean; file?: { name: string; url: string } };
+      if (d.ok && d.file) cf.saveMeta({ files: [...files, d.file] });
+    } catch {
+      /* ignore */
+    }
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  }
 
   return (
     <div>
@@ -566,13 +588,43 @@ function LibraryTab({ cf, vibeId, brand }: { cf: UseCofounder; vibeId: string | 
           <span className="text-[14px] leading-none" aria-hidden>🌻</span>
           <h3 className="font-display text-[16px] text-[var(--text)]">Library</h3>
         </div>
-        <span className="rounded-[7px] bg-white px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--text-50)] shadow-raised">
-          ↑ Upload file
-        </span>
+        {cf.canEdit && (
+          <>
+            <input ref={fileRef} type="file" className="hidden" onChange={onPick} />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className="rounded-[7px] bg-white px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--text-50)] shadow-raised transition-colors hover:text-[var(--text)] disabled:opacity-50"
+            >
+              {uploading ? "Uploading…" : "↑ Upload file"}
+            </button>
+          </>
+        )}
       </div>
       <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--text-50)]">
         Your agents save their work here and are automatically referenced in future tasks unless archived.
       </p>
+
+      {/* Uploaded files */}
+      {files.length > 0 && (
+        <div className="mt-4 space-y-1.5">
+          {files.map((f, i) => (
+            <a
+              key={`${i}-${f.url}`}
+              href={f.url}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2.5 rounded-[9px] bg-white px-3 py-2 shadow-raised transition-colors hover:bg-black/[0.02]"
+            >
+              <span className="shrink-0 text-[13px] leading-none" aria-hidden>📎</span>
+              <span className="flex-1 truncate font-display text-[13px] text-[var(--text-80)]">{f.name}</span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-[var(--text-30)]">
+                <path d="M7 17 17 7M9 7h8v8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </a>
+          ))}
+        </div>
+      )}
 
       {/* Individual deliverables — tappable (works on mobile too) */}
       {artifacts.filter((a) => a.id).length > 0 && (
