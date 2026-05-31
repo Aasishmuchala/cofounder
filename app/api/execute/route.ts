@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { ArtifactKind } from "@/lib/agent-types";
+import type { ArtifactKind, DeliverableEval } from "@/lib/agent-types";
 import { deliverableFor, coerceText } from "@/lib/agent-types";
+import { runChecks, judgeDeliverable, heuristicScore, QUALITY_BAR } from "@/lib/verify";
 import {
   dbConfigured,
   insertArtifact,
@@ -21,6 +22,18 @@ interface ExecBody {
   workspaceSecret?: string;
   idea?: string;
   task?: { id: string; title: string; department: string; detail?: string };
+}
+
+/** Strip fences/whitespace from a model reply down to the raw deliverable. */
+function cleanText(resp: Anthropic.Message): string {
+  return resp.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("\n")
+    .trim()
+    .replace(/^```[a-z]*\n?/i, "")
+    .replace(/```$/i, "")
+    .trim();
 }
 
 /** Escape user-controlled text before interpolating into generated HTML. */
@@ -312,33 +325,24 @@ export async function POST(req: Request): Promise<Response> {
   let content = "";
   let mock = true;
 
+  // Ground the generation: house standard + authored skill (both trusted), plus
+  // the discovered skill wrapped as untrusted reference data. Reused for retries.
+  const basePrompt =
+    genPrompt(kind, noun, task, idea) +
+    `\n\nApply this house standard — your team's craft bar:\n${house.content}` +
+    (authored ? `\n\nYour company's own authored skill — apply it:\n${authored.content}` : "") +
+    (discovered ? buildSkillBlock(discovered) : "");
+
   const client = getAnthropic();
   if (client) {
     try {
-      // Ground the generation: house standard + authored skill (both trusted),
-      // plus the discovered skill wrapped as untrusted reference data.
-      let prompt =
-        genPrompt(kind, noun, task, idea) +
-        `\n\nApply this house standard — your team's craft bar:\n${house.content}`;
-      if (authored) {
-        prompt += `\n\nYour company's own authored skill — apply it:\n${authored.content}`;
-      }
-      if (discovered) prompt += buildSkillBlock(discovered);
-
       const resp = await client.messages.create({
         model: MODEL,
         // Headroom for extended thinking + a full landing-page HTML deliverable.
         max_tokens: 8000,
-        messages: [{ role: "user", content: prompt }],
+        messages: [{ role: "user", content: basePrompt }],
       });
-      content = resp.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("\n")
-        .trim()
-        .replace(/^```[a-z]*\n?/i, "")
-        .replace(/```$/i, "")
-        .trim();
+      content = cleanText(resp);
       title = `${(idea || "Company").slice(0, 50)} — ${noun}`;
       mock = content.length === 0;
 
@@ -375,6 +379,59 @@ export async function POST(req: Request): Promise<Response> {
     mock = true;
   }
 
+  // ---- Verification / quality loop ----------------------------------------
+  // Grade the deliverable (deterministic checks + an LLM judge). If it scores
+  // below the bar, regenerate ONCE with the judge's feedback and keep the
+  // better version. The score is attached to the artifact so the UI can show it.
+  let evaluation: DeliverableEval;
+  if (!mock && client) {
+    let judged = await judgeDeliverable(client, { kind, idea, task: task.title, content });
+    let iterations = 1;
+    if (judged && judged.score < QUALITY_BAR) {
+      try {
+        const retryPrompt = `${basePrompt}\n\nA strict reviewer scored your previous attempt ${judged.score}/10. The most important things to FIX: ${judged.notes}\nProduce a clearly better version that fully addresses this feedback. Use the exact same output format as before.`;
+        const resp2 = await client.messages.create({
+          model: MODEL,
+          max_tokens: 8000,
+          messages: [{ role: "user", content: retryPrompt }],
+        });
+        const content2 = cleanText(resp2);
+        if (content2.length > 0) {
+          const judged2 = await judgeDeliverable(client, { kind, idea, task: task.title, content: content2 });
+          iterations = 2;
+          // Keep the regeneration only if it scored at least as high.
+          if (judged2 && judged2.score >= judged.score) {
+            content = content2;
+            judged = judged2;
+          }
+        }
+      } catch {
+        /* keep the first attempt */
+      }
+    }
+    const finalChecks = runChecks(kind, content);
+    evaluation = judged
+      ? { score: judged.score, rubric: judged.rubric, checks: finalChecks, notes: judged.notes, iterations, judged: true }
+      : {
+          score: heuristicScore(finalChecks),
+          rubric: [],
+          checks: finalChecks,
+          notes: "Automated checks only — the AI judge was unavailable.",
+          iterations,
+          judged: false,
+        };
+  } else {
+    const checks = runChecks(kind, content);
+    evaluation = {
+      score: heuristicScore(checks),
+      rubric: [],
+      checks,
+      notes: "Heuristic checks (mock mode — no AI judge).",
+      iterations: 1,
+      judged: false,
+    };
+  }
+
   // Persist the artifact + mark the task done.
   let artifactId: string | null = null;
   if (dbConfigured && workspaceId) {
@@ -385,6 +442,7 @@ export async function POST(req: Request): Promise<Response> {
         title,
         content,
         skill: headline,
+        eval: evaluation,
       });
       artifactId = art?.id ?? null;
       // Scope the status write to this workspace (defense-in-depth alongside
@@ -406,6 +464,7 @@ export async function POST(req: Request): Promise<Response> {
       title,
       content,
       skill: headline,
+      eval: evaluation,
     },
   });
 }

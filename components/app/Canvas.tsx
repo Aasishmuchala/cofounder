@@ -23,6 +23,13 @@ const RING = 340;
 
 type Pt = { x: number; y: number };
 
+/** Color a 0–10 quality score: green (great) → amber (ok) → coral (weak). */
+function scoreStyle(score: number): { background: string; color: string } {
+  if (score >= 8) return { background: "var(--green-tint)", color: "#2c7a3f" };
+  if (score >= 6) return { background: "#fbf0d4", color: "#8a6d1f" };
+  return { background: "#fff0ed", color: "var(--coral)" };
+}
+
 function ringPosition(index: number, total: number): Pt {
   // distribute around the manager, biased to a pleasing spread
   const golden = 2.399963229; // golden angle in radians
@@ -376,10 +383,18 @@ export default function Canvas({
                             >
                               <div className="flex items-center gap-1 border-b border-black/[0.05] px-2 py-1">
                                 <span className="h-1.5 w-1.5 rounded-full" style={{ background: c }} />
-                                <span className="h-1 w-2 rounded-full bg-black/10" />
-                                <span className="ml-auto font-mono text-[7px] uppercase tracking-[0.08em] text-[var(--text-50)]">
+                                <span className="font-mono text-[7px] uppercase tracking-[0.08em] text-[var(--text-50)]">
                                   {art.kind === "landing_page" ? "page" : art.kind === "brand_spec" ? "brand" : art.kind === "email" ? "email" : "doc"}
                                 </span>
+                                {art.eval && (
+                                  <span
+                                    className="ml-auto rounded-[3px] px-1 py-px font-mono text-[8px] font-semibold"
+                                    style={scoreStyle(art.eval.score)}
+                                    title={`Quality ${art.eval.score}/10${art.eval.iterations > 1 ? ` · ${art.eval.iterations} drafts` : ""}`}
+                                  >
+                                    {art.eval.score.toFixed(1)}
+                                  </span>
+                                )}
                               </div>
                               <div className="space-y-1 px-2 py-1.5">
                                 {art.kind === "landing_page" ? (

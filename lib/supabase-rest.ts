@@ -1,7 +1,7 @@
 // Server-only Supabase access via PostgREST (no SDK dependency).
 // Used exclusively from API route handlers — never imported into client code.
 
-import type { Task, TaskStatus, Artifact, ArtifactKind, SkillRef } from "@/lib/agent-types";
+import type { Task, TaskStatus, Artifact, ArtifactKind, SkillRef, DeliverableEval } from "@/lib/agent-types";
 
 const URL = process.env.SUPABASE_URL;
 const KEY = process.env.SUPABASE_KEY;
@@ -100,6 +100,7 @@ interface DbArtifactRow {
   skill_name: string | null;
   skill_source: string | null;
   skill_url: string | null;
+  eval: DeliverableEval | null;
   created_at: string;
 }
 
@@ -113,6 +114,7 @@ function rowToArtifact(r: DbArtifactRow): Artifact {
     skill: r.skill_name
       ? { name: r.skill_name, source: r.skill_source ?? "", url: r.skill_url ?? "" }
       : null,
+    eval: r.eval ?? null,
   };
 }
 
@@ -125,6 +127,7 @@ export async function insertArtifact(
     title: string;
     content: string;
     skill?: SkillRef | null;
+    eval?: DeliverableEval | null;
   },
 ): Promise<Artifact | null> {
   const res = await rest("cofounder_artifacts", {
@@ -139,6 +142,7 @@ export async function insertArtifact(
       skill_name: artifact.skill?.name?.slice(0, 200) ?? null,
       skill_source: artifact.skill?.source?.slice(0, 200) ?? null,
       skill_url: artifact.skill?.url?.slice(0, 400) ?? null,
+      eval: artifact.eval ?? null,
     }),
   });
   if (!res.ok) throw new Error(`insertArtifact failed (${res.status})`);

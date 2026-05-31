@@ -10,6 +10,12 @@ const KIND_LABEL: Record<string, string> = {
   email: "Email",
 };
 
+function scoreStyle(score: number): { background: string; color: string } {
+  if (score >= 8) return { background: "var(--green-tint)", color: "#2c7a3f" };
+  if (score >= 6) return { background: "#fbf0d4", color: "#8a6d1f" };
+  return { background: "#fff0ed", color: "var(--coral)" };
+}
+
 /** Very small Markdown-ish renderer (headings, bold, list items, tables-as-text). */
 function renderMarkdown(src: string) {
   const lines = src.split("\n");
@@ -140,6 +146,49 @@ export default function ArtifactPanel({
             </button>
           </div>
         </div>
+
+        {artifact.eval && (
+          <div className="border-b border-black/5 bg-[var(--surface-raised)] px-5 py-3">
+            <div className="flex items-center gap-2">
+              <span className="rounded-[7px] px-2 py-1 font-mono text-[13px] font-bold" style={scoreStyle(artifact.eval.score)}>
+                {artifact.eval.score.toFixed(1)}
+                <span className="text-[10px] font-normal opacity-70">/10</span>
+              </span>
+              <span className="font-display text-[13px] text-[var(--text-80)]">Quality score</span>
+              <span className="ml-auto font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--text-50)]">
+                {artifact.eval.judged ? "AI-judged" : "auto checks"}
+                {artifact.eval.iterations > 1 ? ` · ${artifact.eval.iterations} drafts` : ""}
+              </span>
+            </div>
+            {artifact.eval.rubric.length > 0 && (
+              <div className="mt-2.5 grid grid-cols-2 gap-x-5 gap-y-1.5">
+                {artifact.eval.rubric.map((r) => (
+                  <div key={r.label} className="flex items-center gap-2">
+                    <span className="flex-1 truncate text-[11px] text-[var(--text-50)]">{r.label}</span>
+                    <span className="h-1 w-12 overflow-hidden rounded-full bg-black/10">
+                      <span className="block h-full rounded-full" style={{ width: `${r.score * 10}%`, background: scoreStyle(r.score).color }} />
+                    </span>
+                    <span className="w-4 text-right font-mono text-[9px] text-[var(--text-50)]">{r.score}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-2.5 flex flex-wrap gap-1">
+              {artifact.eval.checks.map((c) => (
+                <span
+                  key={c.name}
+                  className="inline-flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 font-mono text-[9px]"
+                  style={c.pass ? { background: "var(--green-tint)", color: "#2c7a3f" } : { background: "#fff0ed", color: "var(--coral)" }}
+                >
+                  {c.pass ? "✓" : "✕"} {c.name}
+                </span>
+              ))}
+            </div>
+            {artifact.eval.notes && (
+              <p className="mt-2.5 text-[11.5px] italic leading-snug text-[var(--text-50)]">“{artifact.eval.notes}”</p>
+            )}
+          </div>
+        )}
 
         <div className="min-h-0 flex-1 overflow-auto">
           {isHtml ? (

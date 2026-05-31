@@ -25,6 +25,16 @@ export interface SkillRef {
   metric?: string;
 }
 
+/** Quality score attached to a deliverable by the verification loop. */
+export interface DeliverableEval {
+  score: number; // overall 0–10
+  rubric: { label: string; score: number }[];
+  checks: { name: string; pass: boolean }[];
+  notes: string;
+  iterations: number; // generations it took to clear the bar
+  judged: boolean; // true = LLM-judged, false = heuristic checks only
+}
+
 export interface Artifact {
   id: string;
   taskId: string | null;
@@ -32,6 +42,7 @@ export interface Artifact {
   title: string;
   content: string;
   skill?: SkillRef | null;
+  eval?: DeliverableEval | null;
 }
 
 /**
