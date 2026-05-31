@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Task, ChatMessage, Artifact, WorkspaceMeta, ConnectorConfig } from "@/lib/agent-types";
+import { isTaskReady } from "@/lib/agent-types";
+import type {
+  Task,
+  ChatMessage,
+  Artifact,
+  WorkspaceMeta,
+  ConnectorConfig,
+  OrchestratorPlan,
+  BudgetConfig,
+} from "@/lib/agent-types";
 
 interface AgentResponse {
   reply: string;
@@ -55,6 +64,15 @@ export interface UseCofounder {
   regenerate: (task: Task) => Promise<Artifact | null>;
   /** Approve or deny a pending connector action; refreshes after the POST. */
   resolveApproval: (approvalId: string, action: "approve" | "deny") => Promise<void>;
+  /** Decompose a founder goal into a bounded plan (no DB writes). Returns the
+   *  proposed plan for human review, or null on failure / view-only. */
+  proposePlan: (goal: string) => Promise<OrchestratorPlan | null>;
+  /** Materialize an approved plan: writes objectives to meta + inserts tasks
+   *  (with deps wired). Refreshes tasks + meta afterward. */
+  approvePlan: (plan: OrchestratorPlan) => Promise<void>;
+  /** Set or clear the per-workspace spend budget (governance ceiling — never
+   *  moves money). Optimistic in meta; persisted via PATCH /api/budget. */
+  setBudget: (cfg: BudgetConfig | null) => Promise<void>;
   drive: () => Promise<void>;
 }
 
@@ -514,11 +532,16 @@ export function useCofounder(): UseCofounder {
         const snap = await refresh();
         if (!snap) break;
         const withArtifact = new Set(snap.artifacts.map((a) => a.taskId).filter(Boolean));
+        // Dependency gate: mirror the server filter so the client never tries to
+        // run a task whose prerequisites aren't done yet (server would 409 anyway).
+        const doneIds = new Set<string>(withArtifact as Set<string>);
+        for (const t of snap.tasks) if (t.status === "done") doneIds.add(t.id);
         const actionable = snap.tasks.filter(
           (t) =>
             (t.status === "todo" || t.status === "running") &&
             !withArtifact.has(t.id) &&
-            !attempted.has(t.id),
+            !attempted.has(t.id) &&
+            isTaskReady(t, doneIds),
         );
         if (actionable.length === 0) break;
         const batch = actionable.slice(0, MAX_PARALLEL);
@@ -714,6 +737,92 @@ export function useCofounder(): UseCofounder {
     [canEdit, persisted, workspaceId, refresh],
   );
 
+  /**
+   * Decompose a founder GOAL into a bounded plan (objectives + tasks with
+   * dependencies). POSTs /api/plan — compute-only, NO DB writes — and returns
+   * the proposal for human review. The caller renders it and, on approve, calls
+   * approvePlan to materialize it. Returns null on failure or when view-only.
+   */
+  const proposePlan = useCallback(
+    async (goal: string): Promise<OrchestratorPlan | null> => {
+      const g = goal.trim();
+      if (!g || !canEdit) return null;
+      try {
+        const res = await fetch("/api/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            goal: g,
+          }),
+        });
+        if (!res.ok) return null;
+        const data = (await res.json()) as { plan?: OrchestratorPlan };
+        return data.plan ?? null;
+      } catch {
+        return null;
+      }
+    },
+    [canEdit, workspaceId],
+  );
+
+  /**
+   * Materialize an approved plan: PATCH /api/plan writes the objectives to
+   * meta.objectives and inserts the plan's tasks (deps + objectiveId encoded).
+   * Then refresh so the new objectives + tasks appear. No-op when view-only or
+   * not persisted (the plan flow requires a real workspace).
+   */
+  const approvePlan = useCallback(
+    async (plan: OrchestratorPlan): Promise<void> => {
+      if (!canEdit || !persisted || !workspaceId) return;
+      try {
+        await fetch("/api/plan", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            action: "approve",
+            plan,
+          }),
+        });
+      } catch {
+        /* ignore — refresh below reconciles from server state */
+      }
+      await refresh();
+    },
+    [canEdit, persisted, workspaceId, refresh],
+  );
+
+  /**
+   * Set or clear the per-workspace spend budget. This is a GOVERNANCE ceiling —
+   * no money moves. Optimistically updates meta.budget so the ledger bar reflects
+   * the new total instantly, then PATCHes /api/budget. No-op when view-only.
+   */
+  const setBudget = useCallback(
+    async (cfg: BudgetConfig | null): Promise<void> => {
+      if (!canEdit) return;
+      setMeta((m) => ({ ...m, budget: cfg }));
+      if (!persisted || !workspaceId) return;
+      try {
+        await fetch("/api/budget", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            budget: cfg,
+          }),
+        });
+      } catch {
+        /* ignore — refresh below reconciles from server state */
+      }
+      await refresh();
+    },
+    [canEdit, persisted, workspaceId, refresh],
+  );
+
   return {
     messages,
     tasks,
@@ -737,6 +846,9 @@ export function useCofounder(): UseCofounder {
     saveArtifact,
     regenerate,
     resolveApproval,
+    proposePlan,
+    approvePlan,
+    setBudget,
     drive,
   };
 }

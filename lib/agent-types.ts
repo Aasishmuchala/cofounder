@@ -12,6 +12,12 @@ export interface Task {
   department: string;
   status: TaskStatus;
   detail: string;
+  /** Ids of prerequisite tasks — this task is runnable only once they are done. */
+  dependsOn?: string[];
+  /** Links this task to a PlanObjective (orchestration layer), or null. */
+  objectiveId?: string | null;
+  /** Routing hint for the runner (e.g. "claude-code"); reserved for delegation. */
+  executor?: string;
 }
 
 export interface ChatMessage {
@@ -218,6 +224,107 @@ export interface AuditEntry {
   redactedArgs?: Record<string, string>;
 }
 
+/* ------------------------------------------------------------------ *
+ * Orchestration / org-chart layer — a C-suite above the 8 department
+ * agents that decomposes a founder GOAL into a BOUNDED, human-approved
+ * plan: Objectives (each owned by a role/department) and Tasks under them
+ * with explicit dependencies. The plan is durable in meta jsonb (capped);
+ * tasks carry dependsOn/objectiveId so the runner can dependency-gate them.
+ * See lib/orchestrator.ts (decompose + materialize) and lib/org.ts (roles).
+ * ------------------------------------------------------------------ */
+
+/** Lifecycle of an objective (rolled up from its tasks; see objectiveStatus). */
+export type ObjectiveStatus = "open" | "achieved" | "needs_action" | "cancelled";
+
+/** A durable objective persisted in meta.objectives. Owned by a C-suite role and
+ *  a department; groups a set of tasks; may depend on other objectives. */
+export interface PlanObjective {
+  id: string;
+  title: string;
+  description: string;
+  /** The C-suite role accountable (e.g. "CTO"); free-form, capped. */
+  role: string;
+  /** The department that executes the objective's tasks. */
+  department: string;
+  status: ObjectiveStatus;
+  /** Ids of the tasks materialized under this objective. */
+  taskIds: string[];
+  /** Ids of prerequisite objectives. */
+  dependsOn: string[];
+  ts: number;
+}
+
+/** A lightweight task DTO inside an OrchestratorPlan (NOT persisted standalone —
+ *  on approval it becomes a real Task row via insertTasks). */
+export interface PlanTask {
+  /** Stable plan-local id (e.g. "t1"); used to wire dependsOn before DB ids exist. */
+  id: string;
+  title: string;
+  department: string;
+  detail: string;
+  /** Plan-local ids of prerequisite tasks (within the same plan). */
+  dependsOn?: string[];
+  /** Plan-local id of the owning objective. */
+  objectiveId?: string | null;
+}
+
+/** The transient plan returned by decomposeGoal and shown to the founder for
+ *  approval. Never persisted directly — only its objectives[] + tasks[] are
+ *  materialized into the workspace on approve. */
+export interface OrchestratorPlan {
+  goal: string;
+  objectives: PlanObjective[];
+  tasks: PlanTask[];
+}
+
+/** Caps for the orchestration layer — bounded decomposition, no runaway plans. */
+export const ORCH_MAX_OBJECTIVES = 8;
+export const ORCH_MAX_TASKS_PER_OBJECTIVE = 6;
+/** Hard ceiling on total tasks in a materialized plan (8 * 6). */
+export const ORCH_MAX_TASKS = ORCH_MAX_OBJECTIVES * ORCH_MAX_TASKS_PER_OBJECTIVE;
+
+/* ------------------------------------------------------------------ *
+ * Governed spend layer (Feature 3) — agents may PROPOSE spending but
+ * NEVER move money. A propose_spend call is ALWAYS routed to human
+ * approval (it is risk:'sensitive' on the finance connector). On
+ * approval the system records the spend against a per-workspace BUDGET
+ * + the audit log — it NEVER touches a payment system. Budget + spend
+ * ledger live in meta jsonb (capped/sanitized); see lib/connectors.ts
+ * (the finance connector + executor) and app/api/{spend,budget}.
+ * ------------------------------------------------------------------ */
+
+/** A per-workspace budget. Money is never moved — this is a governance ceiling
+ *  the ledger is measured against, surfaced as a spent/total bar. */
+export interface BudgetConfig {
+  /** Total budget ceiling, in whole USD (clamped to [0, 1e9]). */
+  totalUsd: number;
+  /** Display currency code (kept for the UI label; <=6 chars). */
+  currency: string;
+  /** Optional period label, e.g. "Q3 2026" or "Monthly" (<=40 chars). */
+  periodLabel?: string;
+}
+
+/** An APPROVED spend, recorded for governance only — there is NO payment. Card /
+ *  banking details are never stored (a propose_spend never carries them, and the
+ *  audit redactor would strip them anyway). */
+export interface SpendRecord {
+  id: string;
+  /** Links the spend to an objective / task when raised in that context. */
+  objectiveId?: string | null;
+  taskId?: string | null;
+  department: string;
+  /** Approved amount in USD (coerced to a non-negative number). */
+  amountUsd: number;
+  /** Human-readable label (vendor + reason), <=120 chars. */
+  label: string;
+  ts: number;
+}
+
+/** Caps for the spend ledger — bounded growth of the meta jsonb blob. */
+export const SPEND_MAX_RECORDS = 500;
+/** Hard ceiling on a single budget total (a sanity clamp, not a payment limit). */
+export const BUDGET_MAX_USD = 1_000_000_000;
+
 /** The JSON blob stored in cofounder_workspaces.meta. All fields optional. */
 export interface WorkspaceMeta {
   /** Chosen visual-identity vibe id (drives the brand kit). */
@@ -238,6 +345,12 @@ export interface WorkspaceMeta {
   pendingApprovals?: PendingApproval[];
   /** Append-only audit log of tool approvals/denials (ring buffer, capped at 200). */
   auditLog?: AuditEntry[];
+  /** Approved orchestration objectives for this company (capped at 8). */
+  objectives?: PlanObjective[];
+  /** Per-workspace spend budget (governance ceiling — money is never moved). */
+  budget?: BudgetConfig | null;
+  /** Approved spends recorded for governance (ring buffer, capped at 500). */
+  spendRecords?: SpendRecord[];
 }
 
 /** Env-var-NAME shape: uppercase, digits, underscore — never an actual secret
@@ -376,16 +489,192 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
     });
   }
 
+  // ---- Orchestration layer (capped objectives) ----
+
+  if (Array.isArray(m.objectives)) {
+    out.objectives = (m.objectives as unknown[])
+      .slice(0, ORCH_MAX_OBJECTIVES)
+      .map((o) => {
+        const obj = (o && typeof o === "object" ? o : {}) as Record<string, unknown>;
+        const status: ObjectiveStatus =
+          obj.status === "achieved" || obj.status === "needs_action" || obj.status === "cancelled"
+            ? obj.status
+            : "open";
+        return {
+          id: coerceText(obj.id, 40) || `o_${Math.random().toString(36).slice(2, 10)}`,
+          title: coerceText(obj.title, 200) || "Objective",
+          description: coerceText(obj.description, 1000),
+          role: coerceText(obj.role, 60),
+          department: coerceDepartment(obj.department),
+          status,
+          // taskIds + dependsOn: capped arrays of short string ids.
+          taskIds: Array.isArray(obj.taskIds)
+            ? (obj.taskIds as unknown[]).slice(0, ORCH_MAX_TASKS).map((t) => coerceText(t, 100)).filter(Boolean)
+            : [],
+          dependsOn: Array.isArray(obj.dependsOn)
+            ? (obj.dependsOn as unknown[]).slice(0, ORCH_MAX_OBJECTIVES).map((d) => coerceText(d, 100)).filter(Boolean)
+            : [],
+          ts: typeof obj.ts === "number" ? obj.ts : Date.now(),
+        } satisfies PlanObjective;
+      });
+  }
+
+  // ---- Governed spend layer (budget + capped ledger) ----
+
+  if (m.budget && typeof m.budget === "object" && !Array.isArray(m.budget)) {
+    const b = m.budget as Record<string, unknown>;
+    const rawTotal = typeof b.totalUsd === "number" && Number.isFinite(b.totalUsd) ? b.totalUsd : 0;
+    const budget: BudgetConfig = {
+      // Clamp to a sane, non-negative ceiling. Not a payment limit — a UI/governance bound.
+      totalUsd: Math.min(Math.max(rawTotal, 0), BUDGET_MAX_USD),
+      currency: (coerceText(b.currency, 6) || "USD").toUpperCase(),
+    };
+    const periodLabel = coerceText(b.periodLabel, 40);
+    if (periodLabel) budget.periodLabel = periodLabel;
+    out.budget = budget;
+  } else if (m.budget === null) {
+    out.budget = null;
+  }
+
+  if (Array.isArray(m.spendRecords)) {
+    // slice(-SPEND_MAX_RECORDS): keep the NEWEST records (ring buffer; oldest dropped).
+    out.spendRecords = (m.spendRecords as unknown[]).slice(-SPEND_MAX_RECORDS).map((s) => {
+      const o = (s && typeof s === "object" ? s : {}) as Record<string, unknown>;
+      const rawAmt = typeof o.amountUsd === "number" && Number.isFinite(o.amountUsd) ? o.amountUsd : 0;
+      const rec: SpendRecord = {
+        id: coerceText(o.id, 40) || `sp_${Math.random().toString(36).slice(2, 10)}`,
+        department: coerceDepartment(o.department),
+        // Approved amount, coerced to a non-negative number (never debt/refund here).
+        amountUsd: Math.min(Math.max(rawAmt, 0), BUDGET_MAX_USD),
+        label: coerceText(o.label, 120),
+        ts: typeof o.ts === "number" ? o.ts : Date.now(),
+      };
+      if (typeof o.objectiveId === "string") rec.objectiveId = o.objectiveId.slice(0, 40);
+      else if (o.objectiveId === null) rec.objectiveId = null;
+      if (typeof o.taskId === "string") rec.taskId = o.taskId.slice(0, 100);
+      else if (o.taskId === null) rec.taskId = null;
+      return rec;
+    });
+  }
+
   // Total meta size guard: the workspace row's jsonb must stay reasonable. If we
   // blew the budget, drop the LOWEST-priority field (the audit log) — it's a
-  // convenience record, not load-bearing state.
+  // convenience record, not load-bearing state. If STILL too large, trim the
+  // spend ledger to its newest 100 entries (the primary growth vector once a
+  // workspace processes many spend proposals); the budget config is tiny.
   try {
     if (JSON.stringify(out).length > 200_000 && out.auditLog) {
       delete out.auditLog;
+    }
+    if (JSON.stringify(out).length > 200_000 && out.spendRecords && out.spendRecords.length > 100) {
+      out.spendRecords = out.spendRecords.slice(-100);
     }
   } catch {
     delete out.auditLog;
   }
 
   return out;
+}
+
+/* ------------------------------------------------------------------ *
+ * Orchestration pure helpers — dependency gating + objective roll-up.
+ * These depend only on Task / PlanObjective (defined above) and are
+ * imported by BOTH the runner/route filters and the test suite, so they
+ * carry no server-only imports and never call the model.
+ * ------------------------------------------------------------------ */
+
+/**
+ * A task is READY to run only when every task it dependsOn is in the done set.
+ * Empty/missing deps -> always ready. Circular-safe: a cycle never makes all
+ * deps appear done, so a cyclic task simply never becomes ready (no infinite
+ * loop). A dep that doesn't exist in the workspace is treated as unsatisfiable.
+ */
+export function isTaskReady(task: Pick<Task, "dependsOn">, doneIds: Set<string>): boolean {
+  const deps = task.dependsOn ?? [];
+  if (deps.length === 0) return true;
+  return deps.every((id) => doneIds.has(id));
+}
+
+/**
+ * Roll up an objective's status from its tasks (those whose objectiveId matches,
+ * or whose id is in obj.taskIds). Precedence: any needs_action -> "needs_action";
+ * else all done (and at least one task) -> "achieved"; else "open". A cancelled
+ * objective stays cancelled. An objective with no tasks is "open".
+ */
+export function objectiveStatus(
+  obj: Pick<PlanObjective, "id" | "taskIds" | "status">,
+  tasks: Task[],
+): ObjectiveStatus {
+  if (obj.status === "cancelled") return "cancelled";
+  const idSet = new Set(obj.taskIds ?? []);
+  const owned = tasks.filter((t) => t.objectiveId === obj.id || idSet.has(t.id));
+  if (owned.length === 0) return "open";
+  if (owned.some((t) => t.status === "needs_action")) return "needs_action";
+  if (owned.every((t) => t.status === "done")) return "achieved";
+  return "open";
+}
+
+/**
+ * Compute the set of objective ids that are BLOCKED by an unmet objective-level
+ * dependency: an objective X is blocked when any objective in X.dependsOn is not
+ * yet "achieved" (rolled up via objectiveStatus). The orchestrator orders
+ * objectives with dependsOn (e.g. "build product" before "go to market"); this
+ * lets the run-route actionable filters honor that ordering so a task under a
+ * not-yet-unblocked objective doesn't run before its prerequisite objectives are
+ * achieved (which would produce deliverables whose inputs don't exist yet).
+ *
+ * Pure + cycle-safe: a missing/unknown dependency id is treated as unmet (so its
+ * dependents stay blocked), and a dependency cycle simply leaves every objective
+ * in it blocked (it can never reach "achieved") — never an infinite loop.
+ */
+export function blockedObjectiveIds(
+  objectives: readonly Pick<PlanObjective, "id" | "taskIds" | "status" | "dependsOn">[],
+  tasks: Task[],
+): Set<string> {
+  // Pre-roll every objective's status once (O(objectives * tasks), bounded small).
+  const statusById = new Map<string, ObjectiveStatus>();
+  for (const o of objectives) statusById.set(o.id, objectiveStatus(o, tasks));
+  const blocked = new Set<string>();
+  for (const o of objectives) {
+    const deps = o.dependsOn ?? [];
+    // Blocked if ANY prerequisite isn't achieved. An unknown dep id (not in the
+    // map) is unmet -> treated as blocking, so a dangling ref fails closed.
+    if (deps.some((d) => statusById.get(d) !== "achieved")) blocked.add(o.id);
+  }
+  return blocked;
+}
+
+/* ------------------------------------------------------------------ *
+ * Governed spend pure helpers — budget math. Depend only on the
+ * SpendRecord / BudgetConfig shapes above and never touch a payment
+ * system; imported by the UI (the ledger view + over-budget warning),
+ * the spend/budget routes, and the test suite.
+ * ------------------------------------------------------------------ */
+
+/** Sum the approved spend (USD) across all records. Non-finite / negative amounts
+ *  are treated as 0 (the sanitizer already clamps, but this is defense-in-depth so
+ *  a raw, unsanitized list can't produce NaN). */
+export function totalSpent(records: readonly Pick<SpendRecord, "amountUsd">[]): number {
+  let sum = 0;
+  for (const r of records) {
+    const a = typeof r.amountUsd === "number" && Number.isFinite(r.amountUsd) ? r.amountUsd : 0;
+    if (a > 0) sum += a;
+  }
+  return sum;
+}
+
+/**
+ * Would approving a new spend of `proposedUsd` push total spend OVER the budget?
+ * Returns false when there is no budget (null/undefined) — an absent ceiling
+ * can't be exceeded. This is purely informational: the over-budget case warns
+ * the reviewer but never blocks the human's decision.
+ */
+export function isOverBudget(
+  budget: BudgetConfig | null | undefined,
+  records: readonly Pick<SpendRecord, "amountUsd">[],
+  proposedUsd: number,
+): boolean {
+  if (!budget || typeof budget.totalUsd !== "number" || !Number.isFinite(budget.totalUsd)) return false;
+  const proposed = typeof proposedUsd === "number" && Number.isFinite(proposedUsd) && proposedUsd > 0 ? proposedUsd : 0;
+  return totalSpent(records) + proposed > budget.totalUsd;
 }

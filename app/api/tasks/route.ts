@@ -1,4 +1,4 @@
-import { listTasks, patchTask, insertTasks, dbConfigured } from "@/lib/supabase-rest";
+import { listTasks, patchTask, insertTasks, dbConfigured, stripDetailEnvelope } from "@/lib/supabase-rest";
 import {
   coerceText,
   coerceStatus,
@@ -27,7 +27,9 @@ export async function POST(req: Request) {
       title,
       department: coerceDepartment(body.department),
       status: coerceStatus(body.status), // defaults to "todo"
-      detail: coerceText(body.detail, 1000),
+      // Strip any forged orchestration envelope (cf:{...}|) — a user must not be
+      // able to set deps/objectiveId/executor via the in-band detail field.
+      detail: stripDetailEnvelope(coerceText(body.detail, 1000)),
     };
     if (dbConfigured && workspaceId) {
       const [task] = await insertTasks(workspaceId, [row]);
@@ -100,7 +102,9 @@ export async function PATCH(req: Request) {
       if (t) allowed.title = t;
     }
     if (patch.detail !== undefined) {
-      allowed.detail = coerceText(patch.detail, 1000);
+      // Strip any forged orchestration envelope so an edit can't smuggle a
+      // privileged routing hint (executor) or rewire deps via the detail field.
+      allowed.detail = stripDetailEnvelope(coerceText(patch.detail, 1000));
     }
     if (Object.keys(allowed).length === 0) {
       return Response.json(

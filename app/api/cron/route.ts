@@ -8,7 +8,7 @@ import {
   patchTask,
 } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
-import type { Task } from "@/lib/agent-types";
+import { isTaskReady, blockedObjectiveIds, type Task, type PlanObjective } from "@/lib/agent-types";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -49,15 +49,30 @@ async function handle(req: Request): Promise<Response> {
   for (const ws of workspaceIds) {
     if (jobs.length >= MAX_PER_TICK) break;
     try {
-      const [tasks, artifacts] = await Promise.all([listTasks(ws), listArtifacts(ws)]);
+      const [tasks, artifacts, workspace] = await Promise.all([
+        listTasks(ws),
+        listArtifacts(ws),
+        getWorkspace(ws).catch(() => null),
+      ]);
       const withArtifact = new Set(artifacts.map((a) => a.taskId).filter(Boolean));
+      // Dependency gate (same as /api/run): only drain tasks whose deps are done.
+      const doneIds = new Set<string>(withArtifact as Set<string>);
+      for (const t of tasks) if (t.status === "done") doneIds.add(t.id);
+      // Objective gate (same as /api/run): skip tasks under a blocked objective so
+      // the cron can't race ahead of the plan's objective ordering.
+      const objectives = (workspace?.meta?.objectives ?? []) as PlanObjective[];
+      const blockedObjs = blockedObjectiveIds(objectives, tasks);
       const actionable = tasks.filter(
-        (t) => (t.status === "todo" || t.status === "running") && !withArtifact.has(t.id),
+        (t) =>
+          (t.status === "todo" || t.status === "running") &&
+          !withArtifact.has(t.id) &&
+          !(t.objectiveId && blockedObjs.has(t.objectiveId)) &&
+          isTaskReady(t, doneIds),
       );
       if (actionable.length === 0) continue;
       const claimed = await claimTask(actionable[0].id, ws, staleCutoff, nowIso).catch(() => null);
       if (!claimed) continue; // another runner holds it
-      const idea = (await getWorkspace(ws).catch(() => null))?.idea ?? "";
+      const idea = workspace?.idea ?? "";
       jobs.push({ ws, task: claimed, idea });
     } catch {
       /* skip this workspace this tick */
@@ -70,7 +85,15 @@ async function handle(req: Request): Promise<Response> {
     jobs.map((jb) =>
       produceDeliverable(
         jb.ws,
-        { id: jb.task.id, title: jb.task.title, department: jb.task.department, detail: jb.task.detail },
+        {
+          id: jb.task.id,
+          title: jb.task.title,
+          department: jb.task.department,
+          detail: jb.task.detail,
+          deps: jb.task.dependsOn,
+          objectiveId: jb.task.objectiveId,
+          executor: jb.task.executor,
+        },
         jb.idea,
       ),
     ),

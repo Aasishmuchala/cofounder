@@ -30,14 +30,111 @@ function headers(extra?: Record<string, string>): HeadersInit {
   };
 }
 
+/**
+ * Orchestration metadata (deps + objectiveId) is encoded as a JSON envelope
+ * PREFIX on the task's detail column — `cf:{...}|<original detail>` — so the
+ * dependency graph persists with NO schema migration (the existing
+ * cofounder_tasks table has no deps/executor columns). decodeDetail parses it
+ * back; encodeDetail writes it. The prefix is server-side only and stripped
+ * before the detail is shown to the user or sent to the model.
+ *
+ * SECURITY: the envelope is an IN-BAND, user-reachable channel (POST/PATCH
+ * /api/tasks accept body.detail verbatim). It is NOT an authenticated control
+ * channel, so decodeDetail must NOT let a user-typed detail forge a privileged
+ * routing hint. In particular `executor` is validated against a strict
+ * allowlist (only "claude-code") — any other value is dropped — and /api/tasks
+ * strips a leading `cf:` from caller-supplied detail before storing (see
+ * stripDetailEnvelope). Defense-in-depth: the runner ALSO gates the claude-code
+ * branch on department, so a forged executor on a non-Engineering task is moot.
+ */
+const DETAIL_PREFIX = "cf:";
+const DETAIL_SEP = "|";
+
+/** The only executor value the envelope may carry — anything else is dropped on
+ *  decode so a user-typed `cf:{"executor":"…"}|` can't invent a routing hint. */
+const ALLOWED_EXECUTORS = new Set(["claude-code"]);
+
+interface DetailMeta {
+  deps?: string[];
+  objectiveId?: string | null;
+  executor?: string;
+}
+
+/** Parse the `cf:{...}|` envelope off a detail string. Returns the decoded meta
+ *  plus the bare human-readable detail (envelope stripped). Never throws. */
+export function decodeDetail(raw: string): { meta: DetailMeta; detail: string } {
+  if (typeof raw !== "string" || !raw.startsWith(DETAIL_PREFIX)) {
+    return { meta: {}, detail: typeof raw === "string" ? raw : "" };
+  }
+  const sep = raw.indexOf(DETAIL_SEP);
+  if (sep === -1) return { meta: {}, detail: raw };
+  const json = raw.slice(DETAIL_PREFIX.length, sep);
+  const rest = raw.slice(sep + 1);
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    // Only treat it as our envelope if it's a plain object — a user-typed detail
+    // like "cf:note|rest" parses to a string/number and must be left intact.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { meta: {}, detail: raw };
+    }
+    const p = parsed as Record<string, unknown>;
+    const meta: DetailMeta = {};
+    if (Array.isArray(p.deps)) {
+      meta.deps = p.deps.filter((d): d is string => typeof d === "string").slice(0, 48);
+    }
+    if (typeof p.objectiveId === "string") meta.objectiveId = p.objectiveId;
+    // executor is a privileged routing hint — only honor an allowlisted value so
+    // a user-typed `cf:{"executor":"claude-code"}|x` can't be the ONLY gate (the
+    // runner still requires department + the claudeCodeActive double-gate too).
+    if (typeof p.executor === "string" && ALLOWED_EXECUTORS.has(p.executor)) meta.executor = p.executor;
+    return { meta, detail: rest };
+  } catch {
+    // Not valid JSON after the prefix -> not our envelope; keep the raw detail.
+    return { meta: {}, detail: raw };
+  }
+}
+
+/** Build a detail string with the orchestration envelope prefixed, only when
+ *  there is something to encode (otherwise the bare detail is stored). */
+export function encodeDetail(detail: string, meta: DetailMeta): string {
+  const env: DetailMeta = {};
+  if (meta.deps && meta.deps.length > 0) env.deps = meta.deps.slice(0, 48);
+  if (meta.objectiveId) env.objectiveId = meta.objectiveId;
+  if (meta.executor) env.executor = meta.executor;
+  if (Object.keys(env).length === 0) return detail;
+  return `${DETAIL_PREFIX}${JSON.stringify(env)}${DETAIL_SEP}${detail}`;
+}
+
+/**
+ * Neutralize a USER-supplied detail so it can never be interpreted as a system
+ * orchestration envelope. The `cf:{...}|` prefix is a server-only control
+ * channel (deps/objectiveId/executor); a caller of POST/PATCH /api/tasks must
+ * not be able to smuggle one in. Any detail that decodes to a non-empty envelope
+ * has that prefix stripped (we keep the human-readable remainder). A plain
+ * detail — even one that merely *starts* with "cf:" but isn't a real envelope —
+ * is returned untouched, so normal text like "cf: see config" is preserved.
+ */
+export function stripDetailEnvelope(detail: string): string {
+  if (typeof detail !== "string" || !detail.startsWith(DETAIL_PREFIX)) return detail;
+  const { meta, detail: bare } = decodeDetail(detail);
+  // A real envelope decoded to at least one orchestration field -> drop it,
+  // returning only the bare remainder the user actually typed after the pipe.
+  return Object.keys(meta).length > 0 ? bare : detail;
+}
+
 function rowToTask(r: DbTaskRow): Task {
-  return {
+  const { meta, detail } = decodeDetail(r.detail);
+  const task: Task = {
     id: r.id,
     title: r.title,
     department: r.department,
     status: r.status,
-    detail: r.detail,
+    detail,
   };
+  if (meta.deps && meta.deps.length > 0) task.dependsOn = meta.deps;
+  if (meta.objectiveId !== undefined) task.objectiveId = meta.objectiveId;
+  if (meta.executor) task.executor = meta.executor;
+  return task;
 }
 
 async function rest(path: string, init: RequestInit): Promise<Response> {
@@ -149,7 +246,13 @@ export async function insertTasks(
     title: t.title,
     department: t.department,
     status: t.status,
-    detail: t.detail,
+    // Encode any orchestration metadata (deps/objectiveId/executor) into the
+    // detail envelope — persisted without a schema migration; rowToTask decodes.
+    detail: encodeDetail(t.detail, {
+      deps: t.dependsOn,
+      objectiveId: t.objectiveId ?? undefined,
+      executor: t.executor,
+    }),
   }));
   const res = await rest("cofounder_tasks", {
     method: "POST",

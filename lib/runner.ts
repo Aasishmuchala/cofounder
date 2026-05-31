@@ -21,6 +21,16 @@ import {
 } from "@/lib/connectors";
 import type { PendingApproval } from "@/lib/agent-types";
 import { getAnthropic, MODEL } from "@/lib/anthropic";
+// Server-only Claude Code local-delegation executor (Feature 2). runner.ts is
+// already server-only, so a static import is fine here (it keeps node:child_process
+// LAZY internally). Used by the executor-routing branch in produceDeliverable.
+import { claudeCodeActive, runClaudeCode } from "@/lib/claude-code";
+
+/** Departments the local Claude Code executor may run for. MUST mirror the
+ *  orchestrator's CLAUDE_CODE_DEPARTMENTS — kept here as a defense-in-depth gate
+ *  so a FORGED executor='claude-code' on a non-Engineering task (e.g. smuggled
+ *  through the detail envelope) is ignored, not routed to local code execution. */
+const CLAUDE_CODE_DEPARTMENTS = new Set(["Engineering"]);
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
 import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
 import { compareSkills } from "@/lib/skill-select";
@@ -34,6 +44,12 @@ export interface RunnerTask {
   title: string;
   department: string;
   detail?: string;
+  /** Prerequisite task ids (dependency gating happens in the run-route filters). */
+  deps?: string[];
+  /** Owning objective id (orchestration layer), or null. */
+  objectiveId?: string | null;
+  /** Routing hint — reserved for local delegation (e.g. "claude-code"). */
+  executor?: string;
 }
 
 /** A frozen sensitive tool call from the model's turn, awaiting the taskId stamp
@@ -579,8 +595,60 @@ export async function produceDeliverable(
   let content = "";
   let mock = true;
 
+  // ── Feature 2: Claude Code local-delegation routing branch ──────────────
+  // A task the orchestrator flagged executor='claude-code' (Engineering / code
+  // work) is routed to a REAL local Claude Code session inside an isolated git
+  // worktree instead of single-shot generation. Gated by the SAME double-gate as
+  // computer-use (claudeCodeActive). The executor degrades gracefully when the CLI
+  // is absent ({status:'claude_code_unavailable'}) or the gate is off
+  // ({status:'disabled'}), in which case we FALL THROUGH to the normal Anthropic
+  // path below — a missing CLI never fails a task. On success the summary + a diff
+  // preview becomes the deliverable content, and the existing verify+persist
+  // pipeline (below) runs unchanged for both code paths.
+  let claudeCodeHandled = false;
+  // Triple gate: executor hint AND an allowlisted department (defense-in-depth
+  // against a forged envelope) AND the claudeCodeActive() env/workspace double-gate.
+  if (
+    task.executor === "claude-code" &&
+    CLAUDE_CODE_DEPARTMENTS.has(task.department) &&
+    claudeCodeActive()
+  ) {
+    try {
+      const cc = await runClaudeCode(
+        { id: task.id, title: task.title, department: task.department, detail: task.detail },
+        { idea, planSummary: plan?.context?.product ?? undefined },
+      );
+      if (cc.status === "ok" || cc.status === "error") {
+        // Compose the deliverable: a summary, then the diff as a fenced code block
+        // (so the markdown preview renders it). Output is already sanitized by the
+        // executor; the control-char strip below applies to both paths.
+        const diffBlock = cc.diff ? `\n\n## Changes (git diff)\n\n\`\`\`diff\n${cc.diff}\n\`\`\`` : "";
+        const banner =
+          cc.status === "error"
+            ? "_Claude Code reported an error during this run; review the summary + diff below._\n\n"
+            : "";
+        content = `${banner}${cc.summary}${diffBlock}`.trim();
+        title = `${(idea || "Company").slice(0, 50)} — ${noun} (Claude Code)`;
+        mock = false;
+        claudeCodeHandled = content.length > 0;
+      }
+      // status 'disabled' | 'claude_code_unavailable' -> fall through to Anthropic.
+    } catch {
+      // Any unexpected failure -> graceful fallback to the normal generation path.
+      claudeCodeHandled = false;
+    }
+  }
+
+  // A Claude Code deliverable is a run summary + git diff in MARKDOWN — not a React
+  // page — so it must be stored, checked, judged, and previewed AS markdown (an
+  // Engineering task's natural kind is landing_page, which would otherwise try to
+  // compile this prose as a component and fail). For every other path the kind is
+  // unchanged. (Per the blueprint's claudeCode design: kind='markdown' for the
+  // summary + diff preview.)
+  const effectiveKind: ArtifactKind = claudeCodeHandled ? "markdown" : kind;
+
   const client = getAnthropic();
-  if (client) {
+  if (!claudeCodeHandled && client) {
     try {
       // Landing pages: single fast generation (no tool round-trips). Others: the
       // full tool-use loop for cross-deliverable context.
@@ -675,12 +743,15 @@ export async function produceDeliverable(
   hooks?.onPhase?.("reviewing");
   let evaluation: DeliverableEval;
   if (!mock && client) {
-    let judged = await judgeDeliverable(client, { kind, idea, task: task.title, content });
+    let judged = await judgeDeliverable(client, { kind: effectiveKind, idea, task: task.title, content });
     let iterations = 1;
     // Regenerating a full React page (after tool-use + image gen) is too slow to
     // fit serverless limits, so landing pages are judged once with no auto-retry.
     // Cheaper text deliverables still get the regenerate-once-below-bar pass.
-    if (judged && judged.score < QUALITY_BAR && kind !== "landing_page") {
+    // A Claude Code deliverable is NEVER regenerated via the model — its content is
+    // a real run summary + git diff; replacing it with a fresh model generation
+    // would discard the actual code change. It is judged once (informational only).
+    if (judged && judged.score < QUALITY_BAR && kind !== "landing_page" && !claudeCodeHandled) {
       try {
         const retryPrompt = `${basePrompt}\n\nA strict reviewer scored your previous attempt ${judged.score}/10. The most important things to FIX: ${judged.notes}\nProduce a clearly better version that fully addresses this feedback. Use the exact same output format as before.`;
         const resp2 = await client.messages.create({
@@ -690,7 +761,7 @@ export async function produceDeliverable(
         });
         const content2 = cleanText(resp2);
         if (content2.length > 0) {
-          const judged2 = await judgeDeliverable(client, { kind, idea, task: task.title, content: content2 });
+          const judged2 = await judgeDeliverable(client, { kind: effectiveKind, idea, task: task.title, content: content2 });
           iterations = 2;
           if (judged2 && judged2.score >= judged.score) {
             // Strip control chars here too — the regenerated content bypasses the
@@ -703,7 +774,7 @@ export async function produceDeliverable(
         /* keep the first attempt */
       }
     }
-    const finalChecks = runChecks(kind, content);
+    const finalChecks = runChecks(effectiveKind, content);
     evaluation = judged
       ? { score: judged.score, rubric: judged.rubric, checks: finalChecks, notes: judged.notes, iterations, judged: true }
       : {
@@ -715,7 +786,7 @@ export async function produceDeliverable(
           judged: false,
         };
   } else {
-    const checks = runChecks(kind, content);
+    const checks = runChecks(effectiveKind, content);
     evaluation = {
       score: heuristicScore(checks),
       rubric: [],
@@ -731,7 +802,7 @@ export async function produceDeliverable(
     try {
       const art = await insertArtifact(workspaceId, {
         taskId: task.id,
-        kind,
+        kind: effectiveKind,
         title,
         content,
         skill: headline,
@@ -748,7 +819,7 @@ export async function produceDeliverable(
     artifact: {
       id: artifactId ?? `a_${Math.random().toString(36).slice(2, 10)}`,
       taskId: task.id,
-      kind,
+      kind: effectiveKind,
       title,
       content,
       skill: headline,

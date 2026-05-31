@@ -1,6 +1,6 @@
-import { coerceText } from "@/lib/agent-types";
+import { coerceText, isTaskReady, blockedObjectiveIds, type PlanObjective } from "@/lib/agent-types";
 import { authorizeWrite } from "@/lib/auth";
-import { dbConfigured, listTasks, listArtifacts, patchTask, claimTask } from "@/lib/supabase-rest";
+import { dbConfigured, listTasks, listArtifacts, patchTask, claimTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
 export const runtime = "nodejs";
@@ -43,16 +43,34 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ ran: null, remaining: 0, persisted: false });
   }
 
-  let tasks, artifacts;
+  let tasks, artifacts, workspace;
   try {
-    [tasks, artifacts] = await Promise.all([listTasks(workspaceId), listArtifacts(workspaceId)]);
+    [tasks, artifacts, workspace] = await Promise.all([
+      listTasks(workspaceId),
+      listArtifacts(workspaceId),
+      getWorkspace(workspaceId),
+    ]);
   } catch {
     return Response.json({ ran: null, remaining: 0, error: "load failed" });
   }
 
   const withArtifact = new Set(artifacts.map((a) => a.taskId).filter(Boolean));
+  // A task is done once it has an artifact OR its status is done — both gate deps.
+  const doneIds = new Set<string>(withArtifact as Set<string>);
+  for (const t of tasks) if (t.status === "done") doneIds.add(t.id);
+  // OBJECTIVE GATE: an objective whose prerequisite objectives aren't achieved is
+  // blocked; its tasks must not run yet (honors the orchestrator's plan ordering).
+  const objectives = (workspace?.meta?.objectives ?? []) as PlanObjective[];
+  const blockedObjs = blockedObjectiveIds(objectives, tasks);
+  // DEPENDENCY GATE: a task is actionable only when its prerequisite tasks are
+  // done (isTaskReady) AND its owning objective isn't blocked. Tasks with no deps
+  // / no objective are always ready (back-compat).
   const actionable = tasks.filter(
-    (t) => (t.status === "todo" || t.status === "running") && !withArtifact.has(t.id),
+    (t) =>
+      (t.status === "todo" || t.status === "running") &&
+      !withArtifact.has(t.id) &&
+      !(t.objectiveId && blockedObjs.has(t.objectiveId)) &&
+      isTaskReady(t, doneIds),
   );
   if (actionable.length === 0) {
     return Response.json({ ran: null, remaining: 0 });
@@ -81,7 +99,15 @@ export async function POST(req: Request): Promise<Response> {
   try {
     await produceDeliverable(
       workspaceId,
-      { id: claimed.id, title: claimed.title, department: claimed.department, detail: claimed.detail },
+      {
+        id: claimed.id,
+        title: claimed.title,
+        department: claimed.department,
+        detail: claimed.detail,
+        deps: claimed.dependsOn,
+        objectiveId: claimed.objectiveId,
+        executor: claimed.executor,
+      },
       idea,
     );
     return Response.json({ ran: claimed.id, remaining: Math.max(0, actionable.length - 1) });

@@ -1,8 +1,29 @@
-import { coerceText, redactArgs } from "@/lib/agent-types";
-import type { PendingApproval, AuditEntry } from "@/lib/agent-types";
+import { coerceText, redactArgs, coerceDepartment, SPEND_MAX_RECORDS } from "@/lib/agent-types";
+import type { PendingApproval, AuditEntry, SpendRecord } from "@/lib/agent-types";
 import { authorizeWrite } from "@/lib/auth";
 import { dbConfigured, getWorkspace, updateWorkspaceMeta, patchTask } from "@/lib/supabase-rest";
 import { getConnectorRegistry, classifyTool, isContentProhibited, dispatchConnectorTool } from "@/lib/connectors";
+
+/** Build a governance SpendRecord from an approved propose_spend (NO payment).
+ *  Returns null for any other tool. amount is coerced to a non-negative number;
+ *  the label combines vendor + reason for a readable ledger row. */
+function spendRecordFromApproval(approval: PendingApproval): SpendRecord | null {
+  if (approval.toolName !== "propose_spend") return null;
+  const a = approval.args;
+  const amount = typeof a.amount === "number" && Number.isFinite(a.amount) && a.amount > 0 ? a.amount : 0;
+  const vendor = (typeof a.vendor === "string" ? a.vendor : "").slice(0, 80) || "vendor";
+  const reason = (typeof a.reason === "string" ? a.reason : "").slice(0, 80);
+  return {
+    id: `sp_${Math.random().toString(36).slice(2, 10)}`,
+    taskId: approval.taskId || null,
+    objectiveId: null,
+    // Spend proposals are owned by Finance for the ledger roll-up.
+    department: coerceDepartment("Finance"),
+    amountUsd: amount,
+    label: reason ? `${vendor} — ${reason}`.slice(0, 120) : vendor,
+    ts: Date.now(),
+  };
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -95,11 +116,20 @@ export async function POST(req: Request): Promise<Response> {
   const redactedArgs = redactArgs(approval.args) as Record<string, string>;
 
   let result: string | undefined;
+  // On an approved propose_spend, RECORD the spend against the budget ledger —
+  // never move money. Built from the frozen args; appended below alongside meta.
+  let spendRecords: SpendRecord[] | undefined;
   if (action === "approve") {
     // Execute the FROZEN { tool, args } deterministically — output is
     // injection-scanned + capped inside dispatchConnectorTool.
     result = await dispatchConnectorTool(approval.toolName, approval.args, registry);
     auditLog.push({ approvalId, action: "approve", outcome: result, ts: Date.now(), redactedArgs });
+    const spend = spendRecordFromApproval(approval);
+    if (spend) {
+      // Append to the existing ledger; ring-buffer to the newest SPEND_MAX_RECORDS.
+      const existing = (ws.meta?.spendRecords ?? []) as SpendRecord[];
+      spendRecords = [...existing, spend].slice(-SPEND_MAX_RECORDS);
+    }
   } else {
     auditLog.push({ approvalId, action: "deny", ts: Date.now(), redactedArgs });
   }
@@ -113,7 +143,12 @@ export async function POST(req: Request): Promise<Response> {
     // sanitizeWorkspaceMeta, because that redacts pendingApprovals.args and would
     // corrupt the REAL args of other still-pending approvals (they need real
     // values to execute on approval).
-    await updateWorkspaceMeta(workspaceId, { pendingApprovals: remaining, auditLog: auditLog.slice(-200) });
+    await updateWorkspaceMeta(workspaceId, {
+      pendingApprovals: remaining,
+      auditLog: auditLog.slice(-200),
+      // Only write the ledger when a spend was actually recorded (approve path).
+      ...(spendRecords ? { spendRecords } : {}),
+    });
   } catch {
     return Response.json({ ok: false, error: "save failed" }, { status: 500 });
   }

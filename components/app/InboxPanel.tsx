@@ -3,8 +3,8 @@
 import * as React from "react";
 import { useEffect, useState } from "react";
 import { cx, MonoLabel } from "@/components/ui/primitives";
-import { departmentColor } from "@/lib/agent-types";
-import type { PendingApproval } from "@/lib/agent-types";
+import { departmentColor, isOverBudget } from "@/lib/agent-types";
+import type { PendingApproval, BudgetConfig, SpendRecord } from "@/lib/agent-types";
 import { DEPARTMENT_INFO } from "@/lib/cofounder-data";
 import type { UseCofounder } from "@/lib/use-cofounder";
 
@@ -49,7 +49,49 @@ const PREVIEW_LABEL = "font-mono text-[9px] uppercase tracking-[0.06em] text-[va
  * diff; git mutations show the repo + arg; browser_act shows action + target.
  * Non-computer connectors keep the original compact JSON preview (no regression).
  */
-function ApprovalPreview({ connectorId, toolName, args }: { connectorId: string; toolName: string; args: Record<string, unknown> }) {
+function ApprovalPreview({
+  connectorId,
+  toolName,
+  args,
+  budget,
+  spendRecords,
+}: {
+  connectorId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  budget?: BudgetConfig | null;
+  spendRecords?: SpendRecord[];
+}) {
+  // ── Governed spend proposal ── (Feature 3). Show amount + currency prominently,
+  // vendor, and reason; warn (informationally) if approving would exceed the budget.
+  // This is the ONLY thing that happens on approve: the spend is RECORDED, never paid.
+  if (toolName === "propose_spend") {
+    const amount = argStr(args, "amount", 20) || (typeof args.amount === "number" ? String(args.amount) : "");
+    const currency = argStr(args, "currency", 6) || "USD";
+    const vendor = argStr(args, "vendor", 120);
+    const reason = argStr(args, "reason", 400);
+    const proposedNum = typeof args.amount === "number" ? args.amount : Number(amount) || 0;
+    const over = isOverBudget(budget, spendRecords ?? [], proposedNum);
+    return (
+      <div className="mt-1" title={JSON.stringify(args)}>
+        <span className={PREVIEW_LABEL}>Spend proposal</span>
+        <div className="mt-0.5 flex items-baseline gap-1.5">
+          <span className="font-display text-[16px] font-medium text-[var(--text-80)]">
+            {amount || "—"} {currency}
+          </span>
+          {vendor && <span className="truncate font-mono text-[11px] text-[var(--text-50)]">→ {vendor}</span>}
+        </div>
+        {reason && <pre className={CODE_BLOCK}>{reason}</pre>}
+        {over && (
+          <span className="mt-1 inline-block rounded-[5px] bg-[#fff0ed] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.05em] text-[var(--coral)]">
+            ⚠ Over budget
+          </span>
+        )}
+        <span className="mt-1 block font-mono text-[9px] text-[var(--text-50)]">Recorded only — no payment is made.</span>
+      </div>
+    );
+  }
+
   if (connectorId !== "computer") {
     return (
       <p className="mt-1 truncate font-mono text-[10px] text-[var(--text-50)]" title={JSON.stringify(args)}>
@@ -286,7 +328,13 @@ export default function InboxPanel({
                       </span>
                       <span className="font-mono text-[12px] text-[var(--text-80)]">{ap.toolName}</span>
                     </div>
-                    <ApprovalPreview connectorId={ap.connectorId} toolName={ap.toolName} args={ap.args} />
+                    <ApprovalPreview
+                      connectorId={ap.connectorId}
+                      toolName={ap.toolName}
+                      args={ap.args}
+                      budget={meta.budget}
+                      spendRecords={meta.spendRecords}
+                    />
                     {canEdit && (
                       <span className="mt-1.5 flex gap-1.5">
                         <span

@@ -1,6 +1,6 @@
-import { coerceText } from "@/lib/agent-types";
+import { coerceText, isTaskReady, blockedObjectiveIds, type PlanObjective } from "@/lib/agent-types";
 import { authorizeWrite } from "@/lib/auth";
-import { dbConfigured, listTasks, listArtifacts, claimTask, patchTask } from "@/lib/supabase-rest";
+import { dbConfigured, listTasks, listArtifacts, claimTask, patchTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
 export const runtime = "nodejs";
@@ -41,15 +41,31 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // Only run a task that's actionable and not already produced.
-  let tasks, artifacts;
+  let tasks, artifacts, workspace;
   try {
-    [tasks, artifacts] = await Promise.all([listTasks(workspaceId), listArtifacts(workspaceId)]);
+    [tasks, artifacts, workspace] = await Promise.all([
+      listTasks(workspaceId),
+      listArtifacts(workspaceId),
+      getWorkspace(workspaceId),
+    ]);
   } catch {
     return Response.json({ error: "load failed" }, { status: 500 });
   }
   const withArtifact = new Set(artifacts.map((a) => a.taskId).filter(Boolean));
+  // Dependency gate: a task is streamable only once its prerequisites are done.
+  const doneIds = new Set<string>(withArtifact as Set<string>);
+  for (const t of tasks) if (t.status === "done") doneIds.add(t.id);
+  // Objective gate: don't stream a task whose owning objective is still blocked
+  // by an unachieved prerequisite objective (same rule as /api/run + /api/cron).
+  const objectives = (workspace?.meta?.objectives ?? []) as PlanObjective[];
+  const blockedObjs = blockedObjectiveIds(objectives, tasks);
   const target = tasks.find(
-    (t) => t.id === taskId && (t.status === "todo" || t.status === "running") && !withArtifact.has(t.id),
+    (t) =>
+      t.id === taskId &&
+      (t.status === "todo" || t.status === "running") &&
+      !withArtifact.has(t.id) &&
+      !(t.objectiveId && blockedObjs.has(t.objectiveId)) &&
+      isTaskReady(t, doneIds),
   );
   if (!target) {
     return Response.json({ error: "not actionable" }, { status: 409 });
@@ -83,7 +99,15 @@ export async function POST(req: Request): Promise<Response> {
         send("status", { phase: "writing", department: claimed.department, title: claimed.title });
         const { artifact } = await produceDeliverable(
           workspaceId,
-          { id: claimed.id, title: claimed.title, department: claimed.department, detail: claimed.detail },
+          {
+            id: claimed.id,
+            title: claimed.title,
+            department: claimed.department,
+            detail: claimed.detail,
+            deps: claimed.dependsOn,
+            objectiveId: claimed.objectiveId,
+            executor: claimed.executor,
+          },
           idea,
           {
             onHop: () => send("reset", {}),

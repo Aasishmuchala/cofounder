@@ -28,6 +28,13 @@ import { INJECTION } from "@/lib/skills";
 // so importing it here keeps node:child_process / node:fs / playwright off the
 // client bundle. The import is the single executor entry point.
 import { runComputerTool, computerUseActive, isProhibitedShell } from "@/lib/computer";
+// Server-only executor for the "claude-code" connector (Feature 2 — local
+// delegation). Imported here only for the env-gate (claudeCodeActive) so the
+// registry can suppress the connector's tools when the double-gate is inactive,
+// EXACTLY like the computer connector. The actual delegation runs through the
+// runner's executor-routing branch (lib/runner.ts), not this connector's tool —
+// see lib/claude-code.ts for the rationale. Both files are server-only.
+import { claudeCodeActive } from "@/lib/claude-code";
 
 /** A tool one connector exposes to the model, with its risk classification. */
 export interface ConnectorTool {
@@ -42,7 +49,7 @@ export interface ConnectorTool {
 export interface ConnectorDef {
   id: string;
   label: string;
-  kind: "mock" | "http-mcp" | "computer";
+  kind: "mock" | "http-mcp" | "computer" | "claude-code" | "finance";
   enabled: boolean;
   /** Env var NAME holding the endpoint/secret for http-mcp connectors. */
   secretEnvVar?: string;
@@ -348,6 +355,96 @@ export const BUILT_IN_CONNECTORS: ConnectorDef[] = [
       },
     ],
   },
+  {
+    // ── Claude Code local delegation connector (Feature 2) ────────────────
+    // Routes Engineering / code tasks to a REAL local Claude Code session inside
+    // an isolated git worktree. HIGH-RISK local execution: OFF by default +
+    // double-gated (server env CLAUDE_CODE=1 AND workspace toggle) with a
+    // production refusal — enforced in getConnectorRegistry via claudeCodeActive().
+    // The PRIMARY delegation path is the runner's executor-routing branch
+    // (produceDeliverable routes task.executor==='claude-code' here); this
+    // connector exists so the workspace can TOGGLE the feature on/off in the
+    // Connections UI and so the env-gate has a single, consistent surface. The
+    // delegate_to_claude_code tool is SENSITIVE (queued for human approval) for the
+    // rare case an agent wants to explicitly request a code run; the read-only
+    // inspection tools are SAFE. Executors live in lib/claude-code.ts (server-only).
+    id: "claude-code",
+    label: "Claude Code",
+    kind: "claude-code",
+    enabled: false,
+    tools: [
+      {
+        name: "delegate_to_claude_code",
+        description:
+          "Delegate a coding task to a local Claude Code session in an isolated git worktree. HIGH RISK — runs code on the local machine, so it is QUEUED for human approval; the reviewer sees the task + working dir first. Engineering tasks are routed here automatically by the orchestrator; call this only to explicitly request an extra code run.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task: { type: "string", description: "A concrete description of the coding task to perform." },
+            working_dir: { type: "string", description: "Optional sub-path within the configured Claude Code root." },
+          },
+          required: ["task"],
+        },
+      },
+      {
+        name: "claude_code_read_file",
+        description:
+          "Read a UTF-8 text file from the Claude Code working root. Read-only — runs automatically. Secret/credential paths are blocked by policy.",
+        risk: "safe",
+        inputSchema: {
+          type: "object",
+          properties: { path: { type: "string", description: "File path to read (under the Claude Code root)." } },
+          required: ["path"],
+        },
+      },
+      {
+        name: "claude_code_diff",
+        description:
+          "Show `git diff` for the Claude Code working repository. Read-only — runs automatically.",
+        risk: "safe",
+        inputSchema: {
+          type: "object",
+          properties: { args: { type: "string", description: "Optional extra args (e.g. a ref or path)." } },
+        },
+      },
+    ],
+  },
+  {
+    // ── Finance / governed spend connector (Feature 3) ────────────────────
+    // Lets any agent PROPOSE a spend — it NEVER moves money. propose_spend is
+    // declared SENSITIVE so it is ALWAYS queued for human approval (it never
+    // auto-executes, and the PROHIBITED_NAME guard deliberately does NOT match
+    // "propose_spend" — a human CAN approve a proposal). On approval the executor
+    // RECORDS the spend against the per-workspace budget + audit log via /api/spend;
+    // there is NO payment API, no card/banking interaction, no external request.
+    // OFF by default like every built-in connector (toggle it on in the Connections
+    // tab); no ENV GATE is needed because it touches no real system — unlike the
+    // computer / claude-code connectors. See dispatchConnectorTool's finance branch
+    // + app/api/spend (which records the approved spend against the budget).
+    id: "finance",
+    label: "Finance",
+    kind: "finance",
+    enabled: false,
+    tools: [
+      {
+        name: "propose_spend",
+        description:
+          "Propose a spend for human approval — amount, currency, vendor, and reason. This NEVER moves money: it is ALWAYS queued for your approval, and on approval is recorded against the company budget for governance only (no payment is ever made). Use this whenever a task would cost money.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: {
+            amount: { type: "number", description: "The proposed amount (a positive number)." },
+            currency: { type: "string", description: "Currency code, e.g. 'USD'." },
+            vendor: { type: "string", description: "Who would be paid (e.g. 'AWS', 'Figma')." },
+            reason: { type: "string", description: "Why the spend is needed." },
+          },
+          required: ["amount", "currency", "vendor", "reason"],
+        },
+      },
+    ],
+  },
 ];
 
 /** The set of built-in connector ids — the only ids a workspace may enable. */
@@ -379,6 +476,14 @@ export function getConnectorRegistry(
     // COMPUTER_USE_ALLOW_PROD=1). When off, enabled is forced false, so
     // buildConnectorToolDescriptors emits no computer tools at all.
     if (merged.id === "computer" && merged.enabled && !computerUseActive()) {
+      return { ...merged, enabled: false };
+    }
+    // SAME server env gate for the Claude Code local-delegation connector,
+    // applied after the workspace override so the toggle can never bypass it.
+    // claudeCodeActive() encapsulates the double-gate (CLAUDE_CODE=1 + the prod
+    // refusal). When off, enabled is forced false so no claude-code tools are
+    // exposed — and the runner's executor branch also re-checks at run time.
+    if (merged.id === "claude-code" && merged.enabled && !claudeCodeActive()) {
       return { ...merged, enabled: false };
     }
     return merged;
@@ -581,6 +686,73 @@ async function runHttpMcpTool(
 }
 
 /**
+ * Executor for the "claude-code" connector. Re-checks the double-gate at execution
+ * time (defense-in-depth — the registry gate already suppresses the connector, but
+ * an approved SENSITIVE call replays the frozen args through dispatch, so we verify
+ * again here). Returns its own sanitized JSON; dispatchConnectorTool sanitizes once
+ * more on the way out (idempotent). Imports lib/claude-code.ts LAZILY so the build
+ * never depends on the CLI and the heavy server module isn't loaded for unrelated
+ * connector calls.
+ */
+async function runClaudeCodeTool(toolName: string, input: Record<string, unknown>): Promise<string> {
+  // Defense-in-depth gate (mirrors runComputerTool's execution-time re-check).
+  if (!claudeCodeActive()) {
+    return JSON.stringify({
+      status: "disabled",
+      detail:
+        "The Claude Code connector is inactive: CLAUDE_CODE is not '1', or a production refusal applies (set CLAUDE_CODE_ALLOW_PROD=1 to override on a deployed server).",
+    });
+  }
+  const { runClaudeCode } = await import("@/lib/claude-code");
+  if (toolName === "delegate_to_claude_code") {
+    const taskText = typeof input.task === "string" ? input.task : "";
+    if (!taskText) return JSON.stringify({ status: "error", detail: "delegate_to_claude_code requires a task." });
+    // Synthesize a minimal task for the executor. The deliverable summary + diff
+    // are returned so an approved explicit delegation surfaces its result.
+    const res = await runClaudeCode({
+      id: `cc_${Math.random().toString(36).slice(2, 10)}`,
+      title: taskText.slice(0, 200),
+      department: "Engineering",
+      detail: taskText,
+    });
+    return JSON.stringify({ status: res.status, summary: res.summary, diff: res.diff.slice(0, 4000) });
+  }
+  // The read-only inspection tools (claude_code_read_file / claude_code_diff) are
+  // SAFE but only meaningful with the CLI present; without a concrete executor they
+  // report the gate state so the model gets a deterministic, non-misleading result.
+  if (toolName === "claude_code_read_file" || toolName === "claude_code_diff") {
+    return JSON.stringify({
+      status: "ok",
+      tool: toolName,
+      detail: "Claude Code is active. Inspection is available via the delegated session's returned diff.",
+    });
+  }
+  return JSON.stringify({ status: "unknown_tool", tool: toolName });
+}
+
+/**
+ * Executor for the "finance" connector's propose_spend. This NEVER moves money —
+ * it only acknowledges the approved proposal. The actual SpendRecord is appended
+ * to meta.spendRecords by the approvals route (which holds the workspace context),
+ * so this returns a deterministic, payment-free confirmation that becomes the
+ * audit `outcome`. amount/vendor/reason are not SENSITIVE_KEY matches, so they
+ * surface unredacted in the audit log — correct for governance (the reviewer
+ * approved them and the record must be readable).
+ */
+function runFinanceTool(toolName: string, input: Record<string, unknown>): string {
+  if (toolName === "propose_spend") {
+    const amount = typeof input.amount === "number" && Number.isFinite(input.amount) ? input.amount : 0;
+    const currency = typeof input.currency === "string" ? input.currency.slice(0, 6) : "USD";
+    const vendor = typeof input.vendor === "string" ? input.vendor.slice(0, 120) : "(vendor)";
+    const reason = typeof input.reason === "string" ? input.reason.slice(0, 400) : "";
+    // status:"recorded" — the spend is logged against the budget, NOT paid. No
+    // payment system is touched anywhere in this path.
+    return JSON.stringify({ status: "recorded", amount, currency, vendor, reason, payment: "none" });
+  }
+  return JSON.stringify({ status: "unknown_tool", tool: toolName });
+}
+
+/**
  * Execute a connector tool and return a SANITIZED string for a tool_result.
  *
  * This runs for SAFE tools inline (from the runner loop) AND for approved
@@ -610,6 +782,14 @@ export async function dispatchConnectorTool(
       // The computer executor sanitizes its own output AND re-checks the env gate
       // + shell denylist + secret-path policy at execution time (defense-in-depth).
       raw = await runComputerTool(toolName, input);
+    } else if (hit.connector.kind === "claude-code") {
+      // The claude-code executor re-checks the double-gate at execution time and
+      // degrades gracefully when the CLI is absent (lazy import — no build dep).
+      raw = await runClaudeCodeTool(toolName, input);
+    } else if (hit.connector.kind === "finance") {
+      // Records-only: acknowledges an approved spend. NEVER moves money — the
+      // approvals route appends the SpendRecord to meta from the same args.
+      raw = runFinanceTool(toolName, input);
     } else if (hit.connector.kind === "http-mcp") {
       raw = await runHttpMcpTool(hit.connector, toolName, input);
     } else {

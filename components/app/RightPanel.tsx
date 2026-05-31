@@ -21,10 +21,11 @@ import DepartmentView from "@/components/app/DepartmentView";
 import ProgressDashboard from "@/components/app/ProgressDashboard";
 import SkillsTab from "@/components/app/SkillsTab";
 import ConnectionsTab from "@/components/app/ConnectionsTab";
+import OrgTab from "@/components/app/OrgTab";
 import type { CustomAgent } from "@/lib/use-custom-agents";
 
-type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Skills" | "Connections" | "Library";
-const TABS: TabKey[] = ["Home", "Cofounder", "Company", "Tasks", "Skills", "Connections", "Library"];
+type TabKey = "Home" | "Cofounder" | "Company" | "Org" | "Tasks" | "Skills" | "Connections" | "Library";
+const TABS: TabKey[] = ["Home", "Cofounder", "Company", "Org", "Tasks", "Skills", "Connections", "Library"];
 
 export default function RightPanel({
   cf,
@@ -115,6 +116,7 @@ export default function RightPanel({
               />
             )}
             {tab === "Company" && <CompanyTab brand={brand} customAgents={customAgents} />}
+            {tab === "Org" && <OrgTab cf={cf} brand={brand} customAgents={customAgents} />}
             {tab === "Tasks" && <TasksTab cf={cf} onSelectDepartment={onSelectDepartment} />}
             {tab === "Skills" && <SkillsTab cf={cf} />}
             {tab === "Connections" && <ConnectionsTab cf={cf} />}

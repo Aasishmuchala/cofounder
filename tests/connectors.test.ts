@@ -49,7 +49,7 @@ describe("risk policy classifier", () => {
     const noneEnabled = getConnectorRegistry([]);
     expect(buildConnectorToolDescriptors(noneEnabled)).toHaveLength(0);
     const descriptors = buildConnectorToolDescriptors(ENABLED);
-    expect(descriptors.map((d) => d.name).sort()).toEqual(["post_update", "send_email", "web_search"]);
+    expect(descriptors.map((d) => d.name).sort()).toEqual(["post_update", "propose_spend", "send_email", "web_search"]);
     // Each descriptor carries an input_schema (Anthropic.Tool shape).
     for (const d of descriptors) expect(d.input_schema.type).toBe("object");
   });
