@@ -1,6 +1,7 @@
 // Server-only Supabase access via PostgREST (no SDK dependency).
 // Used exclusively from API route handlers — never imported into client code.
 
+import { randomBytes } from "node:crypto";
 import type { Task, TaskStatus, Artifact, ArtifactKind, SkillRef, DeliverableEval, WorkspaceMeta } from "@/lib/agent-types";
 
 const URL = process.env.SUPABASE_URL;
@@ -44,20 +45,30 @@ async function rest(path: string, init: RequestInit): Promise<Response> {
   return fetch(`${URL}/rest/v1/${path}`, init);
 }
 
-/** Create a workspace (a company run). Returns its id. */
+/**
+ * Create a workspace (a company run). Mints a per-workspace edit key: the
+ * creator gets it back (their proof of ownership for writes); anyone else with
+ * just the workspace id can read but not write. Returns the id + the key.
+ */
 export async function createWorkspace(
   name: string,
   idea: string,
   meta: WorkspaceMeta = {},
-): Promise<string> {
+): Promise<{ id: string; editKey: string }> {
+  const editKey = randomBytes(24).toString("base64url");
   const res = await rest("cofounder_workspaces", {
     method: "POST",
     headers: headers({ Prefer: "return=representation" }),
-    body: JSON.stringify({ name: name.slice(0, 120), idea: idea.slice(0, 600), meta }),
+    body: JSON.stringify({
+      name: name.slice(0, 120),
+      idea: idea.slice(0, 600),
+      meta,
+      edit_key: editKey,
+    }),
   });
   if (!res.ok) throw new Error(`createWorkspace failed (${res.status})`);
   const rows = (await res.json()) as { id: string }[];
-  return rows[0].id;
+  return { id: rows[0].id, editKey };
 }
 
 interface DbWorkspaceRow {
@@ -65,6 +76,7 @@ interface DbWorkspaceRow {
   name: string;
   idea: string | null;
   meta: WorkspaceMeta | null;
+  edit_key: string | null;
 }
 
 export interface WorkspaceRecord {
@@ -72,19 +84,37 @@ export interface WorkspaceRecord {
   name: string;
   idea: string;
   meta: WorkspaceMeta;
+  /** True once the workspace has an edit key — i.e. writes require it. */
+  protected: boolean;
 }
 
-/** Fetch a workspace row (name + idea + the durable meta blob). */
+/** Fetch a workspace row. Returns `protected` (whether it has an edit key) but
+ *  NEVER the key itself — reads are public, so the key must not leak here. */
 export async function getWorkspace(id: string): Promise<WorkspaceRecord | null> {
   const res = await rest(
-    `cofounder_workspaces?id=eq.${encodeURIComponent(id)}&select=id,name,idea,meta&limit=1`,
+    `cofounder_workspaces?id=eq.${encodeURIComponent(id)}&select=id,name,idea,meta,edit_key&limit=1`,
     { method: "GET", headers: headers() },
   );
   if (!res.ok) return null;
   const rows = (await res.json()) as DbWorkspaceRow[];
   const r = rows[0];
   if (!r) return null;
-  return { id: r.id, name: r.name, idea: r.idea ?? "", meta: r.meta ?? {} };
+  return { id: r.id, name: r.name, idea: r.idea ?? "", meta: r.meta ?? {}, protected: Boolean(r.edit_key) };
+}
+
+/**
+ * Read a workspace's edit key for write authorization. Server-only; the result
+ * is compared in constant time and never returned to a client. Throws on a
+ * transport error so the caller can fail closed.
+ */
+export async function getWorkspaceEditKey(id: string): Promise<string | null> {
+  const res = await rest(
+    `cofounder_workspaces?id=eq.${encodeURIComponent(id)}&select=edit_key&limit=1`,
+    { method: "GET", headers: headers() },
+  );
+  if (!res.ok) throw new Error(`getWorkspaceEditKey failed (${res.status})`);
+  const rows = (await res.json()) as { edit_key: string | null }[];
+  return rows[0]?.edit_key ?? null;
 }
 
 /**

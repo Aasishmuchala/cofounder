@@ -21,6 +21,7 @@ export default function AppPage() {
   const customAgents = cf.persisted ? cf.meta.customAgents ?? [] : localAgents.customAgents;
   function addAgent(name: string, department: string, blurb: string) {
     if (cf.persisted) {
+      if (!cf.canEdit) return; // view-only (shared link without the edit key)
       const n = name.trim();
       if (!n) return;
       const next = [
@@ -66,6 +67,7 @@ export default function AppPage() {
     if (!hasCompany && onb.status === "idle") {
       void onb.start(text);
     } else if (!(onb.active && !hasCompany)) {
+      if (cf.persisted && !cf.canEdit) return; // view-only: can't chat changes in
       void cf.send(text);
     }
   }
@@ -105,19 +107,28 @@ export default function AppPage() {
     setTimeout(() => setPublished(false), 2500);
   }
 
-  // Share: a stable link to this company's workspace. Opening it on any device /
-  // browser loads the same company (brand, plan, agents, tasks) from the server.
-  const [shared, setShared] = React.useState(false);
-  function handleShare() {
-    if (typeof window === "undefined" || !cf.workspaceId) return;
-    const url = `${window.location.origin}/app?w=${cf.workspaceId}`;
+  // Share: a stable link to this company's workspace. The VIEW link (?w=) is
+  // read-only; the EDIT link (?w=&k=) carries the owner key so the holder can
+  // edit too (also how the owner preserves their own access across devices).
+  const [shared, setShared] = React.useState<"" | "view" | "edit">("");
+  function copyLink(url: string, kind: "view" | "edit") {
     try {
       navigator.clipboard?.writeText(url)?.catch(() => {});
     } catch {
       /* clipboard unavailable (non-secure context) */
     }
-    setShared(true);
-    setTimeout(() => setShared(false), 2500);
+    setShared(kind);
+    setTimeout(() => setShared(""), 2500);
+  }
+  function handleShareView() {
+    if (typeof window === "undefined" || !cf.workspaceId) return;
+    copyLink(`${window.location.origin}/app?w=${cf.workspaceId}`, "view");
+  }
+  function handleShareEdit() {
+    if (typeof window === "undefined" || !cf.workspaceId) return;
+    const key = window.localStorage.getItem("cf_secret");
+    const url = `${window.location.origin}/app?w=${cf.workspaceId}${key ? `&k=${encodeURIComponent(key)}` : ""}`;
+    copyLink(url, "edit");
   }
 
   // Keep the address bar pointed at the shareable workspace link, so a refresh
@@ -125,9 +136,20 @@ export default function AppPage() {
   React.useEffect(() => {
     if (typeof window === "undefined" || !cf.workspaceId) return;
     const params = new URLSearchParams(window.location.search);
+    let changed = false;
     if (params.get("w") !== cf.workspaceId) {
       params.set("w", cf.workspaceId);
-      window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+      changed = true;
+    }
+    // The edit key (?k=) was consumed into local storage on load — don't leave
+    // it lingering in the address bar / browser history.
+    if (params.has("k")) {
+      params.delete("k");
+      changed = true;
+    }
+    if (changed) {
+      const qs = params.toString();
+      window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
     }
   }, [cf.workspaceId]);
 
@@ -139,7 +161,8 @@ export default function AppPage() {
   const statusSig = cf.tasks.map((t) => t.id + t.status).join("|");
   React.useEffect(() => {
     if (cf.persisted) {
-      void cf.drive();
+      // View-only visitors don't drive the runner (writes would 403 anyway).
+      if (cf.canEdit) void cf.drive();
       return;
     }
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -159,8 +182,8 @@ export default function AppPage() {
       }
     });
     return () => timers.forEach(clearTimeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status signature + persisted
-  }, [statusSig, cf.persisted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status signature + persisted + edit-rights
+  }, [statusSig, cf.persisted, cf.canEdit]);
 
   // Cross-device / cache-cleared restore: when the workspace exists in the DB
   // but the onboarding view-state was lost (localStorage empty), rebuild the
@@ -201,20 +224,47 @@ export default function AppPage() {
           }}
         />
         <div className="absolute right-5 top-4 z-30 flex items-center gap-2">
-          {cf.persisted && cf.workspaceId && (
-            <button
-              onClick={handleShare}
-              title="Copy a shareable link to this company"
-              className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
+          {cf.persisted && cf.workspaceId && !cf.canEdit && (
+            <span
+              title="You opened a shared view link — changes are disabled. Ask the owner for an edit link."
+              className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-50)] shadow-raised"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
-                <circle cx="18" cy="5" r="3" />
-                <circle cx="6" cy="12" r="3" />
-                <circle cx="18" cy="19" r="3" />
-                <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" strokeLinecap="round" />
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+                <circle cx="12" cy="12" r="3" />
               </svg>
-              {shared ? "Link copied ✓" : "Share"}
-            </button>
+              View only
+            </span>
+          )}
+          {cf.persisted && cf.workspaceId && cf.canEdit && (
+            <>
+              <button
+                onClick={handleShareView}
+                title="Copy a view-only link to this company"
+                className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                  <circle cx="18" cy="5" r="3" />
+                  <circle cx="6" cy="12" r="3" />
+                  <circle cx="18" cy="19" r="3" />
+                  <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" strokeLinecap="round" />
+                </svg>
+                {shared === "view" ? "Link copied ✓" : "Share"}
+              </button>
+              {cf.isProtected && (
+                <button
+                  onClick={handleShareEdit}
+                  title="Copy your owner edit link — keeps full access (save it to edit from another device)"
+                  aria-label="Copy owner edit link"
+                  className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-2.5 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                    <path d="M21 2l-2 2m-7.6 7.6a5 5 0 11-7 7 5 5 0 017-7zm0 0L15 8m0 0l3 3 3-3-3-3" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  {shared === "edit" ? "Copied ✓" : "Owner link"}
+                </button>
+              )}
+            </>
           )}
           <button
             onClick={handlePublish}

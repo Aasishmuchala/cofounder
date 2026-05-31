@@ -1,5 +1,5 @@
 import { coerceText } from "@/lib/agent-types";
-import { verifyWorkspaceToken } from "@/lib/auth";
+import { authorizeWrite } from "@/lib/auth";
 import { dbConfigured, listTasks, listArtifacts, patchTask, claimTask } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
@@ -36,7 +36,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!workspaceId) {
     return Response.json({ ran: null, remaining: 0, error: "no workspace" }, { status: 400 });
   }
-  if (!verifyWorkspaceToken(workspaceId, workspaceSecret)) {
+  if (!(await authorizeWrite(workspaceId, workspaceSecret))) {
     return Response.json({ ran: null, remaining: 0, error: "unauthorized" }, { status: 403 });
   }
   if (!dbConfigured) {

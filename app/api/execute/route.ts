@@ -1,5 +1,5 @@
 import { coerceText } from "@/lib/agent-types";
-import { verifyWorkspaceToken } from "@/lib/auth";
+import { authorizeWrite } from "@/lib/auth";
 import { produceDeliverable } from "@/lib/runner";
 
 export const runtime = "nodejs";
@@ -34,8 +34,8 @@ export async function POST(req: Request): Promise<Response> {
   const workspaceId = coerceText(body.workspaceId, 100);
   const workspaceSecret = coerceText(body.workspaceSecret, 200) || undefined;
 
-  // Persisting a deliverable into a workspace requires its capability token.
-  if (workspaceId && !verifyWorkspaceToken(workspaceId, workspaceSecret)) {
+  // Persisting a deliverable into a workspace requires its edit key.
+  if (workspaceId && !(await authorizeWrite(workspaceId, workspaceSecret))) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 403 });
   }
 

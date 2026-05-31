@@ -55,11 +55,13 @@ export default function RightPanel({
 
   const hasCompany = messages.length > 0 || tasks.length > 0;
   const onboardingActive = onb.active && !hasCompany;
+  // A shared view link (persisted workspace, no edit key): reading only.
+  const viewOnly = cf.persisted && !cf.canEdit;
 
   const submit = (e?: React.FormEvent) => {
     e?.preventDefault();
     const text = draft.trim();
-    if (!text || loading || onboardingActive) return;
+    if (!text || loading || onboardingActive || viewOnly) return;
     onSend(text);
     setDraft("");
   };
@@ -133,19 +135,21 @@ export default function RightPanel({
               }
             }}
             rows={1}
-            disabled={onboardingActive}
+            disabled={onboardingActive || viewOnly}
             placeholder={
-              onboardingActive
-                ? "Finish setup above to start chatting…"
-                : !hasCompany && !onb.started
-                  ? "Share what you're building…"
-                  : "Ask Cofounder anything about your company…"
+              viewOnly
+                ? "View only — ask the owner for an edit link to make changes."
+                : onboardingActive
+                  ? "Finish setup above to start chatting…"
+                  : !hasCompany && !onb.started
+                    ? "Share what you're building…"
+                    : "Ask Cofounder anything about your company…"
             }
             className="max-h-32 flex-1 resize-none bg-transparent py-1.5 font-display text-[14px] text-[var(--text)] outline-none placeholder:text-[var(--text-50)] disabled:opacity-60"
           />
           <button
             type="submit"
-            disabled={loading || !draft.trim() || onboardingActive}
+            disabled={loading || !draft.trim() || onboardingActive || viewOnly}
             aria-label="Send"
             className="btn-light-surface grid h-9 w-9 shrink-0 place-items-center rounded-[9px] disabled:opacity-40"
           >
@@ -277,24 +281,28 @@ function HomeTab({
         </div>
       )}
 
-      {/* Suggested next */}
-      <div className="mt-7 flex items-center justify-between">
-        <SectionLabel>Suggested next</SectionLabel>
-      </div>
-      <div className="mt-2 space-y-2">
-        {suggested.map((s) => (
-          <button
-            key={s}
-            onClick={() => cf.send(s)}
-            className="flex w-full items-center gap-2.5 text-left transition-opacity hover:opacity-70"
-          >
-            <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full border border-[var(--text-30)]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--text-30)]" />
-            </span>
-            <span className="font-display text-[14px] text-[var(--text-70)]">{s}</span>
-          </button>
-        ))}
-      </div>
+      {/* Suggested next — owners only (each kicks off a write) */}
+      {cf.canEdit && (
+        <>
+          <div className="mt-7 flex items-center justify-between">
+            <SectionLabel>Suggested next</SectionLabel>
+          </div>
+          <div className="mt-2 space-y-2">
+            {suggested.map((s) => (
+              <button
+                key={s}
+                onClick={() => cf.send(s)}
+                className="flex w-full items-center gap-2.5 text-left transition-opacity hover:opacity-70"
+              >
+                <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full border border-[var(--text-30)]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--text-30)]" />
+                </span>
+                <span className="font-display text-[14px] text-[var(--text-70)]">{s}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Archived */}
       <SectionLabel className="mt-7">Archived tasks</SectionLabel>
@@ -494,7 +502,7 @@ function TasksTab({ cf, onSelectDepartment }: { cf: UseCofounder; onSelectDepart
                   <StatusTag status={t.status} />
                 </div>
                 <p className="mt-1 text-[12.5px] leading-snug text-[var(--text-50)]">{t.detail}</p>
-                {t.status === "needs_action" && (
+                {t.status === "needs_action" && cf.canEdit && (
                   <div className="mt-2.5 flex gap-2">
                     <button
                       onClick={() => updateTask(t.id, { status: "running" })}

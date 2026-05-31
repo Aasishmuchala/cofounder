@@ -25,6 +25,10 @@ export interface UseCofounder {
   persisted: boolean;
   workspaceId: string | null;
   meta: WorkspaceMeta;
+  /** This workspace requires an edit key (created with access control on). */
+  isProtected: boolean;
+  /** Whether THIS client may write (owner / legacy-open) vs view-only. */
+  canEdit: boolean;
   error: string | null;
   send: (text: string, creationMeta?: WorkspaceMeta) => Promise<void>;
   reset: () => void;
@@ -66,6 +70,10 @@ export function useCofounder(): UseCofounder {
   const [persisted, setPersisted] = useState(false);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [meta, setMeta] = useState<WorkspaceMeta>({});
+  const [isProtected, setIsProtected] = useState(false);
+  // Default to editable; narrowed to false only for a protected workspace we
+  // don't hold the key for (a shared view link).
+  const [canEdit, setCanEdit] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const ideaRef = useRef<string>("");
   const secretRef = useRef<string | null>(null);
@@ -80,21 +88,31 @@ export function useCofounder(): UseCofounder {
   /* Hydrate from the persisted workspace on first mount. */
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // A ?w=<id> link opens a SHARED workspace; adopt it as the current one.
-    const urlWs = new URLSearchParams(window.location.search).get("w");
+    // A ?w=<id> link opens a SHARED workspace; ?k=<key> additionally grants edit.
+    const params = new URLSearchParams(window.location.search);
+    const urlWs = params.get("w");
+    const urlKey = params.get("k");
     const savedWs = window.localStorage.getItem(WS_KEY);
     const switching = Boolean(urlWs && urlWs !== savedWs);
     const saved = urlWs || savedWs;
     if (switching && urlWs) {
-      // The shared company's idea / brand / secret come from the DB, not this
-      // browser's leftovers from a previous company.
+      // The shared company's idea / brand come from the DB, not this browser's
+      // leftovers from a previous company.
       window.localStorage.setItem(WS_KEY, urlWs);
       window.localStorage.removeItem(IDEA_KEY);
-      window.localStorage.removeItem(SECRET_KEY);
       ideaRef.current = "";
-      secretRef.current = null;
     } else {
       ideaRef.current = window.localStorage.getItem(IDEA_KEY) ?? "";
+    }
+    // An edit key from the link wins; otherwise keep this browser's stored key
+    // (unless we're switching to a different, shared workspace → view-only).
+    if (urlKey) {
+      window.localStorage.setItem(SECRET_KEY, urlKey);
+      secretRef.current = urlKey;
+    } else if (switching) {
+      window.localStorage.removeItem(SECRET_KEY);
+      secretRef.current = null;
+    } else {
       secretRef.current = window.localStorage.getItem(SECRET_KEY);
     }
     if (!saved) return;
@@ -115,9 +133,13 @@ export function useCofounder(): UseCofounder {
           ? ((await aRes.json()) as { artifacts: Artifact[] })
           : { artifacts: [] };
         const wData = wRes.ok
-          ? ((await wRes.json()) as { idea?: string; meta?: WorkspaceMeta })
-          : { idea: undefined, meta: undefined };
+          ? ((await wRes.json()) as { idea?: string; meta?: WorkspaceMeta; protected?: boolean })
+          : { idea: undefined, meta: undefined, protected: false };
         if (wData.meta && typeof wData.meta === "object") setMeta(wData.meta);
+        // A protected workspace is editable only if this browser holds the key.
+        const prot = Boolean(wData.protected);
+        setIsProtected(prot);
+        setCanEdit(!prot || Boolean(secretRef.current));
         // Restore the founding idea from the server when the browser lost it
         // (drives the brand name + execution prompts cross-device).
         if (wData.idea && !ideaRef.current) {
@@ -189,6 +211,9 @@ export function useCofounder(): UseCofounder {
           if (typeof window !== "undefined") {
             window.localStorage.setItem(SECRET_KEY, data.workspaceSecret);
           }
+          // We just created this workspace -> we're the owner and hold its key.
+          setIsProtected(true);
+          setCanEdit(true);
         }
         setMessages((prev) => [
           ...prev,
@@ -224,6 +249,8 @@ export function useCofounder(): UseCofounder {
     setPersisted(false);
     setWorkspaceId(null);
     setMeta({});
+    setIsProtected(false);
+    setCanEdit(true);
     setError(null);
     ideaRef.current = "";
     secretRef.current = null;
@@ -496,6 +523,8 @@ export function useCofounder(): UseCofounder {
     persisted,
     workspaceId,
     meta,
+    isProtected,
+    canEdit,
     error,
     send,
     reset,

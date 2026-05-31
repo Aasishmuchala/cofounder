@@ -503,13 +503,15 @@ export default function Canvas({
       {/* Inbox / agent activity (bottom-left) — folds in the approval queue */}
       <InboxPanel cf={cf} onSelectDepartment={onSelectDepartment} />
 
-      {/* Create menu (+ bottom-center): New Agent / New Task */}
-      <CreateMenu
-        addTask={cf.addTask}
-        addAgent={addAgent}
-        onCreatedTask={onCreatedTask}
-        onCreatedAgent={onCreatedAgent}
-      />
+      {/* Create menu (+ bottom-center): New Agent / New Task — owners only */}
+      {cf.canEdit && (
+        <CreateMenu
+          addTask={cf.addTask}
+          addAgent={addAgent}
+          onCreatedTask={onCreatedTask}
+          onCreatedAgent={onCreatedAgent}
+        />
+      )}
 
       {/* deliverables counter */}
       {artifacts.length > 0 && (

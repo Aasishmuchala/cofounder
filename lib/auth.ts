@@ -15,6 +15,7 @@
 // production deployments set APP_SECRET to turn authorization on.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { dbConfigured, getWorkspaceEditKey } from "@/lib/supabase-rest";
 
 const APP_SECRET = process.env.APP_SECRET || "";
 
@@ -44,6 +45,42 @@ export function verifyWorkspaceToken(
       Buffer.from(token, "hex"),
       Buffer.from(expected, "hex"),
     );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Authorize a WRITE to a workspace using its per-workspace edit key.
+ *
+ * - Creating a new workspace (no id yet) or running keyless/local (no DB) is
+ *   always allowed.
+ * - A workspace with no stored edit key is "unprotected" (legacy, created
+ *   before this feature) and stays open — so existing workspaces don't break.
+ * - A workspace WITH an edit key requires the caller to present the matching
+ *   key (constant-time compare). Anyone with only the workspace id (a shared
+ *   view link) can read but not write.
+ *
+ * Fails closed on a transport error for a known workspace (a transient read
+ * failure must not silently grant write access).
+ */
+export async function authorizeWrite(
+  workspaceId: string | undefined,
+  providedKey: string | undefined,
+): Promise<boolean> {
+  if (!workspaceId || !dbConfigured) return true;
+  let stored: string | null;
+  try {
+    stored = await getWorkspaceEditKey(workspaceId);
+  } catch {
+    return false;
+  }
+  if (!stored) return true;
+  if (typeof providedKey !== "string" || providedKey.length !== stored.length) {
+    return false;
+  }
+  try {
+    return timingSafeEqual(Buffer.from(providedKey), Buffer.from(stored));
   } catch {
     return false;
   }

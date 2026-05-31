@@ -1,5 +1,5 @@
 import { coerceText, sanitizeWorkspaceMeta } from "@/lib/agent-types";
-import { verifyWorkspaceToken } from "@/lib/auth";
+import { authorizeWrite } from "@/lib/auth";
 import { dbConfigured, getWorkspace, updateWorkspaceMeta } from "@/lib/supabase-rest";
 
 export const runtime = "nodejs";
@@ -23,7 +23,14 @@ export async function GET(req: Request): Promise<Response> {
   if (!ws) {
     return Response.json({ ok: false, error: "not found" }, { status: 404 });
   }
-  return Response.json({ ok: true, persisted: true, name: ws.name, idea: ws.idea, meta: ws.meta });
+  return Response.json({
+    ok: true,
+    persisted: true,
+    name: ws.name,
+    idea: ws.idea,
+    meta: ws.meta,
+    protected: ws.protected,
+  });
 }
 
 // PATCH /api/workspace — merge a (sanitized) meta patch into the workspace.
@@ -40,7 +47,7 @@ export async function PATCH(req: Request): Promise<Response> {
   if (!workspaceId) {
     return Response.json({ ok: false, error: "no workspace" }, { status: 400 });
   }
-  if (!verifyWorkspaceToken(workspaceId, workspaceSecret)) {
+  if (!(await authorizeWrite(workspaceId, workspaceSecret))) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 403 });
   }
   if (!dbConfigured) {

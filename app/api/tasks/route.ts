@@ -6,7 +6,7 @@ import {
   VALID_STATUSES,
   matchDepartment,
 } from "@/lib/agent-types";
-import { verifyWorkspaceToken } from "@/lib/auth";
+import { authorizeWrite } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -18,7 +18,7 @@ export async function POST(req: Request) {
     const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
     const workspaceId = coerceText(body.workspaceId, 100) || undefined;
     const workspaceSecret = coerceText(body.workspaceSecret, 200) || undefined;
-    if (!verifyWorkspaceToken(workspaceId, workspaceSecret)) {
+    if (!(await authorizeWrite(workspaceId, workspaceSecret))) {
       return Response.json({ ok: false, error: "unauthorized" }, { status: 403 });
     }
     const title = coerceText(body.title, 200);
@@ -72,9 +72,10 @@ export async function PATCH(req: Request) {
       return Response.json({ ok: false, error: "missing id" }, { status: 400 });
     }
     const workspaceId = coerceText(wsRaw, 100) || undefined;
+    const secret = coerceText(workspaceSecret, 200) || undefined;
 
-    // Modifying a task requires its workspace's capability token.
-    if (!verifyWorkspaceToken(workspaceId, workspaceSecret)) {
+    // Modifying a task requires its workspace's edit key.
+    if (!(await authorizeWrite(workspaceId, secret))) {
       return Response.json(
         { ok: false, error: "unauthorized" },
         { status: 403 },

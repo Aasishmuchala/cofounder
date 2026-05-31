@@ -7,7 +7,7 @@ import {
   insertTasks,
 } from "@/lib/supabase-rest";
 import { getAnthropic, aiConfigured, MODEL } from "@/lib/anthropic";
-import { authEnforced, verifyWorkspaceToken, workspaceToken } from "@/lib/auth";
+import { authorizeWrite } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -180,16 +180,25 @@ async function finalize(
 ): Promise<Response> {
   if (dbConfigured) {
     try {
-      const workspaceId =
-        opts.workspaceId ||
-        (await createWorkspace(opts.idea || "Untitled company", opts.idea, opts.meta ?? {}));
+      let workspaceId = opts.workspaceId;
+      let editKey: string | undefined;
+      if (!workspaceId) {
+        const created = await createWorkspace(
+          opts.idea || "Untitled company",
+          opts.idea,
+          opts.meta ?? {},
+        );
+        workspaceId = created.id;
+        editKey = created.editKey;
+      }
       const tasks = await insertTasks(workspaceId, result.tasks);
       return Response.json({
         reply: result.reply,
         tasks,
         workspaceId,
-        // Hand the client its capability token (only when auth is enforced).
-        workspaceSecret: authEnforced ? workspaceToken(workspaceId) : undefined,
+        // The creator receives the per-workspace edit key once, at creation.
+        // (Omitted on later turns — the client already holds it.)
+        workspaceSecret: editKey,
         mock: opts.mock,
         persisted: true,
       });
@@ -221,9 +230,9 @@ export async function POST(req: Request): Promise<Response> {
   // Brand/plan/custom-agent state — only used when creating the workspace.
   const meta = sanitizeWorkspaceMeta(body.meta);
 
-  // Writing into an existing workspace requires its capability token. (First
-  // turn has no workspaceId — anyone may create their own workspace.)
-  if (workspaceId && !verifyWorkspaceToken(workspaceId, workspaceSecret)) {
+  // Writing into an existing workspace requires its edit key. (First turn has
+  // no workspaceId — anyone may create their own workspace.)
+  if (workspaceId && !(await authorizeWrite(workspaceId, workspaceSecret))) {
     return Response.json({ error: "unauthorized" }, { status: 403 });
   }
 
