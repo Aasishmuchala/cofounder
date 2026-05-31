@@ -7,6 +7,8 @@ vi.mock("@/lib/supabase-rest", () => ({
   insertTasks: (...a: unknown[]) => insertTasksMock(...a),
   getWorkspace: (...a: unknown[]) => getWorkspaceMock(...a),
   updateWorkspaceMeta: (...a: unknown[]) => updateWorkspaceMetaMock(...a),
+  // Transparent passthrough — materializePlan now runs under a per-workspace lock.
+  withWorkspaceLock: (_id: string, fn: () => unknown) => fn(),
 }));
 vi.mock("@/lib/anthropic", () => ({ getAnthropic: () => null, MODEL: "test-model" }));
 

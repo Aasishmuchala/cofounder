@@ -28,7 +28,7 @@ import {
 } from "@/lib/agent-types";
 import { getRoleForDepartment } from "@/lib/org";
 import { getAnthropic, MODEL } from "@/lib/anthropic";
-import { getWorkspace, updateWorkspaceMeta, insertTasks } from "@/lib/supabase-rest";
+import { getWorkspace, updateWorkspaceMeta, insertTasks, withWorkspaceLock } from "@/lib/supabase-rest";
 
 /** Departments routed to the local Claude Code executor (Feature 2). The
  *  orchestrator stamps executor="claude-code" on these tasks at creation time;
@@ -338,6 +338,19 @@ export async function materializePlan(
   const plan = sanitizePlan(rawPlan);
   if (plan.objectives.length === 0) return { objectives: [], taskCount: 0 };
 
+  // Serialize per workspace so a double-click / two-tab approve can't clobber
+  // objectives or duplicate tasks (updateWorkspaceMeta is a non-atomic RMW).
+  return withWorkspaceLock(workspaceId, async () => {
+    // Idempotency: if this exact plan (matched by objective titles) is already
+    // materialized, return it unchanged rather than inserting a second copy.
+    const already = (await getWorkspace(workspaceId)
+      .then((w) => (w?.meta?.objectives ?? []) as PlanObjective[])
+      .catch(() => [])) as PlanObjective[];
+    const alreadyTitles = new Set(already.map((o) => o.title));
+    if (plan.objectives.every((o) => alreadyTitles.has(o.title))) {
+      return { objectives: already, taskCount: 0 };
+    }
+
   // Order tasks by dependency depth (roots first) so prerequisites are inserted
   // before dependents and we can map plan-local ids -> real DB ids in one pass.
   const byId = new Map(plan.tasks.map((t) => [t.id, t]));
@@ -413,4 +426,5 @@ export async function materializePlan(
   await updateWorkspaceMeta(workspaceId, { objectives: merged }).catch(() => {});
 
   return { objectives: materializedObjectives, taskCount: realIdByPlanId.size };
+  });
 }
