@@ -181,6 +181,30 @@ export function sanitizePlan(raw: unknown, goalFallback = ""): OrchestratorPlan 
     if (obj) obj.taskIds.push(task.id);
   }
 
+  // Break any CYCLE in the TASK graph too (same rationale as objectives above):
+  // isTaskReady gates on task.dependsOn, so a t1->t2->t1 cycle would deadlock those
+  // tasks forever. DFS in declared order, dropping only back-edges that close a cycle.
+  {
+    const taskById = new Map(tasks.map((t) => [t.id, t] as const));
+    const DONE = 2;
+    const state = new Map<string, number>();
+    const visit = (id: string, stack: Set<string>): void => {
+      state.set(id, 1);
+      stack.add(id);
+      const t = taskById.get(id);
+      if (t) {
+        t.dependsOn = (t.dependsOn ?? []).filter((dep) => {
+          if (stack.has(dep)) return false; // back-edge closes a cycle -> drop
+          if (state.get(dep) !== DONE) visit(dep, stack);
+          return true;
+        });
+      }
+      stack.delete(id);
+      state.set(id, DONE);
+    };
+    for (const t of tasks) if (state.get(t.id) !== DONE) visit(t.id, new Set());
+  }
+
   return { goal, objectives, tasks };
 }
 

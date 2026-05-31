@@ -370,9 +370,21 @@ const SENSITIVE_KEY =
 export function redactArgs(
   args: Record<string, unknown>,
 ): Record<string, unknown> {
+  // Recursive: redact a SENSITIVE_KEY match at ANY depth, so a nested
+  // { headers: { Authorization: "Bearer …" } } or { card: { number } } never
+  // rests verbatim in meta / the audit log. Depth-bounded against pathological input.
+  const walk = (v: unknown, depth: number): unknown => {
+    if (depth > 6 || v === null || typeof v !== "object") return v;
+    if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1));
+    const o: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      o[k] = SENSITIVE_KEY.test(k) ? "[redacted]" : walk(val, depth + 1);
+    }
+    return o;
+  };
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(args)) {
-    out[k] = SENSITIVE_KEY.test(k) ? "[redacted]" : v;
+    out[k] = SENSITIVE_KEY.test(k) ? "[redacted]" : walk(v, 1);
   }
   return out;
 }
@@ -500,8 +512,9 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
           obj.status === "achieved" || obj.status === "needs_action" || obj.status === "cancelled"
             ? obj.status
             : "open";
+        const oid = coerceText(obj.id, 40) || `o_${Math.random().toString(36).slice(2, 10)}`;
         return {
-          id: coerceText(obj.id, 40) || `o_${Math.random().toString(36).slice(2, 10)}`,
+          id: oid,
           title: coerceText(obj.title, 200) || "Objective",
           description: coerceText(obj.description, 1000),
           role: coerceText(obj.role, 60),
@@ -511,8 +524,10 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
           taskIds: Array.isArray(obj.taskIds)
             ? (obj.taskIds as unknown[]).slice(0, ORCH_MAX_TASKS).map((t) => coerceText(t, 100)).filter(Boolean)
             : [],
+          // Drop self-references so an objective can't deadlock itself (mirrors
+          // sanitizePlan; full cycle-breaking runs at decompose time).
           dependsOn: Array.isArray(obj.dependsOn)
-            ? (obj.dependsOn as unknown[]).slice(0, ORCH_MAX_OBJECTIVES).map((d) => coerceText(d, 100)).filter(Boolean)
+            ? (obj.dependsOn as unknown[]).slice(0, ORCH_MAX_OBJECTIVES).map((d) => coerceText(d, 100)).filter((d) => d && d !== oid)
             : [],
           ts: typeof obj.ts === "number" ? obj.ts : Date.now(),
         } satisfies PlanObjective;
@@ -568,6 +583,22 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
     }
     if (JSON.stringify(out).length > 200_000 && out.spendRecords && out.spendRecords.length > 100) {
       out.spendRecords = out.spendRecords.slice(-100);
+    }
+    // Final hard backstop: whatever array field is driving the bloat (objectives /
+    // pendingApprovals / files / customAgents / …), halve the largest until under
+    // the ceiling — so the function NEVER returns an over-budget meta object.
+    const arrayFields = ["pendingApprovals", "objectives", "spendRecords", "files", "customAgents", "auditLog"] as const;
+    let guard = 0;
+    while (JSON.stringify(out).length > 200_000 && guard++ < 24) {
+      let biggest: (typeof arrayFields)[number] | null = null;
+      let biggestLen = 0;
+      for (const f of arrayFields) {
+        const arr = out[f];
+        if (Array.isArray(arr) && arr.length > biggestLen) { biggest = f; biggestLen = arr.length; }
+      }
+      if (!biggest || biggestLen === 0) break;
+      const arr = out[biggest] as unknown[];
+      (out as Record<string, unknown>)[biggest] = arr.slice(0, Math.max(1, Math.floor(arr.length / 2)));
     }
   } catch {
     delete out.auditLog;
@@ -639,7 +670,10 @@ export function blockedObjectiveIds(
     const deps = o.dependsOn ?? [];
     // Blocked if ANY prerequisite isn't achieved. An unknown dep id (not in the
     // map) is unmet -> treated as blocking, so a dangling ref fails closed.
-    if (deps.some((d) => statusById.get(d) !== "achieved")) blocked.add(o.id);
+    // A cancelled prerequisite is a deliberately-dropped branch, NOT a blocker
+    // (else cancelling an objective would permanently deadlock its dependents).
+    // An unknown/unmet dep still blocks (fails closed).
+    if (deps.some((d) => { const s = statusById.get(d); return s !== "achieved" && s !== "cancelled"; })) blocked.add(o.id);
   }
   return blocked;
 }
