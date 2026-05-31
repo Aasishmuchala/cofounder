@@ -22,6 +22,18 @@ export interface RunnerTask {
   detail?: string;
 }
 
+/** Live-progress callbacks for streaming generation (SSE). All optional. */
+export interface StreamHooks {
+  /** A new generation hop began — the client should reset its live buffer. */
+  onHop?: () => void;
+  /** A text delta from the model. */
+  onText?: (delta: string) => void;
+  /** The agent called context tools (e.g. reading a prior deliverable). */
+  onTool?: (names: string[]) => void;
+  /** A coarse phase change ("writing" | "reviewing"). */
+  onPhase?: (phase: string) => void;
+}
+
 /** Escape user-controlled text before interpolating into generated HTML. */
 export function escapeHtml(s: string): string {
   return s
@@ -287,34 +299,52 @@ export async function runAgentTool(
   return "Unknown tool.";
 }
 
+/** One model turn. Streams text deltas through `hooks` when present (SSE),
+ *  otherwise a plain request. Returns the full message for tool-loop handling. */
+async function runHop(
+  client: Anthropic,
+  messages: Anthropic.MessageParam[],
+  useTools: boolean,
+  hooks?: StreamHooks,
+): Promise<Anthropic.Message> {
+  const params = {
+    model: MODEL,
+    max_tokens: 8000,
+    messages,
+    ...(useTools ? { tools: AGENT_TOOLS } : {}),
+  };
+  if (hooks) {
+    hooks.onHop?.();
+    const stream = client.messages.stream(params);
+    if (hooks.onText) stream.on("text", (t: string) => hooks.onText!(t));
+    return await stream.finalMessage();
+  }
+  return await client.messages.create(params);
+}
+
 /**
  * Generate the deliverable text. When the workspace is DB-backed, the agent is
  * given context tools (above) and may call them before producing its final
  * answer — a tool_use loop. Without a workspace it's a single straight call.
+ * Pass `hooks` to stream the generation live (SSE).
  */
 export async function generateWithTools(
   client: Anthropic,
   basePrompt: string,
   workspaceId: string | undefined,
   idea: string,
+  hooks?: StreamHooks,
 ): Promise<string> {
-  if (!dbConfigured || !workspaceId) {
-    const resp = await client.messages.create({
-      model: MODEL,
-      max_tokens: 8000,
-      messages: [{ role: "user", content: basePrompt }],
-    });
-    return cleanText(resp);
-  }
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: basePrompt }];
+  if (!dbConfigured || !workspaceId) {
+    return cleanText(await runHop(client, messages, false, hooks));
+  }
   for (let hop = 0; hop < 4; hop++) {
-    const resp = await client.messages.create({
-      model: MODEL,
-      max_tokens: 8000,
-      tools: AGENT_TOOLS,
-      messages,
-    });
+    const resp = await runHop(client, messages, true, hooks);
     if (resp.stop_reason !== "tool_use") return cleanText(resp);
+    hooks?.onTool?.(
+      resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use").map((b) => b.name),
+    );
     messages.push({ role: "assistant", content: resp.content });
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const block of resp.content) {
@@ -331,14 +361,15 @@ export async function generateWithTools(
     messages.push({ role: "user", content: results });
   }
   // Still calling tools after the hop budget — force a final, tool-free answer.
-  const final = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    messages: [
+  const final = await runHop(
+    client,
+    [
       ...messages,
       { role: "user", content: "Output the final deliverable now, in the required format. Do not call any more tools." },
     ],
-  });
+    false,
+    hooks,
+  );
   return cleanText(final);
 }
 
@@ -352,6 +383,7 @@ export async function produceDeliverable(
   workspaceId: string | undefined,
   task: RunnerTask,
   idea: string,
+  hooks?: StreamHooks,
 ): Promise<{ artifact: Artifact; mock: boolean }> {
   const { kind, noun } = deliverableFor(task.department);
 
@@ -379,7 +411,7 @@ export async function produceDeliverable(
   const client = getAnthropic();
   if (client) {
     try {
-      content = await generateWithTools(client, basePrompt, workspaceId, idea);
+      content = await generateWithTools(client, basePrompt, workspaceId, idea, hooks);
       title = `${(idea || "Company").slice(0, 50)} — ${noun}`;
       mock = content.length === 0;
 
@@ -415,6 +447,7 @@ export async function produceDeliverable(
   }
 
   // ---- Verification / quality loop ----
+  hooks?.onPhase?.("reviewing");
   let evaluation: DeliverableEval;
   if (!mock && client) {
     let judged = await judgeDeliverable(client, { kind, idea, task: task.title, content });

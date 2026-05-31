@@ -13,6 +13,7 @@ import type { UseCofounder } from "@/lib/use-cofounder";
 import ArtifactPanel from "@/components/app/ArtifactPanel";
 import InboxPanel from "@/components/app/InboxPanel";
 import CreateMenu from "@/components/app/CreateMenu";
+import LiveWriter from "@/components/app/LiveWriter";
 
 /* ---------- geometry ---------- */
 const NODE_W = 224;
@@ -502,6 +503,9 @@ export default function Canvas({
 
       {/* Inbox / agent activity (bottom-left) — folds in the approval queue */}
       <InboxPanel cf={cf} onSelectDepartment={onSelectDepartment} />
+
+      {/* Live streaming deliverable (bottom-center) */}
+      <LiveWriter streaming={cf.streaming} />
 
       {/* Create menu (+ bottom-center): New Agent / New Task — owners only */}
       {cf.canEdit && (

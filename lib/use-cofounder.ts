@@ -16,6 +16,17 @@ const WS_KEY = "cf_workspace";
 const IDEA_KEY = "cf_idea";
 const SECRET_KEY = "cf_secret";
 
+/** Live state of a deliverable currently being streamed (SSE). */
+export interface StreamState {
+  taskId: string;
+  department: string;
+  title: string;
+  text: string;
+  /** "writing" | "researching" | "reviewing" */
+  phase: string;
+  tools: string[];
+}
+
 export interface UseCofounder {
   messages: ChatMessage[];
   tasks: Task[];
@@ -29,6 +40,8 @@ export interface UseCofounder {
   isProtected: boolean;
   /** Whether THIS client may write (owner / legacy-open) vs view-only. */
   canEdit: boolean;
+  /** The deliverable being streamed live right now, if any. */
+  streaming: StreamState | null;
   error: string | null;
   send: (text: string, creationMeta?: WorkspaceMeta) => Promise<void>;
   reset: () => void;
@@ -74,6 +87,7 @@ export function useCofounder(): UseCofounder {
   // Default to editable; narrowed to false only for a protected workspace we
   // don't hold the key for (a shared view link).
   const [canEdit, setCanEdit] = useState(true);
+  const [streaming, setStreaming] = useState<StreamState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const ideaRef = useRef<string>("");
   const secretRef = useRef<string | null>(null);
@@ -251,6 +265,7 @@ export function useCofounder(): UseCofounder {
     setMeta({});
     setIsProtected(false);
     setCanEdit(true);
+    setStreaming(null);
     setError(null);
     ideaRef.current = "";
     secretRef.current = null;
@@ -386,7 +401,9 @@ export function useCofounder(): UseCofounder {
     // task (one another tab/cron is producing) and guarantees termination.
     const attempted = new Set<string>();
 
-    const runOne = async (taskId: string) => {
+    type RunResult = { ran: string | null; remaining?: number; error?: string; contended?: boolean } | null;
+
+    const runOne = async (taskId: string): Promise<RunResult> => {
       try {
         const res = await fetch("/api/run", {
           method: "POST",
@@ -398,15 +415,87 @@ export function useCofounder(): UseCofounder {
             taskId,
           }),
         });
-        return (await res.json()) as {
-          ran: string | null;
-          remaining: number;
-          error?: string;
-          contended?: boolean;
-        };
+        return (await res.json()) as RunResult;
       } catch {
         return null;
       }
+    };
+
+    // Stream the "focus" task live (SSE): surface the agent's tool calls and
+    // writing token-by-token. Falls back to /api/run on any transport problem.
+    const runOneStreamed = async (task: Task): Promise<RunResult> => {
+      let res: Response;
+      try {
+        res = await fetch("/api/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            idea: ideaRef.current,
+            taskId: task.id,
+          }),
+        });
+      } catch {
+        return runOne(task.id);
+      }
+      if (!res.ok || !res.body) return runOne(task.id);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let live = "";
+      let result: RunResult = { ran: null, remaining: 0 };
+      const base: StreamState = {
+        taskId: task.id,
+        department: task.department,
+        title: task.title,
+        text: "",
+        phase: "writing",
+        tools: [],
+      };
+      setStreaming(base);
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split("\n\n");
+          buf = parts.pop() ?? "";
+          for (const part of parts) {
+            const lines = part.split("\n");
+            const ev = lines.find((l) => l.startsWith("event: "))?.slice(7).trim();
+            const dataRaw = lines.find((l) => l.startsWith("data: "))?.slice(6);
+            if (!ev) continue;
+            let data: { t?: string; names?: string[]; phase?: string; message?: string } = {};
+            try {
+              data = dataRaw ? JSON.parse(dataRaw) : {};
+            } catch {
+              data = {};
+            }
+            if (ev === "reset") {
+              live = "";
+              setStreaming((s) => (s ? { ...s, text: "" } : s));
+            } else if (ev === "delta") {
+              live += data.t ?? "";
+              setStreaming((s) => ({ ...(s ?? base), text: live, phase: "writing" }));
+            } else if (ev === "tool") {
+              setStreaming((s) => ({ ...(s ?? base), phase: "researching", tools: data.names ?? [] }));
+            } else if (ev === "status") {
+              if (data.phase) setStreaming((s) => ({ ...(s ?? base), phase: data.phase as string }));
+            } else if (ev === "done") {
+              result = { ran: task.id, remaining: 0 };
+            } else if (ev === "error") {
+              result = { ran: null, remaining: 0, error: data.message ?? "error" };
+            }
+          }
+        }
+      } catch {
+        result = { ran: null, remaining: 0, error: "stream interrupted" };
+      } finally {
+        setStreaming(null);
+      }
+      return result;
     };
 
     try {
@@ -425,7 +514,10 @@ export function useCofounder(): UseCofounder {
         // Optimistically show the batch running while the server works on it.
         const batchIds = new Set(batch.map((t) => t.id));
         setTasks((prev) => prev.map((t) => (batchIds.has(t.id) ? { ...t, status: "running" } : t)));
-        const results = await Promise.all(batch.map((t) => runOne(t.id)));
+        // Stream the focus task (index 0) live; run the rest silently in parallel.
+        const results = await Promise.all(
+          batch.map((t, i) => (i === 0 ? runOneStreamed(t) : runOne(t.id))),
+        );
         // Don't reselect these ids; done/needs_action drop out next refresh anyway.
         batch.forEach((t) => attempted.add(t.id));
         // Whole batch failed to reach the server (offline) -> stop looping.
@@ -433,6 +525,7 @@ export function useCofounder(): UseCofounder {
       }
       await refresh();
     } finally {
+      setStreaming(null);
       drivingRef.current = false;
     }
   }, [persisted, workspaceId, refresh]);
@@ -525,6 +618,7 @@ export function useCofounder(): UseCofounder {
     meta,
     isProtected,
     canEdit,
+    streaming,
     error,
     send,
     reset,
