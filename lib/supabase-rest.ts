@@ -338,6 +338,25 @@ export async function claimTask(
   return rows[0] ? rowToTask(rows[0]) : null;
 }
 
+/** Edit a deliverable's content/title in place (scoped to its workspace). */
+export async function updateArtifact(
+  id: string,
+  patch: { content?: string; title?: string },
+  workspaceId: string,
+): Promise<Artifact | null> {
+  const body: Record<string, unknown> = {};
+  if (typeof patch.content === "string") body.content = patch.content;
+  if (typeof patch.title === "string" && patch.title.trim()) body.title = patch.title.slice(0, 200);
+  if (Object.keys(body).length === 0) return null;
+  const res = await rest(
+    `cofounder_artifacts?id=eq.${encodeURIComponent(id)}&workspace_id=eq.${encodeURIComponent(workspaceId)}`,
+    { method: "PATCH", headers: headers({ Prefer: "return=representation" }), body: JSON.stringify(body) },
+  );
+  if (!res.ok) throw new Error(`updateArtifact failed (${res.status})`);
+  const rows = (await res.json()) as DbArtifactRow[];
+  return rows[0] ? rowToArtifact(rows[0]) : null;
+}
+
 /** Patch a single task (e.g. status change), optionally scoped to a workspace. */
 export async function patchTask(
   id: string,

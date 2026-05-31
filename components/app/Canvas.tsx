@@ -534,7 +534,10 @@ export default function Canvas({
       {/* artifact viewer */}
       {openArtifact && (
         <ArtifactPanel
+          key={openArtifact.id}
           artifact={openArtifact}
+          cf={cf}
+          onOpenArtifact={setOpenArtifactId}
           onClose={() => setOpenArtifactId(null)}
         />
       )}

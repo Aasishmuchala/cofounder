@@ -49,6 +49,8 @@ export interface UseCofounder {
   executeTask: (task: Task) => Promise<void>;
   addTask: (title: string, department: string, detail?: string) => Promise<void>;
   saveMeta: (patch: WorkspaceMeta) => void;
+  saveArtifact: (id: string, content: string) => Promise<void>;
+  regenerate: (task: Task) => Promise<Artifact | null>;
   drive: () => Promise<void>;
 }
 
@@ -607,6 +609,55 @@ export function useCofounder(): UseCofounder {
     [persisted, workspaceId],
   );
 
+  /** Edit a deliverable's content in place (owner only). Optimistic + persisted. */
+  const saveArtifact = useCallback(
+    async (id: string, content: string) => {
+      setArtifacts((prev) => prev.map((a) => (a.id === id ? { ...a, content } : a)));
+      if (persisted && workspaceId) {
+        await fetch("/api/artifacts", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            content,
+          }),
+        }).catch(() => {});
+      }
+    },
+    [persisted, workspaceId],
+  );
+
+  /** Re-run a task to produce a fresh version (the prior artifact is kept as
+   *  history). Returns the new artifact. */
+  const regenerate = useCallback(
+    async (task: Task): Promise<Artifact | null> => {
+      if (!persisted || !workspaceId) return null;
+      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "running" } : t)));
+      let created: Artifact | null = null;
+      try {
+        const res = await fetch("/api/execute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            idea: ideaRef.current,
+            task: { id: task.id, title: task.title, department: task.department, detail: task.detail },
+          }),
+        });
+        const data = (await res.json()) as { ok: boolean; artifact?: Artifact };
+        if (data.ok && data.artifact) created = data.artifact;
+      } catch {
+        /* ignore — refresh below reconciles */
+      }
+      await refresh();
+      return created;
+    },
+    [persisted, workspaceId, refresh],
+  );
+
   return {
     messages,
     tasks,
@@ -626,6 +677,8 @@ export function useCofounder(): UseCofounder {
     executeTask,
     addTask,
     saveMeta,
+    saveArtifact,
+    regenerate,
     drive,
   };
 }
