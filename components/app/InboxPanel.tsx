@@ -31,6 +31,110 @@ function relative(ts: number | undefined, now: number): string {
   return `${Math.floor(d / 86_400_000)}d ago`;
 }
 
+/** Read a string field off an approval's args (untrusted shape), capped. */
+function argStr(args: Record<string, unknown>, key: string, cap: number): string {
+  const v = args[key];
+  return (typeof v === "string" ? v : "").slice(0, cap);
+}
+
+/** Shared monospace code-block style for the approval previews. */
+const CODE_BLOCK =
+  "mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-all rounded-[4px] bg-[#f4f4f1] p-1.5 font-mono text-[10px] leading-snug text-[var(--text-70)]";
+const PREVIEW_LABEL = "font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--text-50)]";
+
+/**
+ * Render the CONCRETE proposed action for a pending approval so the human reviews
+ * exactly what will run BEFORE approving. The computer connector is the high-risk
+ * surface: run_shell shows the exact command; write/edit show the path + content/
+ * diff; git mutations show the repo + arg; browser_act shows action + target.
+ * Non-computer connectors keep the original compact JSON preview (no regression).
+ */
+function ApprovalPreview({ connectorId, toolName, args }: { connectorId: string; toolName: string; args: Record<string, unknown> }) {
+  if (connectorId !== "computer") {
+    return (
+      <p className="mt-1 truncate font-mono text-[10px] text-[var(--text-50)]" title={JSON.stringify(args)}>
+        {JSON.stringify(args, null, 0).slice(0, 120)}
+      </p>
+    );
+  }
+
+  if (toolName === "run_shell") {
+    return (
+      <div className="mt-1" title={JSON.stringify(args)}>
+        <span className={PREVIEW_LABEL}>Shell command</span>
+        {/* Show the FULL command (scrollable) — human approval is the primary
+            control, so a long command must never hide its tail from the reviewer. */}
+        <code className={cx("block", CODE_BLOCK)}>{argStr(args, "command", 4000)}</code>
+      </div>
+    );
+  }
+
+  if (toolName === "write_file") {
+    const content = argStr(args, "content", 501);
+    return (
+      <div className="mt-1" title={JSON.stringify(args)}>
+        <span className={PREVIEW_LABEL}>Write file</span>
+        <span className="mt-0.5 block break-all font-mono text-[10px] text-[var(--text-70)]">{argStr(args, "path", 120)}</span>
+        <pre className={CODE_BLOCK}>{content.slice(0, 500)}{content.length > 500 ? "…" : ""}</pre>
+      </div>
+    );
+  }
+
+  if (toolName === "edit_file") {
+    return (
+      <div className="mt-1" title={JSON.stringify(args)}>
+        <span className={PREVIEW_LABEL}>Edit file</span>
+        <span className="mt-0.5 block break-all font-mono text-[10px] text-[var(--text-70)]">{argStr(args, "path", 120)}</span>
+        <span className="mt-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-[#c0392b]">Remove</span>
+        <pre className={CODE_BLOCK}>{argStr(args, "old_text", 200)}</pre>
+        <span className="mt-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-[#2c7a3f]">Insert</span>
+        <pre className={CODE_BLOCK}>{argStr(args, "new_text", 200)}</pre>
+      </div>
+    );
+  }
+
+  if (toolName === "git_commit" || toolName === "git_push" || toolName === "git_reset" || toolName === "git_checkout" || toolName === "git_clean") {
+    const detail =
+      toolName === "git_commit"
+        ? `message: ${argStr(args, "message", 160)}`
+        : toolName === "git_push"
+          ? `${argStr(args, "remote", 40) || "origin"} ${argStr(args, "branch", 60)}`.trim()
+          : toolName === "git_reset"
+            ? `ref: ${argStr(args, "ref", 80)}`
+            : toolName === "git_checkout"
+              ? `branch: ${argStr(args, "branch", 80)}`
+              : "git clean -fd";
+    return (
+      <div className="mt-1" title={JSON.stringify(args)}>
+        <span className={PREVIEW_LABEL}>{toolName.replace("_", " ")}</span>
+        <span className="mt-0.5 block break-all font-mono text-[10px] text-[var(--text-70)]">{argStr(args, "repo", 80)}</span>
+        <span className="block font-mono text-[10px] text-[var(--text-50)]">{detail}</span>
+      </div>
+    );
+  }
+
+  if (toolName === "browser_act") {
+    const value = argStr(args, "value", 100);
+    return (
+      <div className="mt-1" title={JSON.stringify(args)}>
+        <span className={PREVIEW_LABEL}>Browser action</span>
+        <span className="mt-0.5 block break-all font-mono text-[10px] text-[var(--text-70)]">
+          {argStr(args, "action", 12)} → {argStr(args, "selector", 120)}
+        </span>
+        {value && <span className="block break-all font-mono text-[10px] text-[var(--text-50)]">value: {value}</span>}
+      </div>
+    );
+  }
+
+  // SAFE computer tools auto-execute and never reach the approvals panel; this is
+  // a defensive fallback only.
+  return (
+    <p className="mt-1 truncate font-mono text-[10px] text-[var(--text-50)]" title={JSON.stringify(args)}>
+      {JSON.stringify(args, null, 0).slice(0, 120)}
+    </p>
+  );
+}
+
 export default function InboxPanel({
   cf,
   onSelectDepartment,
@@ -182,9 +286,7 @@ export default function InboxPanel({
                       </span>
                       <span className="font-mono text-[12px] text-[var(--text-80)]">{ap.toolName}</span>
                     </div>
-                    <p className="mt-1 truncate font-mono text-[10px] text-[var(--text-50)]" title={JSON.stringify(ap.args)}>
-                      {JSON.stringify(ap.args, null, 0).slice(0, 120)}
-                    </p>
+                    <ApprovalPreview connectorId={ap.connectorId} toolName={ap.toolName} args={ap.args} />
                     {canEdit && (
                       <span className="mt-1.5 flex gap-1.5">
                         <span

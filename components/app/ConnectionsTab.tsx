@@ -13,7 +13,7 @@ interface ConnectorTool {
 interface Connector {
   id: string;
   label: string;
-  kind: "mock" | "http-mcp";
+  kind: "mock" | "http-mcp" | "computer";
   enabled: boolean;
   secretEnvVar: string | null;
   tools: ConnectorTool[];
@@ -144,6 +144,11 @@ export default function ConnectionsTab({ cf }: { cf: UseCofounder }) {
                   {busy === c.id ? "…" : c.enabled ? "On" : "Off"}
                 </button>
               </div>
+              {c.id === "computer" && !c.enabled && (
+                <p className="mt-1 font-mono text-[9px] italic text-[var(--text-50)]">
+                  Requires COMPUTER_USE=1 env var to activate.
+                </p>
+              )}
               <div className="mt-2 space-y-1">
                 {c.tools.map((t) => (
                   <div key={t.name} className="flex items-center gap-2">

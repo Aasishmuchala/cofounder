@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   BUILT_IN_CONNECTORS,
   getConnectorRegistry,
   classifyTool,
+  isContentProhibited,
   buildConnectorToolDescriptors,
   sanitizeToolOutput,
   dispatchConnectorTool,
@@ -218,6 +219,7 @@ describe("dispatchConnectorTool — the single deterministic execution path", ()
 
 describe("approval execution — drives the REAL executor (mirrors approvals route)", () => {
   const ENABLED = getConnectorRegistry(BUILT_IN_CONNECTORS.map((c) => ({ id: c.id, enabled: true })));
+  afterEach(() => vi.unstubAllEnvs());
 
   // A faithful, DB-free model of app/api/approvals/route.ts POST decision logic:
   // re-classify (prohibited -> 403/blocked, nothing executed), then on approve
@@ -232,7 +234,13 @@ describe("approval execution — drives the REAL executor (mirrors approvals rou
   ): Promise<{ pending: PendingApproval[]; auditLog: AuditEntry[]; blocked: boolean }> {
     const approval = pending.find((p) => p.id === approvalId);
     if (!approval) return { pending, auditLog, blocked: false };
-    if (classifyTool(approval.toolName, registry) === "prohibited") {
+    // Mirrors the route: on APPROVE, refuse a name/tier-prohibited OR content-
+    // prohibited (e.g. tampered destructive run_shell) action — 403, nothing run.
+    if (
+      action === "approve" &&
+      (classifyTool(approval.toolName, registry) === "prohibited" ||
+        isContentProhibited(approval.toolName, approval.args))
+    ) {
       return { pending, auditLog, blocked: true }; // route returns 403, nothing executed
     }
     const remaining = pending.filter((p) => p.id !== approvalId);
@@ -281,6 +289,34 @@ describe("approval execution — drives the REAL executor (mirrors approvals rou
     expect(r.blocked).toBe(true);
     expect(r.pending).toHaveLength(1); // still pending — never executed/cleared
     expect(r.auditLog).toHaveLength(0);
+  });
+
+  it("a CONTENT-prohibited run_shell (tampered destructive command) is blocked at approve time", async () => {
+    // A run_shell is SENSITIVE by tier, so classifyTool alone would let it through;
+    // isContentProhibited catches the destructive/secret command on approve.
+    vi.stubEnv("COMPUTER_USE", "1");
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("VERCEL", "");
+    const reg = getConnectorRegistry(BUILT_IN_CONNECTORS.map((c) => ({ id: c.id, enabled: true })));
+    const tampered = pa({ id: "ap10", toolName: "run_shell", connectorId: "computer", args: { command: "rm -rf /" } });
+    const r = await decide([tampered], [], "ap10", "approve", reg);
+    expect(r.blocked).toBe(true);
+    expect(r.pending).toHaveLength(1); // never executed/cleared
+    expect(r.auditLog).toHaveLength(0);
+  });
+
+  it("a CONTENT-prohibited run_shell can still be DENIED (cleared from the queue)", async () => {
+    // Deny is not blocked — clearing a tampered prohibited action from the queue
+    // is the correct outcome.
+    vi.stubEnv("COMPUTER_USE", "1");
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("VERCEL", "");
+    const reg = getConnectorRegistry(BUILT_IN_CONNECTORS.map((c) => ({ id: c.id, enabled: true })));
+    const tampered = pa({ id: "ap11", toolName: "run_shell", connectorId: "computer", args: { command: "cat ~/.ssh/id_rsa" } });
+    const r = await decide([tampered], [], "ap11", "deny", reg);
+    expect(r.blocked).toBe(false);
+    expect(r.pending).toHaveLength(0); // cleared
+    expect(r.auditLog[0]).toMatchObject({ approvalId: "ap11", action: "deny" });
   });
 
   it("the audit record redacts secret-looking arg keys", async () => {

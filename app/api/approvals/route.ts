@@ -2,7 +2,7 @@ import { coerceText, redactArgs } from "@/lib/agent-types";
 import type { PendingApproval, AuditEntry } from "@/lib/agent-types";
 import { authorizeWrite } from "@/lib/auth";
 import { dbConfigured, getWorkspace, updateWorkspaceMeta, patchTask } from "@/lib/supabase-rest";
-import { getConnectorRegistry, classifyTool, dispatchConnectorTool } from "@/lib/connectors";
+import { getConnectorRegistry, classifyTool, isContentProhibited, dispatchConnectorTool } from "@/lib/connectors";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -74,8 +74,15 @@ export async function POST(req: Request): Promise<Response> {
 
   const registry = getConnectorRegistry(ws.meta?.connectors);
   // Defense-in-depth: re-check the stored tool against the policy. A PROHIBITED
-  // tool is blocked even when a human clicks Approve.
-  if (classifyTool(approval.toolName, registry) === "prohibited") {
+  // tool is blocked even when a human clicks Approve. This covers BOTH name/tier
+  // prohibition (classifyTool) AND content prohibition (isContentProhibited — e.g.
+  // a tampered approval whose run_shell command is destructive / references a
+  // credential path). dispatchConnectorTool re-checks again at execution time.
+  if (
+    action === "approve" &&
+    (classifyTool(approval.toolName, registry) === "prohibited" ||
+      isContentProhibited(approval.toolName, approval.args))
+  ) {
     return Response.json(
       { ok: false, error: "This action is prohibited by policy and cannot be executed. The human must perform it manually." },
       { status: 403 },

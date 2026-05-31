@@ -14,6 +14,7 @@ import {
 import {
   getConnectorRegistry,
   classifyTool,
+  isContentProhibited,
   buildConnectorToolDescriptors,
   dispatchConnectorTool,
   type ConnectorDef,
@@ -429,6 +430,13 @@ export async function generateWithTools(
         // Never executed, never queued — the human must do it themselves.
         out =
           "ACTION_BLOCKED: This action is prohibited by policy and cannot be automated. The human must perform it manually if appropriate.";
+      } else if (risk === "sensitive" && isContentProhibited(block.name, input)) {
+        // CONTENT-level prohibition (e.g. a destructive / secret-referencing
+        // run_shell): refuse OUTRIGHT — never queue it for approval, so a human
+        // can't be tricked into approving an obfuscated `rm -rf` / `cat ~/.ssh/…`.
+        // The executor re-checks the same denylist at execution time too.
+        out =
+          "ACTION_BLOCKED: This command is prohibited by policy (destructive or references a credential path) and cannot be queued or executed. The human must perform it manually if appropriate.";
       } else if (risk === "sensitive") {
         // Freeze the concrete { connector, tool, args } for deterministic
         // system-side execution on approval. The args are kept UNREDACTED here so

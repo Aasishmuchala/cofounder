@@ -23,6 +23,11 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ConnectorConfig } from "@/lib/agent-types";
 import { INJECTION } from "@/lib/skills";
+// Server-only executor for the "computer" connector. connectors.ts is itself
+// server-only (no "use client"; reached only from runner.ts + route handlers),
+// so importing it here keeps node:child_process / node:fs / playwright off the
+// client bundle. The import is the single executor entry point.
+import { runComputerTool, computerUseActive, isProhibitedShell } from "@/lib/computer";
 
 /** A tool one connector exposes to the model, with its risk classification. */
 export interface ConnectorTool {
@@ -37,7 +42,7 @@ export interface ConnectorTool {
 export interface ConnectorDef {
   id: string;
   label: string;
-  kind: "mock" | "http-mcp";
+  kind: "mock" | "http-mcp" | "computer";
   enabled: boolean;
   /** Env var NAME holding the endpoint/secret for http-mcp connectors. */
   secretEnvVar?: string;
@@ -125,6 +130,224 @@ export const BUILT_IN_CONNECTORS: ConnectorDef[] = [
       },
     ],
   },
+  {
+    // ── Local Computer-Use connector ──────────────────────────────────────
+    // The Claude computer-use tool surface — files, shell, git, browser — rooted
+    // at COMPUTER_ROOT (whole machine, per the operator's choice). HIGHEST-RISK:
+    // OFF by default + double-gated (server env COMPUTER_USE=1 AND workspace
+    // toggle), with a production refusal — enforced in getConnectorRegistry. The
+    // executors live in lib/computer.ts (server-only). NO tool is declared
+    // "prohibited" by NAME — run_shell is always SENSITIVE (approval required);
+    // PROHIBITED enforcement is CONTENT-level (the shell denylist + secret-path
+    // guard inside runComputerTool, checked at both queue and execution time).
+    id: "computer",
+    label: "Local Computer",
+    kind: "computer",
+    enabled: false,
+    tools: [
+      {
+        name: "list_dir",
+        description:
+          "List the contents of a directory on the local machine (names + types). Read-only — runs automatically. Path is resolved under the computer root; credential paths are blocked.",
+        risk: "safe",
+        inputSchema: {
+          type: "object",
+          properties: { path: { type: "string", description: "Directory path to list." } },
+          required: ["path"],
+        },
+      },
+      {
+        name: "read_file",
+        description:
+          "Read a UTF-8 text file from the local machine. Read-only — runs automatically. Secret/credential paths (.ssh, .aws, .env, *.pem, etc.) are blocked by policy.",
+        risk: "safe",
+        inputSchema: {
+          type: "object",
+          properties: { path: { type: "string", description: "File path to read." } },
+          required: ["path"],
+        },
+      },
+      {
+        name: "write_file",
+        description:
+          "Create or overwrite a file on the local machine. This MUTATES the filesystem, so it is QUEUED for human approval — the reviewer sees the exact path + content first.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "File path to write." },
+            content: { type: "string", description: "Full file content to write." },
+          },
+          required: ["path", "content"],
+        },
+      },
+      {
+        name: "edit_file",
+        description:
+          "Replace the first occurrence of old_text with new_text in an existing file. MUTATES the filesystem, so it is QUEUED for human approval — the reviewer sees the diff first.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "File path to edit." },
+            old_text: { type: "string", description: "Exact text to find and replace (first match)." },
+            new_text: { type: "string", description: "Replacement text." },
+          },
+          required: ["path", "old_text", "new_text"],
+        },
+      },
+      {
+        name: "run_shell",
+        description:
+          "Execute a shell command on the local machine (cwd = computer root, 30s timeout). HIGH RISK — QUEUED for human approval; the reviewer sees the EXACT command first. Destructive commands (rm -rf, dd, sudo, mkfs, fork bombs, curl|sh, etc.) are prohibited by policy and never run, even on approval.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: { command: { type: "string", description: "The shell command to run." } },
+          required: ["command"],
+        },
+      },
+      {
+        name: "git_status",
+        description: "Run `git status` in a repository. Read-only — runs automatically.",
+        risk: "safe",
+        inputSchema: {
+          type: "object",
+          properties: { repo: { type: "string", description: "Path to the git repository." } },
+          required: ["repo"],
+        },
+      },
+      {
+        name: "git_diff",
+        description: "Run `git diff` in a repository (optionally with extra args). Read-only — runs automatically.",
+        risk: "safe",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string", description: "Path to the git repository." },
+            args: { type: "string", description: "Optional extra args (e.g. a ref or path)." },
+          },
+          required: ["repo"],
+        },
+      },
+      {
+        name: "git_log",
+        description: "Run `git log --oneline -20` in a repository. Read-only — runs automatically.",
+        risk: "safe",
+        inputSchema: {
+          type: "object",
+          properties: { repo: { type: "string", description: "Path to the git repository." } },
+          required: ["repo"],
+        },
+      },
+      {
+        name: "git_show",
+        description: "Run `git show <ref>` in a repository. Read-only — runs automatically.",
+        risk: "safe",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string", description: "Path to the git repository." },
+            ref: { type: "string", description: "Commit ref to show (default HEAD)." },
+          },
+          required: ["repo"],
+        },
+      },
+      {
+        name: "git_commit",
+        description: "Run `git commit -m <message>` in a repository. MUTATES history, so it is QUEUED for human approval.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string", description: "Path to the git repository." },
+            message: { type: "string", description: "Commit message." },
+          },
+          required: ["repo", "message"],
+        },
+      },
+      {
+        name: "git_push",
+        description: "Run `git push [remote [branch]]`. Publishes commits externally, so it is QUEUED for human approval.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string", description: "Path to the git repository." },
+            remote: { type: "string", description: "Optional remote name." },
+            branch: { type: "string", description: "Optional branch name." },
+          },
+          required: ["repo"],
+        },
+      },
+      {
+        name: "git_reset",
+        description: "Run `git reset <ref>`. MUTATES the working state, so it is QUEUED for human approval.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string", description: "Path to the git repository." },
+            ref: { type: "string", description: "Ref to reset to (e.g. HEAD~1)." },
+          },
+          required: ["repo", "ref"],
+        },
+      },
+      {
+        name: "git_checkout",
+        description: "Run `git checkout <branch>`. Changes the working tree, so it is QUEUED for human approval.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string", description: "Path to the git repository." },
+            branch: { type: "string", description: "Branch (or ref) to check out." },
+          },
+          required: ["repo", "branch"],
+        },
+      },
+      {
+        name: "git_clean",
+        description: "Run `git clean -fd` (removes untracked files + dirs). DESTRUCTIVE of untracked work, so it is QUEUED for human approval.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: { repo: { type: "string", description: "Path to the git repository." } },
+          required: ["repo"],
+        },
+      },
+      {
+        name: "browse",
+        description: "Navigate a headless browser to a URL and read its title. Read-only — runs automatically. Returns {status:'browser_unavailable'} if Playwright is not installed.",
+        risk: "safe",
+        inputSchema: {
+          type: "object",
+          properties: { url: { type: "string", description: "The http(s) URL to navigate to." } },
+          required: ["url"],
+        },
+      },
+      {
+        name: "screenshot",
+        description: "Take a screenshot of the current headless-browser page (returns base64 PNG). Read-only — runs automatically.",
+        risk: "safe",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "browser_act",
+        description: "Perform an action (click / type / submit) in the headless browser. MUTATES page state, so it is QUEUED for human approval — the reviewer sees the action + target first.",
+        risk: "sensitive",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["click", "type", "submit"], description: "The action to perform." },
+            selector: { type: "string", description: "CSS selector for the target element." },
+            value: { type: "string", description: "Value to type (for the 'type' action)." },
+          },
+          required: ["action", "selector"],
+        },
+      },
+    ],
+  },
 ];
 
 /** The set of built-in connector ids — the only ids a workspace may enable. */
@@ -145,12 +368,20 @@ export function getConnectorRegistry(
   }
   return BUILT_IN_CONNECTORS.map((def) => {
     const override = byId.get(def.id);
-    if (!override) return def;
-    return {
-      ...def,
-      enabled: override.enabled === true,
-      secretEnvVar: override.secretEnvVar ?? def.secretEnvVar,
-    };
+    const merged = override
+      ? { ...def, enabled: override.enabled === true, secretEnvVar: override.secretEnvVar ?? def.secretEnvVar }
+      : def;
+    // SERVER ENV GATE for the computer connector — applied AFTER the workspace
+    // override so a workspace toggle can NEVER bypass it. The connector exposes
+    // tools only when BOTH the env gate is active (COMPUTER_USE=1, plus the
+    // production refusal) AND the workspace has it enabled. computerUseActive()
+    // encapsulates the prod refusal (NODE_ENV=production / VERCEL unless
+    // COMPUTER_USE_ALLOW_PROD=1). When off, enabled is forced false, so
+    // buildConnectorToolDescriptors emits no computer tools at all.
+    if (merged.id === "computer" && merged.enabled && !computerUseActive()) {
+      return { ...merged, enabled: false };
+    }
+    return merged;
   });
 }
 
@@ -184,6 +415,26 @@ export function classifyTool(
   if (!hit) return null;
   if (hit.tool.risk === "prohibited" || PROHIBITED_NAME.test(toolName)) return "prohibited";
   return hit.tool.risk;
+}
+
+/**
+ * CONTENT-level prohibition for a tool's concrete args — complements classifyTool
+ * (which is name/tier based). A `run_shell` whose command is destructive or
+ * references a credential path is prohibited regardless of its SENSITIVE tier, so
+ * it must be REFUSED OUTRIGHT (never queued for approval), not merely blocked on
+ * execution. The runner calls this at QUEUE time and the executor re-checks the
+ * same denylist at EXECUTION time (defense-in-depth — see lib/computer.ts).
+ *
+ * Returns true only for a concrete prohibited payload; name/tier prohibition is
+ * still classifyTool's job. Currently scoped to the computer connector's
+ * run_shell; other connectors have no content-level prohibition.
+ */
+export function isContentProhibited(toolName: string, input: Record<string, unknown>): boolean {
+  if (toolName === "run_shell") {
+    const command = typeof input.command === "string" ? input.command : "";
+    return command.length > 0 && isProhibitedShell(command);
+  }
+  return false;
 }
 
 /** Build Anthropic tool descriptors for every tool on ENABLED connectors, so the
@@ -355,10 +606,15 @@ export async function dispatchConnectorTool(
 
   let raw: string;
   try {
-    raw =
-      hit.connector.kind === "http-mcp"
-        ? await runHttpMcpTool(hit.connector, toolName, input)
-        : runMockTool(toolName, input);
+    if (hit.connector.kind === "computer") {
+      // The computer executor sanitizes its own output AND re-checks the env gate
+      // + shell denylist + secret-path policy at execution time (defense-in-depth).
+      raw = await runComputerTool(toolName, input);
+    } else if (hit.connector.kind === "http-mcp") {
+      raw = await runHttpMcpTool(hit.connector, toolName, input);
+    } else {
+      raw = runMockTool(toolName, input);
+    }
   } catch {
     raw = JSON.stringify({ status: "error", detail: "tool execution failed" });
   }
