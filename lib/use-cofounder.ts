@@ -333,34 +333,58 @@ export function useCofounder(): UseCofounder {
   const drive = useCallback(async () => {
     if (!persisted || !workspaceId || drivingRef.current) return;
     drivingRef.current = true;
+    // Produce up to MAX_PARALLEL deliverables at once (fills the canvas the way
+    // the old client pump did). Each call claims a DISTINCT task id, and the
+    // server claim is atomic — so two tabs or a cron can't double-produce.
+    const MAX_PARALLEL = 2;
+    // Task ids already dispatched this run: prevents reselecting a contended
+    // task (one another tab/cron is producing) and guarantees termination.
+    const attempted = new Set<string>();
+
+    const runOne = async (taskId: string) => {
+      try {
+        const res = await fetch("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            idea: ideaRef.current,
+            taskId,
+          }),
+        });
+        return (await res.json()) as {
+          ran: string | null;
+          remaining: number;
+          error?: string;
+          contended?: boolean;
+        };
+      } catch {
+        return null;
+      }
+    };
+
     try {
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 80; i++) {
         const snap = await refresh();
         if (!snap) break;
         const withArtifact = new Set(snap.artifacts.map((a) => a.taskId).filter(Boolean));
         const actionable = snap.tasks.filter(
-          (t) => (t.status === "todo" || t.status === "running") && !withArtifact.has(t.id),
+          (t) =>
+            (t.status === "todo" || t.status === "running") &&
+            !withArtifact.has(t.id) &&
+            !attempted.has(t.id),
         );
         if (actionable.length === 0) break;
-        // Optimistically show the next task running while the server works on it.
-        const cur = actionable[0];
-        setTasks((prev) => prev.map((t) => (t.id === cur.id ? { ...t, status: "running" } : t)));
-        let data: { ran: string | null; remaining: number; error?: string } | null = null;
-        try {
-          const res = await fetch("/api/run", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              workspaceId,
-              workspaceSecret: secretRef.current ?? undefined,
-              idea: ideaRef.current,
-            }),
-          });
-          data = (await res.json()) as { ran: string | null; remaining: number; error?: string };
-        } catch {
-          break;
-        }
-        if (data?.error) break;
+        const batch = actionable.slice(0, MAX_PARALLEL);
+        // Optimistically show the batch running while the server works on it.
+        const batchIds = new Set(batch.map((t) => t.id));
+        setTasks((prev) => prev.map((t) => (batchIds.has(t.id) ? { ...t, status: "running" } : t)));
+        const results = await Promise.all(batch.map((t) => runOne(t.id)));
+        // Don't reselect these ids; done/needs_action drop out next refresh anyway.
+        batch.forEach((t) => attempted.add(t.id));
+        // Whole batch failed to reach the server (offline) -> stop looping.
+        if (results.every((r) => r === null)) break;
       }
       await refresh();
     } finally {

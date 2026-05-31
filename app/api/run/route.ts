@@ -1,11 +1,15 @@
 import { coerceText } from "@/lib/agent-types";
 import { verifyWorkspaceToken } from "@/lib/auth";
-import { dbConfigured, listTasks, listArtifacts, patchTask } from "@/lib/supabase-rest";
+import { dbConfigured, listTasks, listArtifacts, patchTask, claimTask } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
 export const runtime = "nodejs";
 // A single deliverable (generate + verify + maybe regenerate) can take a while.
 export const maxDuration = 300;
+
+// A claim older than this is treated as orphaned (a runner that crashed
+// mid-production) and may be reclaimed.
+const STALE_LEASE_MS = 4 * 60 * 1000;
 
 /**
  * Server-side task runner. Each call claims the next ACTIONABLE task (a todo or
@@ -25,6 +29,9 @@ export async function POST(req: Request): Promise<Response> {
   const workspaceId = coerceText(body.workspaceId, 100);
   const workspaceSecret = coerceText(body.workspaceSecret, 200) || undefined;
   const idea = coerceText(body.idea, 4000);
+  // Optional: run a SPECIFIC task. The client assigns distinct task ids across
+  // its parallel calls so they never contend; cron may omit it (auto-pick).
+  const wantTaskId = coerceText(body.taskId, 100) || undefined;
 
   if (!workspaceId) {
     return Response.json({ ran: null, remaining: 0, error: "no workspace" }, { status: 400 });
@@ -51,22 +58,40 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ ran: null, remaining: 0 });
   }
 
-  const t = actionable[0];
-  // Claim: flip todo -> running so the workspace reflects work-in-progress even
-  // for other observers (and so a stale todo isn't re-picked).
-  if (t.status === "todo") {
-    await patchTask(t.id, { status: "running" }, workspaceId).catch(() => {});
+  // Pick the requested task (if still actionable) or the next available one.
+  const target = wantTaskId ? actionable.find((t) => t.id === wantTaskId) : actionable[0];
+  if (!target) {
+    // The requested task was already finished or grabbed elsewhere.
+    return Response.json({ ran: null, remaining: actionable.length, contended: true });
   }
+
+  // Atomically claim it. If another runner (another tab, or a cron) won the
+  // race, bail out without double-producing the same deliverable.
+  const now = Date.now();
+  const claimed = await claimTask(
+    target.id,
+    workspaceId,
+    new Date(now - STALE_LEASE_MS).toISOString(),
+    new Date(now).toISOString(),
+  ).catch(() => null);
+  if (!claimed) {
+    return Response.json({ ran: null, remaining: actionable.length, contended: true });
+  }
+
   try {
     await produceDeliverable(
       workspaceId,
-      { id: t.id, title: t.title, department: t.department, detail: t.detail },
+      { id: claimed.id, title: claimed.title, department: claimed.department, detail: claimed.detail },
       idea,
     );
-    return Response.json({ ran: t.id, remaining: actionable.length - 1 });
+    return Response.json({ ran: claimed.id, remaining: Math.max(0, actionable.length - 1) });
   } catch {
     // Failed -> needs human attention; surface it rather than silently looping.
-    await patchTask(t.id, { status: "needs_action" }, workspaceId).catch(() => {});
-    return Response.json({ ran: null, remaining: actionable.length - 1, error: "run failed" });
+    await patchTask(claimed.id, { status: "needs_action" }, workspaceId).catch(() => {});
+    return Response.json({
+      ran: null,
+      remaining: Math.max(0, actionable.length - 1),
+      error: "run failed",
+    });
   }
 }

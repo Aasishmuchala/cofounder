@@ -264,6 +264,37 @@ export async function getArtifact(id: string): Promise<Artifact | null> {
   return rows[0] ? rowToArtifact(rows[0]) : null;
 }
 
+/**
+ * Atomically claim a task for execution. Succeeds only if the task is still
+ * actionable (todo/running) AND not currently leased by another runner —
+ * claimed_at is null or older than `staleCutoffIso` (orphan recovery for a
+ * runner that crashed mid-production). The conditional UPDATE is atomic at the
+ * row level: two concurrent claimers (two browser tabs, or a client + a cron)
+ * can never both win the same task — the loser's WHERE no longer matches once
+ * the winner commits, so it updates 0 rows. Returns the claimed task, or null
+ * if someone else got there first / it's no longer actionable.
+ */
+export async function claimTask(
+  id: string,
+  workspaceId: string,
+  staleCutoffIso: string,
+  nowIso: string,
+): Promise<Task | null> {
+  const filters =
+    `id=eq.${encodeURIComponent(id)}` +
+    `&workspace_id=eq.${encodeURIComponent(workspaceId)}` +
+    `&status=in.(todo,running)` +
+    `&or=(claimed_at.is.null,claimed_at.lt.${encodeURIComponent(staleCutoffIso)})`;
+  const res = await rest(`cofounder_tasks?${filters}`, {
+    method: "PATCH",
+    headers: headers({ Prefer: "return=representation" }),
+    body: JSON.stringify({ status: "running", claimed_at: nowIso }),
+  });
+  if (!res.ok) return null;
+  const rows = (await res.json()) as DbTaskRow[];
+  return rows[0] ? rowToTask(rows[0]) : null;
+}
+
 /** Patch a single task (e.g. status change), optionally scoped to a workspace. */
 export async function patchTask(
   id: string,
