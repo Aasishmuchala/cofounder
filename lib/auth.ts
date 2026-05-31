@@ -68,7 +68,12 @@ export async function authorizeWrite(
   workspaceId: string | undefined,
   providedKey: string | undefined,
 ): Promise<boolean> {
-  if (!workspaceId || !dbConfigured) return true;
+  // Creating a new workspace (no id yet) is always allowed.
+  if (!workspaceId) return true;
+  // No DB to hold per-workspace edit keys. If APP_SECRET is configured, fall
+  // back to enforcing the stateless HMAC capability token; otherwise (the
+  // keyless local/mock mode) writes are open.
+  if (!dbConfigured) return authEnforced ? verifyWorkspaceToken(workspaceId, providedKey) : true;
   let stored: string | null;
   try {
     stored = await getWorkspaceEditKey(workspaceId);

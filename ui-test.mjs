@@ -1,3 +1,6 @@
+// UI smoke for the current Cofounder app (onboarding flow). Mode-agnostic:
+// runs in mock mode (no Supabase) or with a DB. Avoids networkidle (agents poll).
+//   BASE=http://localhost:3303 node ui-test.mjs
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 
@@ -15,89 +18,48 @@ page.on("console", (m) => { if (m.type() === "error") errors.push("console.error
 page.on("pageerror", (e) => errors.push("pageerror: " + e.message.slice(0, 200)));
 
 let shot = 0;
-const snap = async (label) => { await page.screenshot({ path: `${DIR}/${String(++shot).padStart(2, "0")}-${label}.png` }); };
+const snap = async (label) => { await page.screenshot({ path: `${DIR}/${String(++shot).padStart(2, "0")}-${label}.png` }).catch(() => {}); };
 
 try {
-  // fresh start
-  await page.goto(`${BASE}/app`, { waitUntil: "networkidle" });
+  // 1) static pages render
+  for (const path of ["/", "/app", "/app/tasks", "/app/roadmap", "/pricing"]) {
+    const res = await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+    const body = await page.locator("body").innerText().catch(() => "");
+    ok(`page ${path} renders`, (res?.status() ?? 0) === 200 && body.length > 120, `${res?.status()} · ${body.length}b`);
+  }
+
+  // 2) fresh /app empty state (Cofounder onboarding intro + composer)
+  await page.goto(`${BASE}/app`, { waitUntil: "domcontentloaded" });
   await page.evaluate(() => localStorage.clear());
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1200);
   await snap("app-empty");
-  ok("empty hero state loads", await page.getByText("What company do you want to run?").first().isVisible());
+  const intro = await page.getByText("Tell me more about your company").first().isVisible().catch(() => false);
+  ok("empty state shows the Cofounder intro", intro);
+  const composer = page.locator("textarea").first();
+  ok("composer textarea present", await composer.isVisible().catch(() => false));
 
-  // 1) type an idea → spin up agents (empty state uses a <textarea>; canvas uses <input>)
-  await page.fill('[placeholder^="Ask Helm"]', "Launch a premium coffee subscription startup");
-  await page.click('button[aria-label="Send"]');
+  // 3) onboarding: describe the company -> clarifying questions appear
+  await composer.fill("Launch a premium coffee subscription startup");
+  await composer.press("Enter");
+  let questions = false;
+  for (let i = 0; i < 14 && !questions; i++) {
+    await page.waitForTimeout(2000);
+    const body = await page.locator("body").innerText().catch(() => "");
+    questions = /primary paying customer|which geography|how does the company|preparing a few questions|wedge|differentiation/i.test(body);
+  }
+  await snap("onboarding-questions");
+  ok("onboarding produced clarifying questions", questions);
 
-  // 2) task nodes appear (transitions into the live Canvas)
-  await page.getByText("Scaffold the product codebase").first().waitFor({ timeout: 20000 });
-  ok("canvas manager agent renders", await page.getByText("Manager agent").first().isVisible().catch(() => false));
-  await page.waitForTimeout(800);
-  await snap("tasks-spawned");
-  const nodeTitles = ["Scaffold the product codebase", "Define brand & visual identity", "Build the go-to-market message", "Open early sales pipeline", "Incorporate the company"];
-  let present = 0;
-  for (const t of nodeTitles) if (await page.getByText(t).first().isVisible().catch(() => false)) present++;
-  ok("5 expected task nodes render", present === 5, `${present}/5`);
-  ok("manager shows task count", /task agent/.test(await page.getByText(/task agent/).first().innerText().catch(() => "")));
-  ok("assistant reply shown", (await page.locator("p", { hasText: /coffee|plan|agents|On it/i }).first().isVisible().catch(() => false)));
-  ok("persisted 'Saved' indicator (DB live)", await page.getByText("Saved", { exact: true }).first().isVisible().catch(() => false));
-
-  // 3) live simulation: running → executes → deliverable
-  await page.getByText("View output").first().waitFor({ timeout: 25000 });
-  await page.waitForTimeout(2500); // let more agents finish
-  await snap("agents-running-deliverables");
-  const viewOutputs = await page.getByText("View output").count();
-  ok("agents produced deliverables (View output)", viewOutputs >= 1, `${viewOutputs} buttons`);
-  ok("deliverables counter visible", await page.getByText(/deliverable/).first().isVisible().catch(() => false));
-  const donePills = await page.getByText("Done", { exact: true }).count().catch(() => 0);
-  ok("tasks reached 'Done'", donePills >= 1, `${donePills} done`);
-
-  // 4) open the artifact panel (via the always-visible deliverables counter)
-  await page.getByText(/deliverable/).first().click();
-  await page.waitForTimeout(700);
-  await snap("artifact-panel");
-  ok("artifact panel opens with generated content",
-    (await page.getByText(/generated/i).first().isVisible().catch(() => false)) ||
-    (await page.locator("iframe").first().isVisible().catch(() => false)));
-
-  // 5) needs_action approval path — close the artifact panel first (its scrim overlays the canvas)
-  const closeBtn = page.locator('button[aria-label="Close"]').first();
-  if (await closeBtn.isVisible().catch(() => false)) { await closeBtn.click(); await page.waitForTimeout(400); }
-  const approve = page.getByRole("button", { name: "Approve" }).first();
-  if (await approve.isVisible().catch(() => false)) {
-    await approve.click();
-    await page.waitForTimeout(1500);
-    ok("approve moved needs_action task forward", true);
-  } else ok("attention queue / approval present", await page.getByText(/Attention queue/i).isVisible().catch(() => false));
-  await snap("after-approve");
-
-  // 6) tasks + roadmap pages
-  await page.goto(`${BASE}/app/tasks`, { waitUntil: "networkidle" });
-  await snap("tasks-page");
-  ok("/app/tasks renders task data", await page.getByText(/Engineering|Marketing|Design/).first().isVisible().catch(() => false));
-  await page.goto(`${BASE}/app/roadmap`, { waitUntil: "networkidle" });
-  await snap("roadmap-page");
-  ok("/app/roadmap renders", (await page.locator("body").innerText()).length > 300);
-
-  // 7) refresh restores workspace from Supabase
-  const wsId = await page.evaluate(() => localStorage.getItem("cf_workspace"));
-  const hasSecret = await page.evaluate(() => !!localStorage.getItem("cf_secret"));
-  ok("workspace id + capability token saved to localStorage", !!wsId && hasSecret, `ws:${!!wsId} secret:${hasSecret}`);
-  await page.goto(`${BASE}/app`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(1500);
-  await snap("after-refresh-restore");
-  ok("refresh restores tasks from DB", await page.getByText("Scaffold the product codebase").first().isVisible().catch(() => false));
-  ok("welcome-back message after restore", await page.getByText(/restored your company|Welcome back/i).first().isVisible().catch(() => false));
-
-  console.log("WORKSPACE_ID=" + wsId);
+  // 4) no JS errors during the flow
+  ok("no console/page errors", errors.length === 0, `${errors.length} errors`);
 } catch (e) {
   report.push("FAIL harness threw — " + e.message.slice(0, 300));
   await snap("error-state");
 } finally {
-  console.log("\n=== UI ORCHESTRATION REPORT ===");
+  console.log("\n=== UI SMOKE REPORT (current Cofounder flow) ===");
   console.log(report.join("\n"));
-  console.log(`\nconsole/page errors: ${errors.length}`);
-  errors.slice(0, 15).forEach((e) => console.log("  • " + e));
+  if (errors.length) { console.log(`\nerrors:`); errors.slice(0, 10).forEach((e) => console.log("  • " + e)); }
   const fails = report.filter((r) => r.startsWith("FAIL")).length;
   console.log(`\n=== ${report.length - fails} pass / ${fails} fail · screenshots in ${DIR} ===`);
   await browser.close();
