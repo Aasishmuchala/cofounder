@@ -80,9 +80,23 @@ export function useCofounder(): UseCofounder {
   /* Hydrate from the persisted workspace on first mount. */
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const saved = window.localStorage.getItem(WS_KEY);
-    ideaRef.current = window.localStorage.getItem(IDEA_KEY) ?? "";
-    secretRef.current = window.localStorage.getItem(SECRET_KEY);
+    // A ?w=<id> link opens a SHARED workspace; adopt it as the current one.
+    const urlWs = new URLSearchParams(window.location.search).get("w");
+    const savedWs = window.localStorage.getItem(WS_KEY);
+    const switching = Boolean(urlWs && urlWs !== savedWs);
+    const saved = urlWs || savedWs;
+    if (switching && urlWs) {
+      // The shared company's idea / brand / secret come from the DB, not this
+      // browser's leftovers from a previous company.
+      window.localStorage.setItem(WS_KEY, urlWs);
+      window.localStorage.removeItem(IDEA_KEY);
+      window.localStorage.removeItem(SECRET_KEY);
+      ideaRef.current = "";
+      secretRef.current = null;
+    } else {
+      ideaRef.current = window.localStorage.getItem(IDEA_KEY) ?? "";
+      secretRef.current = window.localStorage.getItem(SECRET_KEY);
+    }
     if (!saved) return;
     // All hydration state updates live in this async task (keeps the effect body
     // free of synchronous setState).
@@ -218,6 +232,10 @@ export function useCofounder(): UseCofounder {
       window.localStorage.removeItem(WS_KEY);
       window.localStorage.removeItem(IDEA_KEY);
       window.localStorage.removeItem(SECRET_KEY);
+      // Drop the ?w= share param so a new company starts from a clean URL.
+      if (window.location.search.includes("w=")) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
     }
   }, []);
 

@@ -105,6 +105,32 @@ export default function AppPage() {
     setTimeout(() => setPublished(false), 2500);
   }
 
+  // Share: a stable link to this company's workspace. Opening it on any device /
+  // browser loads the same company (brand, plan, agents, tasks) from the server.
+  const [shared, setShared] = React.useState(false);
+  function handleShare() {
+    if (typeof window === "undefined" || !cf.workspaceId) return;
+    const url = `${window.location.origin}/app?w=${cf.workspaceId}`;
+    try {
+      navigator.clipboard?.writeText(url)?.catch(() => {});
+    } catch {
+      /* clipboard unavailable (non-secure context) */
+    }
+    setShared(true);
+    setTimeout(() => setShared(false), 2500);
+  }
+
+  // Keep the address bar pointed at the shareable workspace link, so a refresh
+  // or bookmark reopens this exact company.
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !cf.workspaceId) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("w") !== cf.workspaceId) {
+      params.set("w", cf.workspaceId);
+      window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+    }
+  }, [cf.workspaceId]);
+
   // Agent execution. When the workspace is DB-backed, the SERVER-SIDE runner owns
   // it: drive() loops /api/run (which produces one deliverable per call) and
   // refreshes — so work resumes on reload and a cron can continue it tab-closed.
@@ -175,6 +201,21 @@ export default function AppPage() {
           }}
         />
         <div className="absolute right-5 top-4 z-30 flex items-center gap-2">
+          {cf.persisted && cf.workspaceId && (
+            <button
+              onClick={handleShare}
+              title="Copy a shareable link to this company"
+              className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                <circle cx="18" cy="5" r="3" />
+                <circle cx="6" cy="12" r="3" />
+                <circle cx="18" cy="19" r="3" />
+                <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" strokeLinecap="round" />
+              </svg>
+              {shared ? "Link copied ✓" : "Share"}
+            </button>
+          )}
           <button
             onClick={handlePublish}
             disabled={!site}
