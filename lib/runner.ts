@@ -92,6 +92,8 @@ IMAGERY (required — generate real images):
 
 STRUCTURE: sticky translucent nav; a striking hero (headline derived from the idea, subhead, primary + secondary CTA, the generated hero image); a 3+ feature section with inline-SVG icons; a stats or how-it-works band; social proof / testimonial; a strong CTA band; a real footer. Real, specific, benefit-led copy for THIS idea — no lorem, no "revolutionary/cutting-edge". Commit to a bold, on-brand aesthetic (not generic AI slop).
 
+DESIGN QUALITY (aim for Linear / Stripe / Vercel production quality): apply the grounding's EXACT palette and typography via Tailwind arbitrary values (e.g. bg-[#0B0B10], text-[#E8E8EF], font-[Sora]); a confident type scale with a huge hero headline (text-6xl→text-8xl, tight tracking); generous vertical rhythm and section padding; consistent radii/shadows; and one memorable signature element. Every section must feel intentional and finished.
+
 Responsive (mobile→desktop with Tailwind), AA contrast, semantic elements. Make it look like a funded startup's real site. Output ONLY the component code, starting with: "use client";`;
   }
   if (kind === "brand_spec") {

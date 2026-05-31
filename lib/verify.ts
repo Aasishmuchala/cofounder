@@ -75,8 +75,15 @@ export async function judgeDeliverable(
   args: { kind: ArtifactKind; idea: string; task: string; content: string },
 ): Promise<JudgeResult | null> {
   const dims = DIMENSIONS[args.kind] ?? DIMENSIONS.markdown;
-  const system = `You are a ruthless senior reviewer grading a startup's deliverable before it ships. Be demanding and specific — reserve 9–10 only for genuinely excellent, distinctive, on-brand work; generic or templated output should score 5 or below. Grade each rubric dimension 0–10 and give an overall 0–10.\nReturn ONLY a single fenced json block:\n\`\`\`json\n{"score":0-10,"rubric":[{"label":"<dimension>","score":0-10}],"notes":"1-2 concrete sentences on the most important things to improve"}\n\`\`\``;
-  const user = `Deliverable type: ${args.kind}\nCompany idea: ${args.idea || "a startup"}\nTask: ${args.task}\nRubric dimensions: ${dims.join("; ")}\n\nDeliverable to grade:\n<<<\n${args.content.slice(0, 7000)}\n>>>`;
+  // Landing pages are big React components — give the judge the WHOLE thing
+  // (grading a truncated quarter was unfairly tanking scores).
+  const cap = args.kind === "landing_page" ? 18000 : 7000;
+  const kindNote =
+    args.kind === "landing_page"
+      ? `\n\nNOTE: This deliverable is a React/Next.js page component (Tailwind classes + inline <style> animations). Judge the DESIGN it describes — color/typography/spacing choices in the classes, animation richness (@keyframes / IntersectionObserver / transitions), section completeness (hero, features, social proof, CTA, footer), copy specificity, responsiveness, and use of real generated <img> imagery. Do NOT penalize it for being code or for not being raw HTML. A complete, on-brand, animated page with specific copy is 7–9.`
+      : "";
+  const system = `You are a ruthless senior reviewer grading a startup's deliverable before it ships. Be demanding and specific — reserve 9–10 only for genuinely excellent, distinctive, on-brand work; generic or templated output should score 5 or below. Grade each rubric dimension 0–10 and give an overall 0–10.${kindNote}\nReturn ONLY a single fenced json block:\n\`\`\`json\n{"score":0-10,"rubric":[{"label":"<dimension>","score":0-10}],"notes":"1-2 concrete sentences on the most important things to improve"}\n\`\`\``;
+  const user = `Deliverable type: ${args.kind}\nCompany idea: ${args.idea || "a startup"}\nTask: ${args.task}\nRubric dimensions: ${dims.join("; ")}\n\nDeliverable to grade:\n<<<\n${args.content.slice(0, cap)}\n>>>`;
   try {
     const resp = await client.messages.create({
       model: MODEL,
