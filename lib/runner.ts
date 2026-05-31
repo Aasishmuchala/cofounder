@@ -12,6 +12,7 @@ import {
 } from "@/lib/supabase-rest";
 import { getAnthropic, MODEL } from "@/lib/anthropic";
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
+import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
 import { houseSkill, synthesizeSkill } from "@/lib/skill-foundry";
 import { runChecks, judgeDeliverable, heuristicScore, QUALITY_BAR } from "@/lib/verify";
 
@@ -388,21 +389,44 @@ export async function produceDeliverable(
   const { kind, noun } = deliverableFor(task.department);
 
   const house = houseSkill(kind);
-  const discovered = await discoverSkill({ department: task.department, title: task.title, idea, kind });
+  // Discover a generic craft skill + read the company's brand vibe in parallel.
+  const [discovered, vibeId] = await Promise.all([
+    discoverSkill({ department: task.department, title: task.title, idea, kind }),
+    dbConfigured && workspaceId
+      ? getWorkspace(workspaceId)
+          .then((w) => w?.meta?.vibeId ?? null)
+          .catch(() => null)
+      : Promise.resolve(null),
+  ]);
   const authored =
     dbConfigured && workspaceId ? await findAuthoredSkill(workspaceId, kind).catch(() => null) : null;
 
-  let headline: SkillRef = authored
-    ? { name: authored.name, source: "authored", url: "" }
-    : discovered
-      ? toSkillRef(discovered)
-      : { name: house.name, source: "house", url: "" };
+  // Ground the deliverable in open-design: the SKILL chosen for this request +
+  // the DESIGN.md system chosen for the brand vibe. Becomes the headline skill.
+  const openDesign = await fetchOpenDesign(
+    selectOpenDesign({
+      department: task.department,
+      kind,
+      title: task.title,
+      detail: task.detail,
+      vibeId,
+    }),
+  ).catch(() => null);
+
+  let headline: SkillRef = openDesign
+    ? openDesign.skill
+    : authored
+      ? { name: authored.name, source: "authored", url: "" }
+      : discovered
+        ? toSkillRef(discovered)
+        : { name: house.name, source: "house", url: "" };
 
   const basePrompt =
     genPrompt(kind, noun, task, idea) +
     `\n\nApply this house standard — your team's craft bar:\n${house.content}` +
     (authored ? `\n\nYour company's own authored skill — apply it:\n${authored.content}` : "") +
-    (discovered ? buildSkillBlock(discovered) : "");
+    // Prefer open-design grounding; fall back to the generically-discovered skill.
+    (openDesign ? openDesign.content : discovered ? buildSkillBlock(discovered) : "");
 
   let title = "";
   let content = "";
@@ -431,7 +455,9 @@ export async function produceDeliverable(
             content: made.content,
             source: "authored",
           }).catch(() => {});
-          headline = { name: made.name, source: "authored", url: "" };
+          // Keep the open-design skill as the surfaced badge when it grounded
+          // this deliverable; otherwise show the company's freshly-authored skill.
+          if (!openDesign) headline = { name: made.name, source: "authored", url: "" };
         }
       }
     } catch {

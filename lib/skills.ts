@@ -61,7 +61,7 @@ const INJECTION =
   /\b(ignore (all |the )?(previous|above)|disregard (the )?(previous|above)|system prompt|you are now|new instructions?|exfiltrat|reveal (your )?(system|prompt|instructions)|begin (system|prompt))\b/i;
 
 /** Cap + scan untrusted skill text. Returns null if it looks like an injection. */
-function sanitizeSkill(raw: string | undefined): string | null {
+export function sanitizeSkill(raw: string | undefined): string | null {
   if (!raw) return null;
   const head = raw.slice(0, 9000);
   if (INJECTION.test(head)) return null;
@@ -84,7 +84,7 @@ const cacheKey = (t: DiscoverInput) =>
 
 // ---- fetch helpers -------------------------------------------------------
 
-async function fetchT(url: string, opts: RequestInit = {}, ms = 4500): Promise<Response> {
+export async function fetchT(url: string, opts: RequestInit = {}, ms = 4500): Promise<Response> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), ms);
   try {
