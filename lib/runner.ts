@@ -13,6 +13,8 @@ import {
 import { getAnthropic, MODEL } from "@/lib/anthropic";
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
 import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
+import { compareSkills } from "@/lib/skill-select";
+import { readSkillBody } from "@/lib/skill-catalog";
 import { houseSkill, synthesizeSkill } from "@/lib/skill-foundry";
 import { generateImageUrl } from "@/lib/images";
 import { runChecks, judgeDeliverable, heuristicScore, QUALITY_BAR } from "@/lib/verify";
@@ -445,6 +447,20 @@ export async function produceDeliverable(
   const authored =
     dbConfigured && workspaceId ? await findAuthoredSkill(workspaceId, kind).catch(() => null) : null;
 
+  // The best preloaded catalog skill for this task (the comparison the Skills tab
+  // shows). For text deliverables it becomes the agent's equipped skill — its
+  // SKILL.md craft is injected. Landing pages keep open-design as the primary
+  // (its grounding is verified), so we don't disturb them here.
+  let catalog: { name: string; source: string; body: string } | null = null;
+  try {
+    const cmp = compareSkills({ department: task.department, kind, title: task.title, detail: task.detail });
+    if (cmp.chosen && cmp.chosen.score >= 10 && kind !== "landing_page") {
+      catalog = { name: cmp.chosen.name, source: cmp.chosen.source || "skill", body: readSkillBody(cmp.chosen.dir, 2800) };
+    }
+  } catch {
+    catalog = null;
+  }
+
   // A compact company brief injected straight into the prompt — so agents rarely
   // need a get_company_brief round-trip (faster, esp. for landing pages).
   const plan = meta?.plan ?? null;
@@ -476,18 +492,23 @@ export async function produceDeliverable(
     }),
   ).catch(() => null);
 
-  let headline: SkillRef = openDesign
-    ? openDesign.skill
-    : authored
-      ? { name: authored.name, source: "authored", url: "" }
-      : discovered
-        ? toSkillRef(discovered)
-        : { name: house.name, source: "house", url: "" };
+  let headline: SkillRef = catalog
+    ? { name: catalog.name, source: catalog.source, url: "" }
+    : openDesign
+      ? openDesign.skill
+      : authored
+        ? { name: authored.name, source: "authored", url: "" }
+        : discovered
+          ? toSkillRef(discovered)
+          : { name: house.name, source: "house", url: "" };
 
   const basePrompt =
     genPrompt(kind, noun, task, idea) +
     brief +
     `\n\nApply this house standard — your team's craft bar:\n${house.content}` +
+    (catalog?.body
+      ? `\n\nYou are equipped with the "${catalog.name}" skill (chosen as the best match for this task). Apply its craft, structure, and best practices:\n${catalog.body}`
+      : "") +
     (authored ? `\n\nYour company's own authored skill — apply it:\n${authored.content}` : "") +
     // Prefer open-design grounding; fall back to the generically-discovered skill.
     (openDesign ? openDesign.content : discovered ? buildSkillBlock(discovered) : "") +
@@ -532,9 +553,9 @@ export async function produceDeliverable(
             content: made.content,
             source: "authored",
           }).catch(() => {});
-          // Keep the open-design skill as the surfaced badge when it grounded
-          // this deliverable; otherwise show the company's freshly-authored skill.
-          if (!openDesign) headline = { name: made.name, source: "authored", url: "" };
+          // Keep the equipped catalog skill / open-design as the surfaced badge
+          // when present; otherwise show the company's freshly-authored skill.
+          if (!openDesign && !catalog) headline = { name: made.name, source: "authored", url: "" };
         }
       }
     } catch {

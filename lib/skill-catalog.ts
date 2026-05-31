@@ -27,14 +27,14 @@ const ROOTS = [
 // First matching rule wins — specific departments before the broad Engineering
 // catch-all, so e.g. a "sales dashboard" skill lands in Sales, not Engineering.
 const DEPT_RULES: [string, RegExp][] = [
-  ["Legal", /\b(legal|advogad|leiloeiro|juridic|contract|complian|gdpr|privacy|incorporat|patent|trademark|licen[sc]e|regulat|hipaa|pci|soc ?2)\b/i],
-  ["Finance", /\b(financ|invoice|accounting|quant|trading|stripe|billing|valuation|fundrais|payment|paypal|revenue|\bdcf\b|\btax\b|budget|payroll|bookkeep|cfo)\b/i],
-  ["Sales", /\b(sales|outbound|cold[- ]?email|\bcrm\b|lead gen|pipeline|hubspot|salesforce|pipedrive|prospect|outreach|sales-?automat)\b/i],
-  ["Support", /\b(support|help ?desk|zendesk|freshdesk|freshservice|intercom|customer success|\bfaq\b|ticket|helpdesk)\b/i],
-  ["Marketing", /\b(marketing|\bseo\b|growth|content|copywrit|\bads\b|campaign|blog|newsletter|email[- ]?marketing|influencer|viral|positioning|gtm|go-?to-?market|social-?(media|content|carousel))\b/i],
-  ["Design", /\b(design|\bui\b|\bux\b|brand|figma|\bcss\b|tailwind|animation|landing[- ]?page|theme|color|typograph|awwwards|\bgsap\b|motion|wireframe|prototype|illustrat|\blogo\b|visual|aesthetic|shader|canvas)\b/i],
-  ["Operations", /\b(automation|workflow|\bn8n\b|zapier|\bops\b|runbook|logistics|inventory|scheduling|project manage|\bjira\b|asana|monday|trello|notion|slack|calendar|\bhr\b|recruit|procurement|supply chain|incident|on-?call|deploy|terraform|kubernetes|\bk8s\b|docker|devops|gitops|cicd|ci\/cd)\b/i],
-  ["Engineering", /\b(react|next\.?js|node|typescript|javascript|python|rust|golang|\bgo\b|java|c\+\+|backend|frontend|fullstack|\bapi\b|database|\bsql\b|postgres|graphql|fastapi|django|\bsdk\b|webpack|vite|\bbun\b|deno|firmware|embedded|game|unity|godot|mobile|\bios\b|android|flutter|electron|webgl|three\.?js|\bcode\b|build|test|debug|refactor|architect|microservice|engineer)\b/i],
+  ["Legal", /\b(legal|advogad|leiloeiro|juridic|contract|complian|gdpr|privacy|incorporat|patent|trademark|licen[sc]e|regulat|hipaa|pci|soc ?2)/i],
+  ["Finance", /\b(financ|invoice|accounting|quant|trading|stripe|billing|valuation|fundrais|payment|paypal|revenue|\bdcf\b|\btax\b|budget|payroll|bookkeep|cfo)/i],
+  ["Sales", /\b(sales|outbound|cold[- ]?email|\bcrm\b|lead gen|pipeline|hubspot|salesforce|pipedrive|prospect|outreach|sales-?automat)/i],
+  ["Support", /\b(support|help ?desk|zendesk|freshdesk|freshservice|intercom|customer success|\bfaq\b|ticket|helpdesk)/i],
+  ["Marketing", /\b(marketing|\bseo\b|growth|content|copywrit|\bads\b|campaign|blog|newsletter|email[- ]?marketing|influencer|viral|positioning|gtm|go-?to-?market|social-?(media|content|carousel))/i],
+  ["Design", /\b(design|\bui\b|\bux\b|brand|figma|\bcss\b|tailwind|animation|landing[- ]?page|theme|color|typograph|awwwards|\bgsap\b|motion|wireframe|prototype|illustrat|\blogo\b|visual|aesthetic|shader|canvas)/i],
+  ["Operations", /\b(automation|workflow|\bn8n\b|zapier|\bops\b|runbook|logistics|inventory|scheduling|project manage|\bjira\b|asana|monday|trello|notion|slack|calendar|\bhr\b|recruit|procurement|supply chain|incident|on-?call|deploy|terraform|kubernetes|\bk8s\b|docker|devops|gitops|cicd|ci\/cd)/i],
+  ["Engineering", /\b(react|next\.?js|node|typescript|javascript|python|rust|golang|\bgo\b|java|c\+\+|backend|frontend|fullstack|\bapi\b|database|\bsql\b|postgres|graphql|fastapi|django|\bsdk\b|webpack|vite|\bbun\b|deno|firmware|embedded|game|unity|godot|mobile|\bios\b|android|flutter|electron|webgl|three\.?js|\bcode\b|build|test|debug|refactor|architect|microservice|engineer)/i],
 ];
 
 export function classifyDepartment(name: string, description: string): string {

@@ -8,6 +8,7 @@ import {
 import { pollinationsUrl, generateImageUrl } from "@/lib/images";
 import { buildReactHarness, buildIsolatedReactPage } from "@/lib/react-preview";
 import { selectOpenDesign } from "@/lib/open-design";
+import { classifyDepartment } from "@/lib/skill-catalog";
 import { makeZip } from "@/lib/zip";
 
 describe("agent-types coercion", () => {
@@ -103,6 +104,20 @@ describe("open-design selection", () => {
     expect(selectOpenDesign({ department: "Design", kind: "brand_spec", title: "brand", vibeId: "house-of-glass" }).system).toBe("glassmorphism");
     expect(selectOpenDesign({ department: "Engineering", kind: "landing_page", title: "a luxury site", vibeId: "house-of-glass" }).system).toBe("luxury");
     expect(selectOpenDesign({ department: "Engineering", kind: "landing_page", title: "site" }).system).toBe("modern"); // default
+  });
+});
+
+describe("skill catalog classification", () => {
+  it("routes skills to the right department (specific beats Engineering)", () => {
+    expect(classifyDepartment("react-best-practices", "React and Next.js performance")).toBe("Engineering");
+    expect(classifyDepartment("seo-content-writer", "SEO content strategy")).toBe("Marketing");
+    expect(classifyDepartment("cold-email", "outbound sales emails")).toBe("Sales");
+    expect(classifyDepartment("legal-advisor", "contracts and compliance")).toBe("Legal");
+    expect(classifyDepartment("startup-financial-modeling", "financial projections")).toBe("Finance");
+    expect(classifyDepartment("brand-guidelines", "brand identity and design")).toBe("Design");
+    expect(classifyDepartment("zendesk-automation", "customer support helpdesk")).toBe("Support");
+    expect(classifyDepartment("n8n-workflow-patterns", "automation workflow")).toBe("Operations");
+    expect(classifyDepartment("mystery-skill", "misc")).toBe("General");
   });
 });
 
