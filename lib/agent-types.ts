@@ -172,16 +172,26 @@ export interface CustomAgentSpec {
   department: string;
 }
 
+/** A file uploaded to the company's Library. */
+export interface UploadedFile {
+  name: string;
+  url: string;
+}
+
 /** The JSON blob stored in cofounder_workspaces.meta. All fields optional. */
 export interface WorkspaceMeta {
   /** Chosen visual-identity vibe id (drives the brand kit). */
   vibeId?: string | null;
   /** Founder approved the brand kit. */
   brandReady?: boolean;
+  /** A bespoke, AI-generated brand image for this company (over the preset board). */
+  brandImage?: string | null;
   /** The accepted business plan (shown on Home). */
   plan?: BusinessPlan | null;
   /** Founder-created custom agents. */
   customAgents?: CustomAgentSpec[];
+  /** Files uploaded to the Library. */
+  files?: UploadedFile[];
 }
 
 /**
@@ -197,6 +207,22 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
   else if (m.vibeId === null) out.vibeId = null;
 
   if (typeof m.brandReady === "boolean") out.brandReady = m.brandReady;
+
+  if (typeof m.brandImage === "string" && /^https:\/\//i.test(m.brandImage)) {
+    out.brandImage = m.brandImage.slice(0, 600);
+  } else if (m.brandImage === null) {
+    out.brandImage = null;
+  }
+
+  if (Array.isArray(m.files)) {
+    out.files = (m.files as unknown[])
+      .slice(0, 50)
+      .map((f) => {
+        const o = (f && typeof f === "object" ? f : {}) as Record<string, unknown>;
+        return { name: coerceText(o.name, 120) || "file", url: typeof o.url === "string" ? o.url.slice(0, 600) : "" };
+      })
+      .filter((f) => /^https:\/\//i.test(f.url));
+  }
 
   if (Array.isArray(m.customAgents)) {
     out.customAgents = (m.customAgents as unknown[]).slice(0, 50).map((a) => {

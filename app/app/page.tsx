@@ -86,6 +86,7 @@ export default function AppPage() {
       vibeId: onb.vibeId,
       brandReady: true,
       plan: onb.plan,
+      brandImage: onb.brandImage,
     });
     setPicked("Home");
   }
@@ -200,7 +201,7 @@ export default function AppPage() {
       // the brand name is correct even when the browser had lost it.
       const restoredIdea =
         idea || (typeof window !== "undefined" ? window.localStorage.getItem("cf_idea") ?? "" : "");
-      onb.hydrateFromMeta({ idea: restoredIdea, vibeId: m.vibeId ?? null, plan: m.plan ?? null });
+      onb.hydrateFromMeta({ idea: restoredIdea, vibeId: m.vibeId ?? null, plan: m.plan ?? null, brandImage: m.brandImage ?? null });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot guarded restore
   }, [cf.persisted, cf.meta, onb.status, idea]);

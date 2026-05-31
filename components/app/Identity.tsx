@@ -6,14 +6,16 @@ import { VIBES, vibeById, PAINT_STEPS, DESIGN_ROADMAP, type Vibe } from "@/lib/v
 import type { UseOnboarding } from "@/lib/use-onboarding";
 
 /* ───────────────────────── Brand kit card (reusable) ───────────────────────── */
-export function BrandKitCard({ vibe, brand }: { vibe: Vibe; brand: string }) {
+export function BrandKitCard({ vibe, brand, image }: { vibe: Vibe; brand: string; image?: string | null }) {
   const overlay = vibe.onImageDark ? "#ffffff" : vibe.ink;
+  // A bespoke generated brand image wins over the preset vibe board when present.
+  const board = image || vibe.board;
   return (
     <div className="overflow-hidden rounded-[14px] bg-white shadow-raised">
       {/* board image with brand name overlaid */}
       <div className="relative h-[170px]">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={vibe.board} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <img src={board} alt="" className="absolute inset-0 h-full w-full object-cover" />
         <div
           className="absolute inset-0"
           style={{
@@ -212,7 +214,7 @@ export function IdentityFlow({
       {/* brand board ready */}
       {status === "brand" && vibe && (
         <div className="space-y-3">
-          <BrandKitCard vibe={vibe} brand={brand} />
+          <BrandKitCard vibe={vibe} brand={brand} image={onb.brandImage} />
           <div className="flex gap-2">
             <button
               onClick={() => onb.startIdentity()}

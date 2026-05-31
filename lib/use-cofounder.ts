@@ -533,6 +533,22 @@ export function useCofounder(): UseCofounder {
   }, [persisted, workspaceId, refresh]);
 
   /**
+   * Near-realtime collaboration: while a DB-backed workspace is open and we're
+   * NOT actively driving, poll for changes so updates from other tabs, the cron,
+   * or a teammate on a shared link appear live (no manual reload). Pauses when
+   * the tab is hidden and while drive() owns the state.
+   */
+  useEffect(() => {
+    if (!persisted || !workspaceId) return;
+    const id = setInterval(() => {
+      if (drivingRef.current) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      void refresh();
+    }, 5000);
+    return () => clearInterval(id);
+  }, [persisted, workspaceId, refresh]);
+
+  /**
    * Run a task. With a DB, hand off to the server-side runner (survives reload
    * and is cron-drivable). Without a DB, fall back to the in-memory client pump.
    */

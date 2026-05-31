@@ -258,7 +258,7 @@ function HomeTab({
       {vibe && (
         <div className="mt-5">
           <SectionLabel className="mb-2">Brand kit</SectionLabel>
-          <BrandKitCard vibe={vibe} brand={brand} />
+          <BrandKitCard vibe={vibe} brand={brand} image={cf.meta.brandImage} />
         </div>
       )}
 

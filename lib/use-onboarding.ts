@@ -22,6 +22,7 @@ interface Persisted {
   answers: Record<string, string>;
   plan: BusinessPlan | null;
   vibeId: string | null;
+  brandImage?: string | null;
 }
 
 export interface UseOnboarding {
@@ -31,6 +32,7 @@ export interface UseOnboarding {
   answers: Record<string, string>;
   plan: BusinessPlan | null;
   vibeId: string | null;
+  brandImage: string | null;
   loading: boolean;
   started: boolean;
   active: boolean;
@@ -42,7 +44,7 @@ export interface UseOnboarding {
   chooseVibe: (id: string) => void;
   markBrandReady: () => void;
   approveBrand: () => void;
-  hydrateFromMeta: (m: { idea?: string; vibeId?: string | null; plan?: BusinessPlan | null }) => void;
+  hydrateFromMeta: (m: { idea?: string; vibeId?: string | null; plan?: BusinessPlan | null; brandImage?: string | null }) => void;
   reset: () => void;
 }
 
@@ -53,6 +55,7 @@ export function useOnboarding(): UseOnboarding {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<BusinessPlan | null>(null);
   const [vibeId, setVibeId] = useState<string | null>(null);
+  const [brandImage, setBrandImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const buildingRef = useRef(false);
 
@@ -71,6 +74,7 @@ export function useOnboarding(): UseOnboarding {
           setAnswers(p.answers ?? {});
           setPlan(p.plan ?? null);
           setVibeId(p.vibeId ?? null);
+          setBrandImage(p.brandImage ?? null);
         }
       } catch {
         /* ignore */
@@ -85,9 +89,9 @@ export function useOnboarding(): UseOnboarding {
       window.localStorage.removeItem(KEY);
       return;
     }
-    const data: Persisted = { status, idea, questions, answers, plan, vibeId };
+    const data: Persisted = { status, idea, questions, answers, plan, vibeId, brandImage };
     window.localStorage.setItem(KEY, JSON.stringify(data));
-  }, [status, idea, questions, answers, plan, vibeId]);
+  }, [status, idea, questions, answers, plan, vibeId, brandImage]);
 
   const start = useCallback(async (rawIdea: string) => {
     const text = rawIdea.trim();
@@ -146,10 +150,20 @@ export function useOnboarding(): UseOnboarding {
   }, [questions, answers, idea]);
 
   const startIdentity = useCallback(() => setStatus("vibe"), []);
-  const chooseVibe = useCallback((id: string) => {
-    setVibeId(id);
-    setStatus("painting");
-  }, []);
+  const chooseVibe = useCallback(
+    (id: string) => {
+      setVibeId(id);
+      setStatus("painting");
+      // Generate a bespoke brand image for THIS company (keyless/Higgsfield) in
+      // the background; it replaces the preset board in the brand kit.
+      const prompt = `brand moodboard hero image for "${idea || "a startup"}", ${id.replace(/-/g, " ")} aesthetic, premium, high detail, no text, no logo`;
+      fetch(`/api/image?prompt=${encodeURIComponent(prompt)}&aspect=16:9`)
+        .then((r) => r.json())
+        .then((d) => { if (d?.url) setBrandImage(d.url); })
+        .catch(() => {});
+    },
+    [idea],
+  );
   const markBrandReady = useCallback(() => setStatus("brand"), []);
   const approveBrand = useCallback(() => setStatus("accepted"), []);
 
@@ -160,11 +174,12 @@ export function useOnboarding(): UseOnboarding {
    * Home shows the brand kit and plan without replaying the flow.
    */
   const hydrateFromMeta = useCallback(
-    (m: { idea?: string; vibeId?: string | null; plan?: BusinessPlan | null }) => {
+    (m: { idea?: string; vibeId?: string | null; plan?: BusinessPlan | null; brandImage?: string | null }) => {
       setStatus("accepted");
       if (m.idea) setIdea(m.idea);
       if (m.vibeId !== undefined) setVibeId(m.vibeId);
       if (m.plan !== undefined) setPlan(m.plan ?? null);
+      if (m.brandImage !== undefined) setBrandImage(m.brandImage ?? null);
     },
     [],
   );
@@ -176,6 +191,7 @@ export function useOnboarding(): UseOnboarding {
     setAnswers({});
     setPlan(null);
     setVibeId(null);
+    setBrandImage(null);
     setLoading(false);
     buildingRef.current = false;
   }, []);
@@ -187,6 +203,7 @@ export function useOnboarding(): UseOnboarding {
     answers,
     plan,
     vibeId,
+    brandImage,
     loading,
     started: status !== "idle",
     active:
