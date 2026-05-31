@@ -573,7 +573,9 @@ export async function produceDeliverable(
           const judged2 = await judgeDeliverable(client, { kind, idea, task: task.title, content: content2 });
           iterations = 2;
           if (judged2 && judged2.score >= judged.score) {
-            content = content2;
+            // Strip control chars here too — the regenerated content bypasses the
+            // earlier strip and would otherwise fail to persist.
+            content = content2.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
             judged = judged2;
           }
         }

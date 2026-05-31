@@ -15,7 +15,11 @@
 import { fetchT } from "@/lib/skills";
 
 const HF_KEY = process.env.HIGGSFIELD_API_KEY || ""; // "KEY_ID:KEY_SECRET" or a bearer token
-const HF_BASE = process.env.HIGGSFIELD_BASE_URL || "https://platform.higgsfield.ai";
+// Must be https (guards against an SSRF-y misconfig pointing at an internal host).
+const HF_BASE = (() => {
+  const u = (process.env.HIGGSFIELD_BASE_URL || "https://platform.higgsfield.ai").replace(/\/+$/, "");
+  return /^https:\/\//i.test(u) ? u : "https://platform.higgsfield.ai";
+})();
 const HF_MODEL = process.env.HIGGSFIELD_IMAGE_MODEL || "flux-pro/kontext/max/text-to-image";
 
 /** True when the premium Higgsfield provider is configured. */

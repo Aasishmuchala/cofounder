@@ -16,7 +16,7 @@ function cleanComponent(raw: string): string {
     .replace(/^[ \t]*['"]?use client['"]?;?[ \t\r]*$/gim, "")
     .replace(/^[ \t]*import[^\n]*$/gim, "") // deps are provided as globals
     .replace(/^[ \t]*export\s*\{[^}]*\};?[ \t]*$/gim, "")
-    .replace(/export\s+default\s+function\s+Page/m, "function Page")
+    .replace(/export\s+default\s+(async\s+)?function\s+Page/m, "$1function Page")
     .replace(/export\s+default\s+/m, "var __Default = ")
     .replace(/^[ \t]*export\s+(const|function|let|var|class|async)\b/gm, "$1")
     .trim();
