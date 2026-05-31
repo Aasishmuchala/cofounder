@@ -11,6 +11,7 @@ import type { Task, TaskStatus } from "@/lib/agent-types";
 import { departmentColor } from "@/lib/agent-types";
 import type { UseCofounder } from "@/lib/use-cofounder";
 import ArtifactPanel from "@/components/app/ArtifactPanel";
+import InboxPanel from "@/components/app/InboxPanel";
 
 /* ---------- geometry ---------- */
 const NODE_W = 224;
@@ -48,14 +49,19 @@ function statusMeta(s: TaskStatus): {
   }
 }
 
-export default function Canvas({ cf }: { cf: UseCofounder }) {
+export default function Canvas({
+  cf,
+  brand,
+  onSelectDepartment,
+}: {
+  cf: UseCofounder;
+  brand?: string;
+  onSelectDepartment?: (dept: string) => void;
+}) {
   const {
     tasks,
     artifacts,
-    messages,
     loading,
-    send,
-    updateTask,
     executeTask,
     persisted,
     reset,
@@ -111,32 +117,9 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
     centered.current = true;
   });
 
-  /* ---------- live simulation: todo -> running -> done ---------- */
-  const scheduled = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    tasks.forEach((t, i) => {
-      if (scheduled.current.has(t.id)) return;
-      if (t.status === "todo") {
-        // auto-start "todo" agents after a brief stagger
-        scheduled.current.add(t.id);
-        timers.push(
-          setTimeout(() => {
-            scheduled.current.delete(t.id);
-            updateTask(t.id, { status: "running" });
-          }, 1200 + i * 700),
-        );
-      } else if (t.status === "running") {
-        // a running agent does REAL work: generate + persist a deliverable,
-        // then flip to done (handled inside executeTask).
-        scheduled.current.add(t.id);
-        void executeTask(t);
-      }
-    });
-    return () => timers.forEach(clearTimeout);
-    // re-run when the set of statuses changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks.map((t) => t.id + t.status).join("|")]);
+  // The auto-run agent simulation (todo → running → execute → done) is owned by
+  // the workspace shell so it keeps running even when this canvas is hidden
+  // (e.g. on mobile). This component is a pure view + manual actions.
 
   /* ---------- pointer interactions (pan + node drag) ---------- */
   const drag = useRef<
@@ -217,16 +200,6 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
     setScale(1);
   };
 
-  /* ---------- chat input ---------- */
-  const [input, setInput] = useState("");
-  const submit = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!input.trim() || loading) return;
-    send(input);
-    setInput("");
-  };
-
-  const needsApproval = tasks.filter((t) => t.status === "needs_action");
   const managerPos: Pt = { x: 0, y: 0 };
 
   return (
@@ -311,7 +284,7 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
                   </span>
                 </div>
                 <div className="font-display text-[18px] font-medium text-[var(--text)]">
-                  The Helm
+                  Cofounder
                 </div>
                 <div className="font-mono text-[10px] text-[var(--text-50)]">
                   {loading && tasks.length === 0 ? (
@@ -348,7 +321,13 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
                 >
                   {/* dept header */}
                   <div className="flex items-center justify-between px-3 pt-2.5">
-                    <span className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => onSelectDepartment?.(t.department)}
+                      title={`Open ${t.department}`}
+                      className="flex items-center gap-1.5 rounded-[5px] px-1 py-0.5 -mx-1 transition-colors hover:bg-black/[0.05]"
+                    >
                       <span
                         className="inline-block"
                         style={{ width: 6, height: 6, borderRadius: 1, background: c }}
@@ -356,7 +335,7 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
                       <span className="font-mono text-[8px] uppercase tracking-[0.1em] text-[var(--text-50)]">
                         {t.department}
                       </span>
-                    </span>
+                    </button>
                     <StatusPill s={t.status} />
                   </div>
                   <div className="px-3 pb-3 pt-1.5">
@@ -383,10 +362,34 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
                           <div className="mt-2.5">
                             <button
                               onPointerDown={(e) => e.stopPropagation()}
-                              onClick={() => setOpenArtifactId(art.id)}
-                              className="inline-flex items-center gap-1 rounded-[7px] bg-[var(--green-tint)] px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#2c7a3f] transition-opacity hover:opacity-80"
+                              onClick={() => onSelectDepartment?.(t.department)}
+                              title={`Open ${t.department}`}
+                              aria-label={`Open ${t.department} — ${art.title}`}
+                              className="block w-full overflow-hidden rounded-[8px] border border-black/[0.06] bg-white text-left transition-shadow hover:shadow-raised"
                             >
-                              View output ↗
+                              <div className="flex items-center gap-1 border-b border-black/[0.05] px-2 py-1">
+                                <span className="h-1.5 w-1.5 rounded-full" style={{ background: c }} />
+                                <span className="h-1 w-2 rounded-full bg-black/10" />
+                                <span className="ml-auto font-mono text-[7px] uppercase tracking-[0.08em] text-[var(--text-50)]">
+                                  {art.kind === "landing_page" ? "page" : art.kind === "brand_spec" ? "brand" : art.kind === "email" ? "email" : "doc"}
+                                </span>
+                              </div>
+                              <div className="space-y-1 px-2 py-1.5">
+                                {art.kind === "landing_page" ? (
+                                  <>
+                                    <div className="h-1.5 w-3/4 rounded-sm" style={{ background: c, opacity: 0.5 }} />
+                                    <div className="h-1.5 w-full rounded-sm bg-black/[0.07]" />
+                                    <div className="h-1.5 w-5/6 rounded-sm bg-black/[0.06]" />
+                                    <div className="mt-0.5 h-2 w-1/2 rounded-sm" style={{ background: c, opacity: 0.85 }} />
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="h-1.5 w-full rounded-sm bg-black/[0.08]" />
+                                    <div className="h-1.5 w-11/12 rounded-sm bg-black/[0.07]" />
+                                    <div className="h-1.5 w-3/4 rounded-sm bg-black/[0.06]" />
+                                  </>
+                                )}
+                              </div>
                             </button>
                             {art.skill && (
                               <div
@@ -438,7 +441,7 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
           Agent canvas
         </div>
         <div className="font-display text-[20px] font-medium text-[var(--text)]">
-          The Helm
+          {brand || "Cofounder"}
         </div>
         <div className="mt-1.5 flex items-center gap-2">
           <span
@@ -475,94 +478,8 @@ export default function Canvas({ cf }: { cf: UseCofounder }) {
         <button onClick={recenter} className="hud-btn text-[11px]" title="Recenter">⤢</button>
       </div>
 
-      {/* attention queue */}
-      {needsApproval.length > 0 && (
-        <div className="absolute bottom-28 left-5 z-20 w-[300px] rounded-[14px] bg-white p-3 shadow-deep">
-          <div className="mb-2 flex items-center gap-2">
-            <span className="anim-badge-blink inline-block h-1.5 w-1.5 rounded-full bg-[var(--coral)]" />
-            <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-70)]">
-              Attention queue · {needsApproval.length}
-            </span>
-          </div>
-          <div className="space-y-2">
-            {needsApproval.map((t) => (
-              <div key={t.id} className="rounded-[10px] bg-[var(--surface-raised)] p-2.5 shadow-raised">
-                <div className="font-display text-[13px] font-medium text-[var(--text-80)]">
-                  {t.title}
-                </div>
-                <div className="font-mono text-[9px] uppercase tracking-wide text-[var(--text-50)]">
-                  {t.department} · requires approval
-                </div>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    onClick={() => {
-                      scheduled.current.delete(t.id);
-                      updateTask(t.id, { status: "running" });
-                    }}
-                    className="flex-1 rounded-[7px] py-1.5 font-display text-[12px] font-medium text-white shadow-glossy"
-                    style={{ background: "var(--green)" }}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => updateTask(t.id, { status: "todo" })}
-                    className="flex-1 rounded-[7px] bg-[#efefec] py-1.5 font-display text-[12px] font-medium text-[var(--text-70)]"
-                  >
-                    Decline
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* conversation strip (latest assistant reply) */}
-      {messages.length > 0 && (
-        <div className="pointer-events-none absolute right-5 top-4 z-20 hidden max-w-[300px] md:block">
-          <div className="pointer-events-auto rounded-[12px] bg-white/90 p-3 shadow-raised backdrop-blur">
-            <div className="mb-1 flex items-center gap-1.5">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--green)]" />
-              <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--text-50)]">
-                Helm
-              </span>
-            </div>
-            <p className="text-[12.5px] leading-snug text-[var(--text-70)]">
-              {[...messages].reverse().find((m) => m.role === "assistant")?.content ??
-                "On it."}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* pinned chat input */}
-      <form
-        onSubmit={submit}
-        className="absolute bottom-5 left-1/2 z-30 w-[min(680px,92%)] -translate-x-1/2"
-      >
-        <div className="flex items-center gap-2 rounded-[14px] bg-white p-1.5 pl-4 shadow-deep">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask Helm to spin up new task agents…"
-            className="flex-1 bg-transparent py-2 font-display text-[14px] text-[var(--text)] outline-none placeholder:text-[var(--text-50)]"
-          />
-          <button
-            type="submit"
-            disabled={loading || !input.trim()}
-            className="btn-light-surface grid h-9 w-9 place-items-center rounded-[9px] disabled:opacity-40"
-            aria-label="Send"
-          >
-            {loading ? (
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--text-30)] border-t-[var(--text-70)]" />
-            ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--text-70)]">
-                <path d="M12 19V5M5 12l7-7 7 7" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            )}
-          </button>
-        </div>
-      </form>
+      {/* Inbox / agent activity (bottom-left) — folds in the approval queue */}
+      <InboxPanel cf={cf} onSelectDepartment={onSelectDepartment} />
 
       {/* deliverables counter */}
       {artifacts.length > 0 && (

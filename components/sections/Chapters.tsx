@@ -11,6 +11,13 @@ const SPINE_COLORS = [
   "var(--coral)",
 ];
 
+const CHAPTER_IMAGES = [
+  "/chapters/start.jpg",
+  "/chapters/build.jpg",
+  "/chapters/sell.jpg",
+  "/chapters/scale.jpg",
+];
+
 const EASE = [0.23, 1, 0.32, 1] as const;
 
 export default function Chapters() {
@@ -43,21 +50,35 @@ export default function Chapters() {
               viewport={{ once: true, margin: "-60px" }}
               transition={{ duration: 0.6, ease: EASE, delay: i * 0.1 }}
             >
-              <RaisedCard className="group relative flex aspect-[3/4] flex-col overflow-hidden p-5">
+              <RaisedCard className="group relative flex aspect-[3/4] flex-col overflow-hidden">
+                {/* Chapter cover image */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={CHAPTER_IMAGES[i % CHAPTER_IMAGES.length]}
+                  alt=""
+                  loading="lazy"
+                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-[900ms] ease-out group-hover:scale-[1.05]"
+                />
+                {/* Legibility scrim — cream from the bottom for the title block */}
+                <div
+                  aria-hidden
+                  className="absolute inset-0 bg-gradient-to-t from-[var(--surface-raised)] via-[var(--surface-raised)]/80 to-transparent"
+                />
+
                 {/* Spine accent */}
                 <span
                   aria-hidden
-                  className="absolute left-0 top-0 h-full w-[6px]"
+                  className="absolute left-0 top-0 z-[1] h-full w-[6px]"
                   style={{ background: SPINE_COLORS[i % SPINE_COLORS.length] }}
                 />
 
                 {/* Roman numeral */}
-                <span className="font-display absolute right-4 top-3 text-[40px] font-normal leading-none text-[var(--text-30)] select-none">
+                <span className="font-display absolute right-4 top-3 z-[1] text-[40px] font-normal leading-none text-[var(--text-30)] [text-shadow:0_1px_3px_rgba(255,255,255,0.65)] select-none">
                   {chapter.num}
                 </span>
 
                 {/* Bottom content */}
-                <div className="mt-auto pl-1">
+                <div className="relative z-[1] mt-auto p-5 pl-6">
                   <h3 className="font-display text-[22px] font-normal leading-[1.1] text-[var(--text)]">
                     {chapter.title}
                   </h3>

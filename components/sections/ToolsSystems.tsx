@@ -143,10 +143,12 @@ export default function ToolsSystems() {
                     <MonoLabel>{LABELS[i]}</MonoLabel>
                     <MonoLabel>{`0${i + 1}`}</MonoLabel>
                   </div>
-                  <div className="rounded-[8px] bg-[var(--background)] p-4">
-                    <Sketch />
+                  <div className="flex flex-1 items-center rounded-[8px] bg-[var(--background)] p-4">
+                    <div className="w-full">
+                      <Sketch />
+                    </div>
                   </div>
-                  <p className="font-display mt-auto text-[17px] leading-[1.35] text-[var(--text-80)]">
+                  <p className="font-display text-[17px] leading-[1.35] text-[var(--text-80)]">
                     {caption}
                   </p>
                 </RaisedCard>

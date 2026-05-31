@@ -135,7 +135,7 @@ for (const kb of [64, 512, 2048, 8192]) {
 
 console.log("\n=== 6. CONCURRENCY / LOAD (200 concurrent agent calls) ===");
 {
-  const N = 200;
+  const N = Number(process.env.CONCURRENCY) || 200;
   const t0 = performance.now();
   const results = await Promise.all(
     Array.from({ length: N }, (_, i) =>

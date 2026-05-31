@@ -1,113 +1,119 @@
 "use client";
 
 import * as React from "react";
-import { motion } from "framer-motion";
+import Link from "next/link";
 import { useCofounder } from "@/lib/use-cofounder";
-import { MonoLabel, RaisedCard, cx } from "@/components/ui/primitives";
+import { useOnboarding } from "@/lib/use-onboarding";
 import Canvas from "@/components/app/Canvas";
+import RightPanel from "@/components/app/RightPanel";
+import { brandName } from "@/lib/cofounder-data";
 
-const EASE = [0.23, 1, 0.32, 1] as const;
+type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Library";
 
-const STARTERS = [
-  "Start an AI newsletter about climate tech",
-  "Launch a coffee subscription startup",
-  "Build a fitness coaching app",
-];
-
-export default function CanvasPage() {
+export default function AppPage() {
   const cf = useCofounder();
-  const { messages, tasks, loading, send } = cf;
+  const onb = useOnboarding();
 
-  const [draft, setDraft] = React.useState("");
-  const submit = React.useCallback(() => {
-    const text = draft.trim();
-    if (!text) return;
-    send(text);
-    setDraft("");
-  }, [draft, send]);
+  const idea = React.useMemo(() => {
+    if (onb.idea) return onb.idea;
+    const firstUser = cf.messages.find((m) => m.role === "user");
+    if (firstUser?.content) return firstUser.content;
+    if (typeof window !== "undefined") return window.localStorage.getItem("cf_idea") ?? "";
+    return "";
+  }, [cf.messages, onb.idea]);
+  const brand = brandName(idea || null);
+  const hasCompany = cf.messages.length > 0 || cf.tasks.length > 0;
 
-  const isEmpty = messages.length === 0 && tasks.length === 0 && !loading;
+  // `null` = no explicit choice yet; auto-select the onboarding chat until a
+  // company exists, then Home. Once the user picks a tab it sticks.
+  const [picked, setPicked] = React.useState<TabKey | null>(null);
+  const tab: TabKey = picked ?? (hasCompany ? "Home" : "Cofounder");
 
-  /* ── Empty hero state ─────────────────────────────────────── */
-  if (isEmpty) {
-    return (
-      <div className="flex h-[calc(100vh-49px)] flex-col md:h-screen">
-        <div className="flex flex-1 items-center justify-center px-5 py-16 min-[476px]:px-8">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, ease: EASE }}
-            className="w-full max-w-[640px] text-center"
-          >
-            <MonoLabel>Agent canvas · the helm</MonoLabel>
-            <h1 className="mt-4 font-display text-[28px] font-normal leading-[1.12] text-[var(--text)] md:text-[36px] min-[1000px]:text-[42px]">
-              What company do you want to run?
-            </h1>
-            <p className="mx-auto mt-3 max-w-[44ch] text-[15px] leading-[1.5] text-[var(--text-70)]">
-              Spin up task agents across engineering, sales, design, and ops.
-              Nothing ships without your approval.
-            </p>
+  // Department drill-in: clicking a task's department label opens that
+  // department's detail in the right panel (overrides the active tab).
+  const [selectedDept, setSelectedDept] = React.useState<string | null>(null);
 
-            <div className="mx-auto mt-7 max-w-[560px] text-left">
-              <RaisedCard deep className="flex items-end gap-2 rounded-[16px] p-2.5">
-                <textarea
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      submit();
-                    }
-                  }}
-                  rows={2}
-                  placeholder="Ask Helm to spin up new task agents…"
-                  className="max-h-40 flex-1 resize-none bg-transparent px-2.5 py-1.5 font-display text-[16px] text-[var(--text)] outline-none placeholder:text-[var(--text-50)]"
-                />
-                <button
-                  type="button"
-                  onClick={submit}
-                  disabled={loading || !draft.trim()}
-                  aria-label="Send"
-                  className="btn-light-surface flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[8px] disabled:opacity-45"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path
-                      d="M12 19V5M5 12l7-7 7 7"
-                      stroke="var(--text-80)"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              </RaisedCard>
-
-              {/* starter chips */}
-              <div className="mt-4 flex flex-wrap justify-center gap-2">
-                {STARTERS.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => send(s)}
-                    className={cx(
-                      "surface-gradient-chip rounded-full px-3 py-1.5 font-display text-[13px] text-[var(--text-70)]",
-                      "transition-colors hover:text-[var(--text)]"
-                    )}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      </div>
-    );
+  // First message starts onboarding (questions → plan); afterwards it's chat.
+  function handleSend(text: string) {
+    if (!hasCompany && onb.status === "idle") {
+      void onb.start(text);
+    } else if (!(onb.active && !hasCompany)) {
+      void cf.send(text);
+    }
   }
 
-  /* ── Live interactive canvas ──────────────────────────────── */
+  // Accept the business plan → move into the visual-identity step (no spin-up yet).
+  function handleAcceptPlan() {
+    onb.startIdentity();
+  }
+
+  // Approve the brand kit (or skip) → spin up the company, land on Home.
+  function handleLaunch() {
+    onb.approveBrand();
+    void cf.send(onb.idea || idea || "Get started.");
+    setPicked("Home");
+  }
+
+  // Live agent simulation: "todo" agents auto-start after a stagger, "running"
+  // agents do real work (generate + persist a deliverable, then flip to done).
+  // "needs_action" agents wait for approval (handled in the Tasks tab).
+  const scheduled = React.useRef<Set<string>>(new Set());
+  const statusSig = cf.tasks.map((t) => t.id + t.status).join("|");
+  React.useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    cf.tasks.forEach((t, i) => {
+      if (scheduled.current.has(t.id)) return;
+      if (t.status === "todo") {
+        scheduled.current.add(t.id);
+        timers.push(
+          setTimeout(() => {
+            scheduled.current.delete(t.id);
+            cf.updateTask(t.id, { status: "running" });
+          }, 1400 + i * 800),
+        );
+      } else if (t.status === "running") {
+        scheduled.current.add(t.id);
+        void cf.executeTask(t);
+      }
+    });
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the task status signature
+  }, [statusSig]);
+
   return (
-    <div className="h-[calc(100vh-49px)] md:h-screen">
-      <Canvas cf={cf} />
+    <div className="flex h-screen w-full overflow-hidden bg-[var(--background)] text-[var(--text)]">
+      {/* Left — radial department canvas */}
+      <div className="relative hidden min-w-0 flex-1 md:block">
+        <Canvas cf={cf} brand={brand} onSelectDepartment={setSelectedDept} />
+        <div className="absolute right-5 top-4 z-30">
+          <Link
+            href="/pricing"
+            className="inline-flex items-center gap-1.5 rounded-[10px] bg-[var(--text)] px-3 py-1.5 font-display text-[13px] text-white shadow-deep transition-opacity hover:opacity-90"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+              <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-12H12l1-8z" />
+            </svg>
+            Upgrade
+          </Link>
+        </div>
+      </div>
+
+      {/* Right — tabbed panel */}
+      <aside className="h-screen w-full shrink-0 overflow-hidden border-l border-[var(--border-line)] md:w-[460px]">
+        <RightPanel
+          cf={cf}
+          brand={brand}
+          tab={tab}
+          onTabChange={setPicked}
+          onb={onb}
+          onAcceptPlan={handleAcceptPlan}
+          onLaunch={handleLaunch}
+          onSend={handleSend}
+          selectedDept={selectedDept}
+          onSelectDepartment={setSelectedDept}
+          onClearDept={() => setSelectedDept(null)}
+        />
+      </aside>
     </div>
   );
 }

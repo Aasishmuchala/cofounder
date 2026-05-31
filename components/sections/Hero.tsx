@@ -3,7 +3,6 @@
 import { motion } from "framer-motion";
 import { GlassButton, BlinkDot } from "@/components/ui/primitives";
 import Link from "next/link";
-import HeroScene from "@/components/sections/HeroScene";
 
 const FLOATING = [
   { title: "Task Completed", sub: "New webpage", dot: "var(--green)", top: "8%" },
@@ -17,13 +16,23 @@ export default function Hero() {
       id="hero"
       className="relative min-h-[720px] md:h-screen md:min-h-[620px] w-full overflow-hidden"
     >
-      {/* Original animated landscape (ours — no borrowed assets) */}
-      <HeroScene />
-      {/* subtle top gradient for nav legibility */}
-      <div
-        className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/15 to-transparent"
-        aria-hidden
-      />
+      {/* Cinematic hero backdrop (original generated asset) */}
+      <div className="absolute inset-0" aria-hidden>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/hero-lighthouse.jpg"
+          alt=""
+          fetchPriority="high"
+          className="h-full w-full object-cover"
+          style={{ objectPosition: "center 42%" }}
+        />
+        {/* top scrim — nav legibility */}
+        <div className="absolute inset-x-0 top-0 h-44 bg-gradient-to-b from-black/35 to-transparent" />
+        {/* left scrim — headline legibility */}
+        <div className="absolute inset-0 bg-gradient-to-r from-black/45 via-black/10 to-transparent" />
+        {/* bottom scrim — blend into the page below */}
+        <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[var(--background)] to-transparent" />
+      </div>
 
       {/* Left content overlay */}
       <div className="container-1440 relative z-10 flex h-full flex-col justify-center px-5 min-[476px]:px-8 pt-40 md:pt-0">
