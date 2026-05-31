@@ -9,7 +9,7 @@ import Canvas from "@/components/app/Canvas";
 import RightPanel from "@/components/app/RightPanel";
 import { brandName } from "@/lib/cofounder-data";
 
-type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Library";
+type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Skills" | "Library";
 
 export default function AppPage() {
   const cf = useCofounder();
