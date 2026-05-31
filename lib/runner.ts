@@ -9,7 +9,16 @@ import {
   insertAuthoredSkill,
   listArtifacts,
   getWorkspace,
+  updateWorkspaceMeta,
 } from "@/lib/supabase-rest";
+import {
+  getConnectorRegistry,
+  classifyTool,
+  buildConnectorToolDescriptors,
+  dispatchConnectorTool,
+  type ConnectorDef,
+} from "@/lib/connectors";
+import type { PendingApproval } from "@/lib/agent-types";
 import { getAnthropic, MODEL } from "@/lib/anthropic";
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
 import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
@@ -24,6 +33,14 @@ export interface RunnerTask {
   title: string;
   department: string;
   detail?: string;
+}
+
+/** A frozen sensitive tool call from the model's turn, awaiting the taskId stamp
+ *  + persistence by produceDeliverable. Args already have sensitive keys redacted. */
+export interface QueuedApproval {
+  connectorId: string;
+  toolName: string;
+  args: Record<string, unknown>;
 }
 
 /** Live-progress callbacks for streaming generation (SSE). All optional. */
@@ -347,12 +364,15 @@ async function runHop(
   useTools: boolean,
   hooks?: StreamHooks,
   maxTokens = 8000,
+  extraTools?: Anthropic.Tool[],
 ): Promise<Anthropic.Message> {
   const params = {
     model: MODEL,
     max_tokens: maxTokens,
     messages,
-    ...(useTools ? { tools: AGENT_TOOLS } : {}),
+    // Connector tools are merged per-hop (without mutating the module-level
+    // AGENT_TOOLS const) so the model can call enabled connectors.
+    ...(useTools ? { tools: AGENT_TOOLS.concat(extraTools ?? []) } : {}),
   };
   if (hooks) {
     hooks.onHop?.();
@@ -377,31 +397,58 @@ export async function generateWithTools(
   hooks?: StreamHooks,
   allowTools = true,
   maxTokens = 8000,
-): Promise<string> {
+  registry?: ConnectorDef[],
+  extraTools?: Anthropic.Tool[],
+): Promise<{ content: string; queuedApprovals: QueuedApproval[] }> {
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: basePrompt }];
   // No tools -> a single (optionally streamed) generation. Used for large
   // deliverables (landing pages) where extra round-trips blow the time budget.
   if (!allowTools || !dbConfigured || !workspaceId) {
-    return cleanText(await runHop(client, messages, false, hooks, maxTokens));
+    return { content: cleanText(await runHop(client, messages, false, hooks, maxTokens)), queuedApprovals: [] };
   }
+  const reg = registry ?? [];
+  // Frozen { tool, args } snapshots for any SENSITIVE call the model made. The
+  // caller (produceDeliverable) stamps the taskId, persists them to meta, and
+  // flips the task to needs_action.
+  const queuedApprovals: QueuedApproval[] = [];
+
   for (let hop = 0; hop < 4; hop++) {
-    const resp = await runHop(client, messages, true, hooks, maxTokens);
-    if (resp.stop_reason !== "tool_use") return cleanText(resp);
+    const resp = await runHop(client, messages, true, hooks, maxTokens, extraTools);
+    if (resp.stop_reason !== "tool_use") return { content: cleanText(resp), queuedApprovals };
     hooks?.onTool?.(
       resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use").map((b) => b.name),
     );
     messages.push({ role: "assistant", content: resp.content });
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const block of resp.content) {
-      if (block.type === "tool_use") {
-        const out = await runAgentTool(
-          block.name,
-          (block.input ?? {}) as Record<string, unknown>,
-          workspaceId,
-          idea,
-        );
-        results.push({ type: "tool_result", tool_use_id: block.id, content: out });
+      if (block.type !== "tool_use") continue;
+      const input = (block.input ?? {}) as Record<string, unknown>;
+      const risk = classifyTool(block.name, reg);
+      let out: string;
+      if (risk === "prohibited") {
+        // Never executed, never queued — the human must do it themselves.
+        out =
+          "ACTION_BLOCKED: This action is prohibited by policy and cannot be automated. The human must perform it manually if appropriate.";
+      } else if (risk === "sensitive") {
+        // Freeze the concrete { connector, tool, args } for deterministic
+        // system-side execution on approval. The args are kept UNREDACTED here so
+        // the human approves — and the executor later runs — the exact reviewed
+        // values; redaction happens only when persisting/displaying (the meta
+        // sanitizer redacts on write; the audit log redacts on record). Redacting
+        // here would execute the approved action with literal "[redacted]" values.
+        const hit = reg.find((c) => c.tools.some((t) => t.name === block.name));
+        queuedApprovals.push({ connectorId: hit?.id ?? "", toolName: block.name, args: input });
+        out =
+          `ACTION_QUEUED: ${block.name} has been queued for human approval. Do not retry this tool call. ` +
+          "Continue composing your response as if this action will be completed shortly.";
+      } else if (risk === "safe") {
+        // Auto-execute; output is injection-scanned + capped inside dispatch.
+        out = await dispatchConnectorTool(block.name, input, reg);
+      } else {
+        // Not a connector tool — a built-in runner context tool.
+        out = await runAgentTool(block.name, input, workspaceId, idea);
       }
+      results.push({ type: "tool_result", tool_use_id: block.id, content: out });
     }
     messages.push({ role: "user", content: results });
   }
@@ -416,7 +463,7 @@ export async function generateWithTools(
     hooks,
     maxTokens,
   );
-  return cleanText(final);
+  return { content: cleanText(final), queuedApprovals };
 }
 
 /**
@@ -446,6 +493,12 @@ export async function produceDeliverable(
   const vibeId = meta?.vibeId ?? null;
   const authored =
     dbConfigured && workspaceId ? await findAuthoredSkill(workspaceId, kind).catch(() => null) : null;
+
+  // Connector layer: resolve the workspace's enabled connectors and expose their
+  // tools to the model in the tool-use loop. SAFE tools auto-run; SENSITIVE tools
+  // are intercepted + queued for human approval (handled in generateWithTools).
+  const connectorRegistry = getConnectorRegistry(meta?.connectors);
+  const connectorTools = buildConnectorToolDescriptors(connectorRegistry);
 
   // The best preloaded catalog skill for this task (the comparison the Skills tab
   // shows). For text deliverables it becomes the agent's equipped skill — its
@@ -523,7 +576,7 @@ export async function produceDeliverable(
     try {
       // Landing pages: single fast generation (no tool round-trips). Others: the
       // full tool-use loop for cross-deliverable context.
-      content = await generateWithTools(
+      const gen = await generateWithTools(
         client,
         basePrompt,
         workspaceId,
@@ -533,8 +586,44 @@ export async function produceDeliverable(
         // A full React page (JSX + inline SVG + Tailwind) needs more headroom
         // than text deliverables, or it truncates mid-component and won't compile.
         kind === "landing_page" ? 16000 : 8000,
+        connectorRegistry,
+        connectorTools,
       );
+      content = gen.content;
       title = `${(idea || "Company").slice(0, 50)} — ${noun}`;
+
+      // A SENSITIVE connector action was queued: persist the frozen approvals
+      // (stamped with this task's id) to meta, flag the task needs_action, and
+      // return WITHOUT inserting an artifact. The human approves the concrete
+      // { tool, args } in the Inbox; the system executes it deterministically.
+      if (gen.queuedApprovals.length > 0 && dbConfigured && workspaceId) {
+        const existing = (await getWorkspace(workspaceId).then((w) => w?.meta?.pendingApprovals ?? []).catch(() => [])) as PendingApproval[];
+        const fresh: PendingApproval[] = gen.queuedApprovals.map((q) => ({
+          id: `ap_${Math.random().toString(36).slice(2, 12)}`,
+          taskId: task.id,
+          connectorId: q.connectorId,
+          toolName: q.toolName,
+          args: q.args,
+          ts: Date.now(),
+        }));
+        await updateWorkspaceMeta(workspaceId, {
+          pendingApprovals: [...existing, ...fresh].slice(-50),
+        }).catch(() => {});
+        await patchTask(task.id, { status: "needs_action" }, workspaceId).catch(() => {});
+        return {
+          artifact: {
+            id: `a_${Math.random().toString(36).slice(2, 10)}`,
+            taskId: task.id,
+            kind,
+            title: "Pending approval",
+            content: gen.content || "",
+            skill: headline,
+            eval: null,
+          },
+          mock: false,
+        };
+      }
+
       mock = content.length === 0;
 
       if (!mock && !authored && dbConfigured && workspaceId) {

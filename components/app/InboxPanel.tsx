@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import { useEffect, useState } from "react";
-import { cx } from "@/components/ui/primitives";
+import { cx, MonoLabel } from "@/components/ui/primitives";
 import { departmentColor } from "@/lib/agent-types";
+import type { PendingApproval } from "@/lib/agent-types";
 import { DEPARTMENT_INFO } from "@/lib/cofounder-data";
 import type { UseCofounder } from "@/lib/use-cofounder";
 
@@ -37,9 +38,12 @@ export default function InboxPanel({
   cf: UseCofounder;
   onSelectDepartment?: (dept: string) => void;
 }) {
-  const { tasks, artifacts, updateTask } = cf;
+  const { tasks, artifacts, updateTask, meta, canEdit, resolveApproval } = cf;
   const [expanded, setExpanded] = useState(false);
   const [alerts, setAlerts] = useState(false);
+
+  // Connector actions awaiting human approval (live in meta, not their own table).
+  const connectorApprovals = (meta.pendingApprovals ?? []) as PendingApproval[];
 
   // build the activity feed (needs-approval first, then working, then delivered)
   const taskById = new Map(tasks.map((t) => [t.id, t]));
@@ -82,7 +86,8 @@ export default function InboxPanel({
 
   if (tasks.length === 0) return null;
 
-  const needsCount = items.filter((i) => i.kind === "needs_action").length;
+  const needsCount =
+    items.filter((i) => i.kind === "needs_action").length + connectorApprovals.length;
   const shown = items.slice(0, 6);
 
   const toggleAlerts = () => {
@@ -159,8 +164,51 @@ export default function InboxPanel({
                 </span>
               </button>
             ))}
-            {shown.length === 0 && (
+            {shown.length === 0 && connectorApprovals.length === 0 && (
               <div className="px-4 py-4 text-[12.5px] text-[var(--text-50)]">No agent updates yet.</div>
+            )}
+
+            {/* Connector approvals — sensitive tool calls awaiting your sign-off. */}
+            {connectorApprovals.length > 0 && (
+              <div className="border-t border-black/[0.06]">
+                <div className="px-4 pb-1 pt-3">
+                  <MonoLabel>Connector Approvals</MonoLabel>
+                </div>
+                {connectorApprovals.map((ap) => (
+                  <div key={ap.id} className="border-b border-black/[0.04] px-4 py-2.5 last:border-0">
+                    <div className="flex items-center gap-2">
+                      <span className="shrink-0 rounded-[5px] bg-[var(--surface-raised)] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-[0.05em] text-[var(--text-50)] shadow-raised">
+                        {ap.connectorId || "connector"}
+                      </span>
+                      <span className="font-mono text-[12px] text-[var(--text-80)]">{ap.toolName}</span>
+                    </div>
+                    <p className="mt-1 truncate font-mono text-[10px] text-[var(--text-50)]" title={JSON.stringify(ap.args)}>
+                      {JSON.stringify(ap.args, null, 0).slice(0, 120)}
+                    </p>
+                    {canEdit && (
+                      <span className="mt-1.5 flex gap-1.5">
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => resolveApproval(ap.id, "approve")}
+                          className="rounded-[6px] px-2 py-0.5 font-display text-[11px] font-medium text-white shadow-glossy"
+                          style={{ background: "var(--green)" }}
+                        >
+                          Approve
+                        </span>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => resolveApproval(ap.id, "deny")}
+                          className="rounded-[6px] bg-[#efefec] px-2 py-0.5 font-display text-[11px] font-medium text-[var(--text-70)]"
+                        >
+                          Decline
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>

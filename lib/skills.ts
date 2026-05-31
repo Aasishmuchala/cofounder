@@ -57,8 +57,13 @@ const DESIGN_KINDS = new Set<ArtifactKind>(["landing_page", "brand_spec"]);
 
 // ---- trust guard ---------------------------------------------------------
 
-const INJECTION =
-  /\b(ignore (all |the )?(previous|above)|disregard (the )?(previous|above)|system prompt|you are now|new instructions?|exfiltrat|reveal (your )?(system|prompt|instructions)|begin (system|prompt))\b/i;
+// Exported so the connector layer can reuse the SAME injection scan on untrusted
+// tool OUTPUTS (single source of truth for prompt-injection markers). Note the
+// `exfiltrat` alternative has NO trailing \b: a \b after "exfiltrat" never matches
+// because the next char ("e"/"i" in exfiltrate/exfiltration) is a word char, so
+// the boundary would let those phrasings slip through.
+export const INJECTION =
+  /\b(ignore (all |the )?(previous|above)|disregard (the )?(previous|above)|system prompt|you are now|new instructions?|reveal (your )?(system|prompt|instructions)|begin (system|prompt))\b|exfiltrat/i;
 
 /** Cap + scan untrusted skill text. Returns null if it looks like an injection. */
 export function sanitizeSkill(raw: string | undefined): string | null {

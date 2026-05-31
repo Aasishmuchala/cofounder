@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Task, ChatMessage, Artifact, WorkspaceMeta } from "@/lib/agent-types";
+import type { Task, ChatMessage, Artifact, WorkspaceMeta, ConnectorConfig } from "@/lib/agent-types";
 
 interface AgentResponse {
   reply: string;
@@ -43,6 +43,8 @@ export interface UseCofounder {
   /** The deliverable being streamed live right now, if any. */
   streaming: StreamState | null;
   error: string | null;
+  /** Connectors enabled for this workspace (derived from meta). */
+  connectors: ConnectorConfig[];
   send: (text: string, creationMeta?: WorkspaceMeta) => Promise<void>;
   reset: () => void;
   updateTask: (id: string, patch: Partial<Task>) => void;
@@ -51,6 +53,8 @@ export interface UseCofounder {
   saveMeta: (patch: WorkspaceMeta) => void;
   saveArtifact: (id: string, content: string) => Promise<void>;
   regenerate: (task: Task) => Promise<Artifact | null>;
+  /** Approve or deny a pending connector action; refreshes after the POST. */
+  resolveApproval: (approvalId: string, action: "approve" | "deny") => Promise<void>;
   drive: () => Promise<void>;
 }
 
@@ -372,16 +376,21 @@ export function useCofounder(): UseCofounder {
   const refresh = useCallback(async (): Promise<{ tasks: Task[]; artifacts: Artifact[] } | null> => {
     if (!workspaceId) return null;
     try {
-      const [tRes, aRes] = await Promise.all([
+      const [tRes, aRes, wRes] = await Promise.all([
         fetch(`/api/tasks?workspace=${encodeURIComponent(workspaceId)}`),
         fetch(`/api/artifacts?workspace=${encodeURIComponent(workspaceId)}`),
+        // Re-pull meta so connector config + pending approvals (which live in
+        // meta, not their own table) stay live across tabs / after approvals.
+        fetch(`/api/workspace?id=${encodeURIComponent(workspaceId)}`),
       ]);
       const tData = tRes.ok ? ((await tRes.json()) as { tasks: Task[] }) : { tasks: [] };
       const aData = aRes.ok ? ((await aRes.json()) as { artifacts: Artifact[] }) : { artifacts: [] };
+      const wData = wRes.ok ? ((await wRes.json()) as { meta?: WorkspaceMeta }) : {};
       const t = Array.isArray(tData.tasks) ? tData.tasks : [];
       const a = Array.isArray(aData.artifacts) ? aData.artifacts : [];
       setTasks(t);
       setArtifacts(a);
+      if (wData.meta && typeof wData.meta === "object") setMeta(wData.meta);
       return { tasks: t, artifacts: a };
     } catch {
       return null;
@@ -674,6 +683,37 @@ export function useCofounder(): UseCofounder {
     [persisted, workspaceId, refresh],
   );
 
+  /** Approve or deny a pending connector action. Optimistically drops it from
+   *  meta.pendingApprovals, POSTs the decision (the server executes the frozen
+   *  { tool, args } on approve), then refreshes to reconcile task status. */
+  const resolveApproval = useCallback(
+    async (approvalId: string, action: "approve" | "deny") => {
+      if (!canEdit) return;
+      // Optimistic local removal so the Inbox updates instantly.
+      setMeta((m) => ({
+        ...m,
+        pendingApprovals: (m.pendingApprovals ?? []).filter((p) => p.id !== approvalId),
+      }));
+      if (!persisted || !workspaceId) return;
+      try {
+        await fetch("/api/approvals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            approvalId,
+            action,
+          }),
+        });
+      } catch {
+        /* ignore — refresh below reconciles from server state */
+      }
+      await refresh();
+    },
+    [canEdit, persisted, workspaceId, refresh],
+  );
+
   return {
     messages,
     tasks,
@@ -687,6 +727,7 @@ export function useCofounder(): UseCofounder {
     canEdit,
     streaming,
     error,
+    connectors: meta.connectors ?? [],
     send,
     reset,
     updateTask,
@@ -695,6 +736,7 @@ export function useCofounder(): UseCofounder {
     saveMeta,
     saveArtifact,
     regenerate,
+    resolveApproval,
     drive,
   };
 }

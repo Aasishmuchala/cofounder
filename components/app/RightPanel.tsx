@@ -20,10 +20,11 @@ import { vibeById } from "@/lib/vibes";
 import DepartmentView from "@/components/app/DepartmentView";
 import ProgressDashboard from "@/components/app/ProgressDashboard";
 import SkillsTab from "@/components/app/SkillsTab";
+import ConnectionsTab from "@/components/app/ConnectionsTab";
 import type { CustomAgent } from "@/lib/use-custom-agents";
 
-type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Skills" | "Library";
-const TABS: TabKey[] = ["Home", "Cofounder", "Company", "Tasks", "Skills", "Library"];
+type TabKey = "Home" | "Cofounder" | "Company" | "Tasks" | "Skills" | "Connections" | "Library";
+const TABS: TabKey[] = ["Home", "Cofounder", "Company", "Tasks", "Skills", "Connections", "Library"];
 
 export default function RightPanel({
   cf,
@@ -116,6 +117,7 @@ export default function RightPanel({
             {tab === "Company" && <CompanyTab brand={brand} customAgents={customAgents} />}
             {tab === "Tasks" && <TasksTab cf={cf} onSelectDepartment={onSelectDepartment} />}
             {tab === "Skills" && <SkillsTab cf={cf} />}
+            {tab === "Connections" && <ConnectionsTab cf={cf} />}
             {tab === "Library" && <LibraryTab cf={cf} vibeId={onb.vibeId} brand={brand} />}
           </>
         )}
