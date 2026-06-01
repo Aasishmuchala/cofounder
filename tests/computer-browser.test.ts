@@ -66,10 +66,12 @@ function activeEnv() {
   vi.stubEnv("MCP_ALLOW_PRIVATE", "1");
 }
 
-beforeEach(() => {
-  // Clear live sessions FIRST (module-level Map persists across tests in this file),
-  // then zero the counters so each test starts from a clean, known baseline.
-  __resetBrowserSessionsForTest();
+beforeEach(async () => {
+  // Clear live sessions FIRST (module-level Map persists across tests in this file)
+  // and AWAIT their teardown — the map now holds creation PROMISES, so context
+  // close() is deferred; awaiting it keeps a previous test's close from bleeding into
+  // this one's closedContexts. THEN zero the counters for a clean, known baseline.
+  await __resetBrowserSessionsForTest();
   contextCount = 0;
   pageCount = 0;
   closedContexts.length = 0;

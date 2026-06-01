@@ -643,13 +643,16 @@ const browserSessions = new Map<string, BrowserSessionEntry>();
 
 /** TEST-ONLY: drop all live browsing sessions (does not touch the shared browser).
  *  Lets unit tests assert context creation/eviction from a known baseline. Never
- *  called by production code. Closes each context once its (possibly in-flight)
- *  creation resolves; clears the map synchronously. */
-export function __resetBrowserSessionsForTest(): void {
-  for (const entry of browserSessions.values()) {
-    void entry.then((s) => s?.context.close().catch(() => {})).catch(() => {});
-  }
+ *  called by production code. ASYNC so tests can AWAIT teardown: it clears the map
+ *  synchronously, then closes every (possibly in-flight) context and waits for those
+ *  closes — so a deferred close from one test can't bleed into the next test's
+ *  recorded state. */
+export async function __resetBrowserSessionsForTest(): Promise<void> {
+  const entries = [...browserSessions.values()];
   browserSessions.clear();
+  await Promise.all(
+    entries.map((entry) => entry.then((s) => s?.context.close().catch(() => {})).catch(() => {})),
+  );
 }
 
 /** Lazily load Playwright + launch Chromium once. Returns null (never throws) if
