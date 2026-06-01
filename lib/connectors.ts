@@ -68,19 +68,23 @@ export interface ConnectorDef {
 const PROHIBITED_NAME =
   /(transfer|wire|send).*(money|funds|payment)|pay(ment)?_|purchase_card|enter_(credential|password|card|payment)|delete_(account|data|database|forever)|permanent.*delete|create_account|sign_?up|change_(permission|security|role|access)|grant_(access|admin)|rotate_secret/i;
 
-/** Built-in MOCK connectors. They ship enabled-capable by default so the entire
- *  governed flow is demoable offline. Each tool is tagged with its risk tier. */
+/** Built-in connectors. web/email/social are REAL http-mcp connectors: set their
+ *  endpoint env var (WEB_SEARCH_MCP_URL / EMAIL_MCP_URL / SOCIAL_MCP_URL) to a
+ *  search / email / social MCP (or HTTP) endpoint and they make genuine calls
+ *  through the same SSRF guard + approval gate; until then a call returns a clear
+ *  "not_configured" result (no fake success). Each tool is tagged with its risk tier. */
 export const BUILT_IN_CONNECTORS: ConnectorDef[] = [
   {
     id: "web",
     label: "Web Search",
-    kind: "mock",
+    kind: "http-mcp",
     enabled: false,
+    secretEnvVar: "WEB_SEARCH_MCP_URL",
     tools: [
       {
         name: "web_search",
         description:
-          "Search the web for current information about a topic, company, or market. Returns a list of result titles, URLs, and snippets. Safe, read-only — runs automatically.",
+          "Search the web for current information about a topic, company, or market. Returns a list of result titles, URLs, and snippets. Safe, read-only — runs automatically against the configured search endpoint.",
         risk: "safe",
         inputSchema: {
           type: "object",
@@ -95,8 +99,9 @@ export const BUILT_IN_CONNECTORS: ConnectorDef[] = [
   {
     id: "email",
     label: "Email",
-    kind: "mock",
+    kind: "http-mcp",
     enabled: false,
+    secretEnvVar: "EMAIL_MCP_URL",
     tools: [
       {
         name: "send_email",
@@ -118,8 +123,9 @@ export const BUILT_IN_CONNECTORS: ConnectorDef[] = [
   {
     id: "social",
     label: "Social",
-    kind: "mock",
+    kind: "http-mcp",
     enabled: false,
+    secretEnvVar: "SOCIAL_MCP_URL",
     tools: [
       {
         name: "post_update",

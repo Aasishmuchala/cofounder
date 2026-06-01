@@ -15,9 +15,11 @@ interface ConnectorTool {
 interface Connector {
   id: string;
   label: string;
-  kind: "mock" | "http-mcp" | "computer";
+  kind: "mock" | "http-mcp" | "computer" | "claude-code" | "finance";
   enabled: boolean;
   secretEnvVar: string | null;
+  /** http-mcp only: true when the endpoint env var is actually set on the server. */
+  configured?: boolean;
   tools: ConnectorTool[];
 }
 
@@ -214,9 +216,21 @@ export default function ConnectionsTab({ cf }: { cf: UseCofounder }) {
               <div key={c.id} className="rounded-[9px] bg-white p-3 shadow-raised">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[12px] text-[var(--text-80)]">{c.label}</span>
-                  <span className="rounded-[5px] bg-[var(--surface-raised)] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-[0.05em] text-[var(--text-50)] shadow-raised">
-                    {c.kind}
-                  </span>
+                  {c.kind === "http-mcp" ? (
+                    <span
+                      title={c.configured ? "Endpoint configured — makes live calls" : "Set the endpoint env var (below) to go live"}
+                      className={cx(
+                        "rounded-[5px] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-[0.05em] shadow-raised",
+                        c.configured ? "bg-[var(--green-tint)] text-[#2c7a3f]" : "bg-[#fbf0d4] text-[#8a6d1f]",
+                      )}
+                    >
+                      {c.configured ? "live" : "needs setup"}
+                    </span>
+                  ) : (
+                    <span className="rounded-[5px] bg-[var(--surface-raised)] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-[0.05em] text-[var(--text-50)] shadow-raised">
+                      {c.kind}
+                    </span>
+                  )}
                   {isCustom && (
                     <span className="rounded-[5px] bg-[var(--surface-raised)] px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-[0.05em] text-[var(--text-50)] shadow-raised">
                       custom
@@ -252,12 +266,12 @@ export default function ConnectionsTab({ cf }: { cf: UseCofounder }) {
                     Requires COMPUTER_USE=1 env var to activate.
                   </p>
                 )}
-                {/* Custom connectors call a real MCP endpoint only when the operator
-                    sets the named env var; surface that so an enabled-but-unset
-                    connector isn't mistaken for live. */}
-                {isCustom && c.secretEnvVar && (
+                {/* An http-mcp connector (built-in or custom) calls a real endpoint
+                    only when the operator sets its named env var; surface that so an
+                    enabled-but-unset connector isn't mistaken for live. */}
+                {c.kind === "http-mcp" && c.secretEnvVar && !c.configured && (
                   <p className="mt-1 font-mono text-[9px] italic text-[var(--text-50)]">
-                    Set <span className="not-italic text-[var(--text-70)]">{c.secretEnvVar}</span> to the connector&apos;s MCP endpoint URL to make real calls.
+                    Set <span className="not-italic text-[var(--text-70)]">{c.secretEnvVar}</span> to a real MCP/HTTP endpoint URL to make live calls.
                   </p>
                 )}
                 <div className="mt-2 space-y-1">

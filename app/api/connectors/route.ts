@@ -32,6 +32,10 @@ function serialize(reg: ConnectorDef[]) {
     kind: c.kind,
     enabled: c.enabled,
     secretEnvVar: c.secretEnvVar ?? null,
+    // Whether this http-mcp connector's endpoint env var is actually set on the
+    // server — lets the UI show LIVE vs needs-setup. Only the boolean is exposed,
+    // never the value.
+    configured: c.kind === "http-mcp" && !!c.secretEnvVar && !!process.env[c.secretEnvVar],
     tools: c.tools.map((t) => ({ name: t.name, description: t.description, risk: t.risk })),
   }));
 }
