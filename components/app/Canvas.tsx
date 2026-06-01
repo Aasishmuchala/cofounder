@@ -132,6 +132,38 @@ function rollUp(tasks: Task[]): DeptActivity {
   return { total: tasks.length, running, needsAction, done, live: running > 0, status };
 }
 
+/* ---------- free node layout persistence ----------
+   Cards you drag are remembered per workspace in localStorage, so the arrangement
+   survives a refresh. Stored as { nodeId: {x,y} } in world units. */
+const layoutKey = (ws: string | null) => `helm:canvas-layout:${ws ?? "local"}`;
+function loadLayout(ws: string | null): Map<string, Pt> {
+  if (typeof window === "undefined") return new Map();
+  try {
+    const raw = window.localStorage.getItem(layoutKey(ws));
+    if (!raw) return new Map();
+    const obj = JSON.parse(raw) as Record<string, Pt>;
+    return new Map(
+      Object.entries(obj).filter(
+        ([, v]) => v && typeof v.x === "number" && typeof v.y === "number",
+      ),
+    );
+  } catch {
+    return new Map();
+  }
+}
+function saveLayout(ws: string | null, pos: Map<string, Pt>) {
+  if (typeof window === "undefined") return;
+  try {
+    const obj: Record<string, Pt> = {};
+    pos.forEach((v, k) => {
+      obj[k] = v;
+    });
+    window.localStorage.setItem(layoutKey(ws), JSON.stringify(obj));
+  } catch {
+    /* private mode / quota exceeded — layout just won't persist, non-fatal */
+  }
+}
+
 export default function Canvas({
   cf,
   brand,
@@ -163,6 +195,32 @@ export default function Canvas({
   const [offset, setOffset] = useState<Pt>({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
   const centered = useRef(false);
+
+  /* Hand-arranged node positions (world units). Drag any card and its position
+     sticks here, overriding the computed org-chart slot; edges follow. Empty =
+     pure auto-layout. Loaded per workspace from localStorage (client-only, so the
+     first render still matches SSR and there's no hydration mismatch). */
+  const [nodePos, setNodePos] = useState<Map<string, Pt>>(() => new Map());
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration of the saved layout when the workspace id resolves
+    setNodePos(loadLayout(cf.workspaceId));
+  }, [cf.workspaceId]);
+  const posOf = useCallback(
+    (id: string, fallback: Pt): Pt => nodePos.get(id) ?? fallback,
+    [nodePos],
+  );
+  // Latest scale for the once-bound window pointer handlers (screen->world delta).
+  const scaleRef = useRef(scale);
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
+  // Persist the arrangement (debounced) so it survives a refresh. The size>0 guard
+  // stops the empty mount-time layout from clobbering a saved one before it loads.
+  useEffect(() => {
+    if (nodePos.size === 0) return;
+    const id = window.setTimeout(() => saveLayout(cf.workspaceId, nodePos), 300);
+    return () => window.clearTimeout(id);
+  }, [nodePos, cf.workspaceId]);
 
   /* Which C-suite roles are expanded (showing their specialists). Default: all
      collapsed, so ~50 specialist nodes aren't on-screen at once — the org reads
@@ -200,6 +258,13 @@ export default function Canvas({
     setScale(Math.min(1.6, Math.max(0.3, fit)));
     setOffset({ x: r.width / 2, y: r.height / 2 });
   }, [expanded]);
+
+  /* Drop every hand-placed position and snap back to the computed layout. */
+  const resetLayout = useCallback(() => {
+    setNodePos(new Map());
+    saveLayout(cf.workspaceId, new Map());
+    fitView();
+  }, [fitView, cf.workspaceId]);
 
   /* Group tasks by department once per change, so each role/specialist can read
      its slice without re-scanning the whole list. */
@@ -255,20 +320,34 @@ export default function Canvas({
      drag-to-pan and click-to-act coexist on the same surface — you can grab the
      canvas from any card, the way an infinite canvas should behave. */
   const drag = useRef<
-    | { startX: number; startY: number; ox: number; oy: number }
+    | { kind: "pan"; startX: number; startY: number; ox: number; oy: number }
+    | { kind: "node"; id: string; startX: number; startY: number; nx: number; ny: number }
     | null
   >(null);
   // True once the current press has crossed the drag threshold — read by node
-  // onClicks to tell a pan apart from a click. Reset at the start of each press.
+  // onClicks to tell a drag apart from a click. Reset at the start of each press.
   const movedRef = useRef(false);
 
+  // Press on empty background -> pan the whole board.
   const onPointerDownBg = useCallback(
     (e: React.PointerEvent) => {
       if (e.button !== 0) return; // primary (left) button only
-      drag.current = { startX: e.clientX, startY: e.clientY, ox: offset.x, oy: offset.y };
+      drag.current = { kind: "pan", startX: e.clientX, startY: e.clientY, ox: offset.x, oy: offset.y };
       movedRef.current = false;
     },
     [offset],
+  );
+
+  // Press on a card -> move THAT node (not pan). Each card binds its own id +
+  // current position; stopPropagation keeps the background pan from also firing.
+  const onNodePointerDown = useCallback(
+    (id: string, pos: Pt) => (e: React.PointerEvent) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      drag.current = { kind: "node", id, startX: e.clientX, startY: e.clientY, nx: pos.x, ny: pos.y };
+      movedRef.current = false;
+    },
+    [],
   );
 
   useEffect(() => {
@@ -284,7 +363,19 @@ export default function Canvas({
       const dy = e.clientY - d.startY;
       if (!movedRef.current && Math.abs(dx) + Math.abs(dy) < 5) return; // below threshold: not yet a drag
       movedRef.current = true;
-      setOffset({ x: d.ox + dx, y: d.oy + dy });
+      if (d.kind === "pan") {
+        setOffset({ x: d.ox + dx, y: d.oy + dy });
+      } else {
+        // Screen delta -> world delta is /scale (the world layer is scaled).
+        const s = scaleRef.current || 1;
+        const nx = Math.round(d.nx + dx / s);
+        const ny = Math.round(d.ny + dy / s);
+        setNodePos((prev) => {
+          const next = new Map(prev);
+          next.set(d.id, { x: nx, y: ny });
+          return next;
+        });
+      }
     };
     const up = () => {
       drag.current = null; // movedRef is intentionally left set for the click handler that fires next
@@ -312,7 +403,7 @@ export default function Canvas({
   // The recenter (⤢) control re-frames the org to fit — collapsed or expanded.
   const recenter = fitView;
 
-  const ceoPos: Pt = { x: 0, y: 0 };
+  const ceoPos = posOf("__ceo__", { x: 0, y: 0 });
   // Angular wedge each C-suite role owns on the ring — caps the specialist grid's
   // width so two adjacent expanded departments never overlap.
   const slice = (2 * Math.PI) / REPORTS.length;
@@ -320,7 +411,7 @@ export default function Canvas({
   /* Pre-compute each report's geometry + rolled-up activity once per render. */
   const nodes = REPORTS.map((role, i) => {
     const dept = role.departments[0] ?? "";
-    const pos = ringPosition(i, REPORTS.length);
+    const pos = posOf(role.id, ringPosition(i, REPORTS.length));
     const angle = ringAngle(i, REPORTS.length);
     const specialists = dept ? specialistsForDepartment(dept) : [];
     const activity = rollUp(dept ? tasksByDept.get(dept) ?? [] : []);
@@ -387,7 +478,7 @@ export default function Canvas({
                   {/* C-suite role → its specialists (only when expanded). */}
                   {open &&
                     specialists.map((s, j) => {
-                      const sp = specialistPosition(angle, j, specialists.length, slice);
+                      const sp = posOf(s.id, specialistPosition(angle, j, specialists.length, slice));
                       // Fan out from just beyond the parent node toward the spec arc.
                       const sx1 = pos.x;
                       const sy1 = pos.y;
@@ -428,7 +519,8 @@ export default function Canvas({
 
           {/* CEO node (root, at world-center) */}
           <div
-            className="absolute -translate-x-1/2 -translate-y-1/2"
+            onPointerDown={onNodePointerDown("__ceo__", ceoPos)}
+            className="absolute -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing"
             style={{ left: ceoPos.x, top: ceoPos.y }}
           >
             <div
@@ -468,6 +560,7 @@ export default function Canvas({
             return (
               <div
                 key={role.id}
+                onPointerDown={onNodePointerDown(role.id, pos)}
                 className="group absolute -translate-x-1/2 -translate-y-1/2"
                 style={{ left: pos.x, top: pos.y, width: ROLE_W }}
               >
@@ -581,12 +674,13 @@ export default function Canvas({
             .flatMap(({ dept, angle, specialists }) => {
               const c = departmentColor(dept);
               return specialists.map((s, j) => {
-                const sp = specialistPosition(angle, j, specialists.length, slice);
+                const sp = posOf(s.id, specialistPosition(angle, j, specialists.length, slice));
                 const routed = tasksBySpecialist.get(s.id) ?? [];
                 const sact = rollUp(routed);
                 return (
                   <div
                     key={s.id}
+                    onPointerDown={onNodePointerDown(s.id, sp)}
                     className="group absolute -translate-x-1/2 -translate-y-1/2"
                     style={{ left: sp.x, top: sp.y, width: SPEC_W }}
                   >
@@ -706,6 +800,18 @@ export default function Canvas({
         <button onClick={() => zoomBy(-0.15)} className="hud-btn">−</button>
         <div className="divider-etched" />
         <button onClick={recenter} className="hud-btn text-[11px]" title="Recenter">⤢</button>
+        {nodePos.size > 0 && (
+          <>
+            <div className="divider-etched" />
+            <button
+              onClick={resetLayout}
+              className="hud-btn text-[13px]"
+              title="Reset cards to the auto layout"
+            >
+              ↺
+            </button>
+          </>
+        )}
       </div>
 
       {/* Inbox / agent activity (bottom-left) — folds in the approval queue */}
