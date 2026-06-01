@@ -311,6 +311,10 @@ export interface OrchestratorPlan {
   goal: string;
   objectives: PlanObjective[];
   tasks: PlanTask[];
+  /** The subset of DEPARTMENTS this business needs — the C-suite the CEO spawns.
+   *  sanitizePlan unions the model's pick with every objective/task department, so
+   *  it never omits a department that actually has work. */
+  departments: string[];
   /** True when this is the deterministic HEURISTIC fallback (no model, or the model
    *  reply was unusable/truncated) — a generic template, not a bespoke plan. The UI
    *  surfaces this so the founder knows to refine it. NOT client-settable: sanitizePlan
@@ -399,6 +403,9 @@ export interface WorkspaceMeta {
   auditLog?: AuditEntry[];
   /** Approved orchestration objectives for this company (capped at 8). */
   objectives?: PlanObjective[];
+  /** The C-suite departments this company has spawned (subset of DEPARTMENTS) —
+   *  drives which roles the org canvas shows. Absent = legacy full 12-role org. */
+  activeDepartments?: string[];
   /** Per-workspace spend budget (governance ceiling — money is never moved). */
   budget?: BudgetConfig | null;
   /** Approved spends recorded for governance (ring buffer, capped at 500). */
@@ -531,6 +538,21 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
   }
   if (m.designDefault !== undefined) {
     out.designDefault = m.designDefault === null ? null : sanitizeChoice(m.designDefault);
+  }
+
+  // ---- spawned org (subset of DEPARTMENTS) ----
+  if (Array.isArray(m.activeDepartments)) {
+    const valid = new Set<string>(DEPARTMENTS);
+    const seen = new Set<string>();
+    const arr: string[] = [];
+    for (const d of m.activeDepartments as unknown[]) {
+      const s = typeof d === "string" ? d : "";
+      if (valid.has(s) && !seen.has(s)) {
+        seen.add(s);
+        arr.push(s);
+      }
+    }
+    if (arr.length) out.activeDepartments = arr;
   }
 
   // ---- MCP connector layer (capped + redacted) ----

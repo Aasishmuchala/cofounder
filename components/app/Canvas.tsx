@@ -179,9 +179,37 @@ export default function Canvas({
   onCreatedTask?: () => void;
   onCreatedAgent?: () => void;
 }) {
-  const { tasks, artifacts, loading, persisted, reset, canEdit, workspaceId, deleteCompany } = cf;
+  const { tasks, artifacts, loading, persisted, reset, canEdit, workspaceId, deleteCompany, meta } = cf;
   // Two-step confirm for the destructive "delete company" action.
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // The SPAWNED org: only the C-suite roles whose department this company actually
+  // engages (named by the plan), with backward-compat. Drives every role render below.
+  const activeReports = useMemo(() => {
+    const active = meta.activeDepartments;
+    const working = new Set<string>();
+    for (const o of meta.objectives ?? []) working.add(o.department);
+    for (const t of tasks) working.add(t.department);
+    if (active && active.length > 0) {
+      const show = new Set<string>([...active, ...working]);
+      return REPORTS.filter((r) => r.departments.some((d) => show.has(d)));
+    }
+    // No named team: a legacy company (has work) keeps the full org; a brand-new one
+    // with nothing yet shows the CEO alone.
+    if (working.size === 0 && tasks.length === 0) return [];
+    return REPORTS;
+  }, [meta.activeDepartments, meta.objectives, tasks]);
+
+  // Spawn reveal: the CEO is always present; the chosen roles cascade in one-by-one.
+  const [revealed, setRevealed] = useState(0);
+  useEffect(() => {
+    if (revealed >= activeReports.length) return;
+    const id = window.setTimeout(
+      () => setRevealed((n) => Math.min(n + 1, activeReports.length)),
+      revealed === 0 ? 350 : 140,
+    );
+    return () => window.clearTimeout(id);
+  }, [revealed, activeReports.length]);
 
   // The deliverables counter + viewer read `artifacts` directly; task-level
   // "view output" now lives in the side panel (onSelectDepartment).
@@ -236,12 +264,12 @@ export default function Canvas({
       return next;
     });
   }, []);
-  const allExpanded = expanded.size >= REPORTS.length;
+  const allExpanded = activeReports.length > 0 && expanded.size >= activeReports.length;
   const toggleAll = useCallback(() => {
     setExpanded((prev) =>
-      prev.size >= REPORTS.length ? new Set() : new Set(REPORTS.map((r) => r.id)),
+      prev.size >= activeReports.length ? new Set() : new Set(activeReports.map((r) => r.id)),
     );
-  }, []);
+  }, [activeReports]);
 
   /* Frame the whole org in the viewport: center the CEO and pick a scale that fits
      the furthest node — the C-suite ring when collapsed, the specialist arc when any
@@ -408,17 +436,20 @@ export default function Canvas({
   const ceoPos = posOf("__ceo__", { x: 0, y: 0 });
   // Angular wedge each C-suite role owns on the ring — caps the specialist grid's
   // width so two adjacent expanded departments never overlap.
-  const slice = (2 * Math.PI) / REPORTS.length;
+  const slice = (2 * Math.PI) / Math.max(1, activeReports.length);
 
   /* Pre-compute each report's geometry + rolled-up activity once per render. */
-  const nodes = REPORTS.map((role, i) => {
+  const nodes = activeReports.map((role, i) => {
     const dept = role.departments[0] ?? "";
-    const pos = posOf(role.id, ringPosition(i, REPORTS.length));
-    const angle = ringAngle(i, REPORTS.length);
+    const pos = posOf(role.id, ringPosition(i, activeReports.length));
+    const angle = ringAngle(i, activeReports.length);
     const specialists = dept ? specialistsForDepartment(dept) : [];
     const activity = rollUp(dept ? tasksByDept.get(dept) ?? [] : []);
     return { role, dept, pos, angle, specialists, activity, open: expanded.has(role.id) };
   });
+  // Spawn gate: only the revealed prefix renders (CEO-first cascade). Positions are
+  // computed for the FULL active set above, so they don't shift as roles appear.
+  const visibleNodes = nodes.slice(0, revealed);
 
   return (
     <div className="relative h-full w-full overflow-hidden">
@@ -448,7 +479,7 @@ export default function Canvas({
             className="pointer-events-none absolute overflow-visible"
             style={{ left: 0, top: 0 }}
           >
-            {nodes.map(({ role, dept, pos, angle, specialists, activity, open }) => {
+            {visibleNodes.map(({ role, dept, pos, angle, specialists, activity, open }) => {
               const c = departmentColor(dept);
               // CEO → this C-suite role (always drawn).
               const x1 = ceoPos.x;
@@ -519,10 +550,10 @@ export default function Canvas({
             })}
           </svg>
 
-          {/* CEO node (root, at world-center) */}
+          {/* CEO node (root, at world-center) — boots up first, then roles spawn. */}
           <div
             onPointerDown={onNodePointerDown("__ceo__", ceoPos)}
-            className="absolute -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing"
+            className="anim-hero-enter absolute -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing"
             style={{ left: ceoPos.x, top: ceoPos.y }}
           >
             <div
@@ -547,7 +578,7 @@ export default function Canvas({
                     </span>
                   ) : (
                     <>
-                      {REPORTS.length} leaders ·{" "}
+                      {activeReports.length} leaders ·{" "}
                       {tasks.filter((t) => t.status === "running").length} running
                     </>
                   )}
@@ -557,13 +588,13 @@ export default function Canvas({
           </div>
 
           {/* C-suite ring */}
-          {nodes.map(({ role, dept, pos, activity, specialists, open }) => {
+          {visibleNodes.map(({ role, dept, pos, activity, specialists, open }) => {
             const c = departmentColor(dept);
             return (
               <div
                 key={role.id}
                 onPointerDown={onNodePointerDown(role.id, pos)}
-                className="group absolute -translate-x-1/2 -translate-y-1/2"
+                className="group anim-hero-enter absolute -translate-x-1/2 -translate-y-1/2"
                 style={{ left: pos.x, top: pos.y, width: ROLE_W }}
               >
                 {/* The card body toggles expand/collapse of the specialists. */}
@@ -671,7 +702,7 @@ export default function Canvas({
           })}
 
           {/* specialist tier (rendered for expanded roles only) */}
-          {nodes
+          {visibleNodes
             .filter((n) => n.open && n.dept)
             .flatMap(({ dept, angle, specialists }) => {
               const c = departmentColor(dept);
