@@ -312,13 +312,15 @@ export function useCofounder(): UseCofounder {
   /**
    * Stable queue drainer (held in a ref so it can recurse without a
    * use-before-declare cycle). Runs at most MAX_CONCURRENT real deliverables at
-   * a time — each takes ~minutes, so firing them all at once storms the model
-   * and freezes the canvas. The queue fills the canvas in progressively instead.
+   * a time; the rest queue and fill the canvas progressively. Each call is now
+   * bounded by the server-side model timeout (lib/anthropic.ts), so a wider
+   * fan-out can't hang — it just leans harder on the proxy (well under the
+   * 20-req/min per-workspace rate limit).
    */
   const pumpRef = useRef<() => void>(() => {});
   useEffect(() => {
     pumpRef.current = () => {
-      const MAX_CONCURRENT = 2;
+      const MAX_CONCURRENT = 5;
       const TIMEOUT_MS = 180_000;
       while (inFlightRef.current < MAX_CONCURRENT && queueRef.current.length > 0) {
         const task = queueRef.current.shift() as Task;
@@ -424,8 +426,11 @@ export function useCofounder(): UseCofounder {
     drivingRef.current = true;
     // Produce up to MAX_PARALLEL deliverables at once (fills the canvas the way
     // the old client pump did). Each call claims a DISTINCT task id, and the
-    // server claim is atomic — so two tabs or a cron can't double-produce.
-    const MAX_PARALLEL = 2;
+    // server claim is atomic — so two tabs or a cron can't double-produce. 5 is a
+    // throughput choice: every call is timeout-bounded (lib/anthropic.ts) so the
+    // wider fan-out can't hang, but it does push more concurrent load at the proxy
+    // (still well under the 20-req/min per-workspace rate limit).
+    const MAX_PARALLEL = 5;
     // Task ids already dispatched this run: prevents reselecting a contended
     // task (one another tab/cron is producing) and guarantees termination.
     const attempted = new Set<string>();
