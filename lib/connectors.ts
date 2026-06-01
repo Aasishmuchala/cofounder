@@ -780,11 +780,16 @@ function runFinanceTool(toolName: string, input: Record<string, unknown>): strin
  *
  * The raw executor output is always passed through sanitizeToolOutput, so even a
  * compromised real endpoint can't inject instructions back into the model.
+ *
+ * `sessionKey` (optional, typically the workspace id) scopes the computer
+ * connector's browsing SESSION so browse/screenshot/browser_act share a page
+ * within one workspace but stay isolated across workspaces (cross-tenant safety).
  */
 export async function dispatchConnectorTool(
   toolName: string,
   input: Record<string, unknown>,
   registry: ConnectorDef[],
+  sessionKey?: string,
 ): Promise<string> {
   // Final defensive policy check — never execute a prohibited tool.
   if (classifyTool(toolName, registry) === "prohibited") {
@@ -798,7 +803,8 @@ export async function dispatchConnectorTool(
     if (hit.connector.kind === "computer") {
       // The computer executor sanitizes its own output AND re-checks the env gate
       // + shell denylist + secret-path policy at execution time (defense-in-depth).
-      raw = await runComputerTool(toolName, input);
+      // sessionKey scopes the per-workspace browsing context (cross-tenant isolation).
+      raw = await runComputerTool(toolName, input, sessionKey);
     } else if (hit.connector.kind === "claude-code") {
       // The claude-code executor re-checks the double-gate at execution time and
       // degrades gracefully when the CLI is absent (lazy import — no build dep).

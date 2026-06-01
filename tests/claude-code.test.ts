@@ -49,6 +49,9 @@ import { getConnectorRegistry, buildConnectorToolDescriptors, classifyTool, disp
 function defaultHappyPath() {
   execHandler = (file, args) => {
     if (file === "git") {
+      if (args.includes("rev-parse")) {
+        return { stdout: "abc123def456\n" }; // base sha captured at worktree creation
+      }
       if (args.includes("diff")) {
         return { stdout: "diff --git a/x.ts b/x.ts\n+added a line\n" };
       }
@@ -311,6 +314,29 @@ describe("runClaudeCode — happy path (mocked CLI + git)", () => {
     // It created AND removed a worktree (cleanup ran).
     expect(execCalls.some((c) => c.file === "git" && c.args.includes("worktree") && c.args.includes("add"))).toBe(true);
     expect(execCalls.some((c) => c.file === "git" && c.args.includes("worktree") && c.args.includes("remove"))).toBe(true);
+  });
+
+  it("captures COMMITTED work: diffs against the captured BASE sha (not --cached), keeping --no-ext-diff", async () => {
+    // FIX 1: a session that commits its work must still be visible to the human
+    // reviewer. We capture the repo's HEAD as a base sha at worktree creation, then
+    // diff the worktree against THAT sha — which includes staged + unstaged +
+    // COMMITTED changes. A `diff --cached` (index vs HEAD) would miss the commit.
+    await runClaudeCode({ id: "task-123", title: "Add health endpoint", department: "Engineering" });
+
+    // The base sha was captured at creation time via `git rev-parse HEAD`.
+    const revParse = execCalls.find((c) => c.file === "git" && c.args.includes("rev-parse") && c.args.includes("HEAD"));
+    expect(revParse).toBeTruthy();
+
+    const diffCall = execCalls.find((c) => c.file === "git" && c.args.includes("diff"));
+    expect(diffCall).toBeTruthy();
+    // Diffs against the captured base sha — this is what surfaces committed work.
+    expect(diffCall!.args).toContain("abc123def456");
+    // Must NOT use --cached (index-vs-HEAD) — that's the bug being fixed.
+    expect(diffCall!.args).not.toContain("--cached");
+    // KEEP the exec-safety guard from the prior fix.
+    expect(diffCall!.args).toContain("--no-ext-diff");
+    // It still staged untracked files first so new files appear in the diff.
+    expect(execCalls.some((c) => c.file === "git" && c.args.includes("add") && c.args.includes("-A"))).toBe(true);
   });
 
   it("maps a CLI error result to status 'error' but still returns the summary/diff", async () => {

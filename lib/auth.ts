@@ -19,6 +19,28 @@ import { dbConfigured, getWorkspaceEditKey } from "@/lib/supabase-rest";
 
 const APP_SECRET = process.env.APP_SECRET || "";
 
+/** Default body cap for JSON/AI routes (256 KB). The objectives/tasks/plan/spend
+ *  payloads are tiny; this is generous while still rejecting a multi-MB body that
+ *  would buffer in memory and (for AI routes) drive real model cost. */
+export const JSON_BODY_LIMIT = 256 * 1024;
+
+/**
+ * Cheap pre-parse guard: true when the request's declared Content-Length exceeds
+ * `maxBytes`. Call this BEFORE `await req.json()` so an oversized body is rejected
+ * (HTTP 413) without buffering it or triggering an AI call.
+ *
+ * This relies on the Content-Length header (present for normal JSON POSTs). A
+ * chunked/streamed body without Content-Length isn't caught here — that's an
+ * accepted limitation for a guard whose goal is to stop the common multi-MB JSON
+ * body; the route's own field caps (coerceText/sanitizers) still bound what's used.
+ */
+export function tooLarge(req: Request, maxBytes: number = JSON_BODY_LIMIT): boolean {
+  const len = req.headers.get("content-length");
+  if (!len) return false;
+  const n = Number(len);
+  return Number.isFinite(n) && n > maxBytes;
+}
+
 /** True when APP_SECRET is configured and write authorization is enforced. */
 export const authEnforced = Boolean(APP_SECRET);
 

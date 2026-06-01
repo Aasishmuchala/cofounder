@@ -266,7 +266,11 @@ export async function decomposeGoal(
     try {
       const resp = await client.messages.create({
         model: MODEL,
-        max_tokens: 2400,
+        // 4500 (was 2400): the full objectives+tasks JSON for a rich plan can exceed
+        // 2400 output tokens, and a TRUNCATED reply fails JSON.parse below — silently
+        // dropping the founder to the generic heuristic even when the model tried.
+        // The plan is still HARD-bounded by sanitizePlan regardless of this ceiling.
+        max_tokens: 4500,
         system: [{ type: "text", text: DECOMPOSE_SYSTEM }],
         messages: [
           {
@@ -282,12 +286,14 @@ export async function decomposeGoal(
       const parsed = JSON.parse(fencedJson(text)) as unknown;
       const plan = sanitizePlan({ ...(parsed as object), goal: cleanGoal }, cleanGoal);
       // If the model returned nothing usable, fall through to the heuristic.
-      if (plan.objectives.length > 0) return plan;
+      // A real model-derived plan is explicitly NOT a fallback.
+      if (plan.objectives.length > 0) return { ...plan, fallback: false };
     } catch {
       /* fall through to the deterministic heuristic plan */
     }
   }
 
+  // No API key, or the model reply was unusable/truncated -> generic template.
   return heuristicPlan(cleanGoal);
 }
 
@@ -312,7 +318,10 @@ export function heuristicPlan(goal: string): OrchestratorPlan {
       { id: "t4", title: "Outbound email", department: "Sales", detail: `Draft a cold outbound email for: ${g}.`, objectiveId: "o3", dependsOn: ["t2"] },
     ],
   };
-  return sanitizePlan(raw, g);
+  // fallback:true marks this as the generic template (no bespoke model plan), so the
+  // UI can tell the founder to refine it. Stamped AFTER sanitizePlan (which builds a
+  // clean object and would otherwise drop the flag).
+  return { ...sanitizePlan(raw, g), fallback: true };
 }
 
 /**

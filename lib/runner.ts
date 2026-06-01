@@ -468,7 +468,9 @@ export async function generateWithTools(
           "Continue composing your response as if this action will be completed shortly.";
       } else if (risk === "safe") {
         // Auto-execute; output is injection-scanned + capped inside dispatch.
-        out = await dispatchConnectorTool(block.name, input, reg);
+        // Pass workspaceId as the session key so the computer connector's browser
+        // context is isolated per workspace (cross-tenant page bleed guard).
+        out = await dispatchConnectorTool(block.name, input, reg, workspaceId);
       } else {
         // Not a connector tool — a built-in runner context tool.
         out = await runAgentTool(block.name, input, workspaceId, idea);
@@ -532,7 +534,12 @@ export async function produceDeliverable(
   let catalog: { name: string; source: string; body: string } | null = null;
   try {
     const cmp = compareSkills({ department: task.department, kind, title: task.title, detail: task.detail });
-    if (cmp.chosen && cmp.chosen.score >= 10 && kind !== "landing_page") {
+    // Equip only a GENUINELY relevant skill — department fit alone isn't enough.
+    // Threshold 16 = department fit (12) PLUS a real content signal (a keyword/kind
+    // hit), so a generic same-department skill with no topical overlap isn't equipped.
+    // (Tracks the raised department-fit weight in compareSkills — was 10 when dept
+    // fit was +6; now +12.)
+    if (cmp.chosen && cmp.chosen.score >= 16 && kind !== "landing_page") {
       catalog = { name: cmp.chosen.name, source: cmp.chosen.source || "skill", body: readSkillBody(cmp.chosen.dir, 2800) };
     }
   } catch {

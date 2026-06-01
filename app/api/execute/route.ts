@@ -1,5 +1,5 @@
 import { coerceText } from "@/lib/agent-types";
-import { authorizeWrite } from "@/lib/auth";
+import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { produceDeliverable } from "@/lib/runner";
 
 export const runtime = "nodejs";
@@ -13,6 +13,7 @@ interface ExecBody {
 
 // POST /api/execute — produce a single deliverable for a task (one-off / manual run).
 export async function POST(req: Request): Promise<Response> {
+  if (tooLarge(req)) return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
   let body: ExecBody = {};
   try {
     const parsed = await req.json();

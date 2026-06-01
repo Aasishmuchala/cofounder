@@ -1,5 +1,5 @@
 import { coerceText, isTaskReady, blockedObjectiveIds, type PlanObjective } from "@/lib/agent-types";
-import { authorizeWrite } from "@/lib/auth";
+import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { dbConfigured, listTasks, listArtifacts, claimTask, patchTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
@@ -18,6 +18,7 @@ const STALE_LEASE_MS = 4 * 60 * 1000;
  *         · `done` {artifactId,score,kind,title} · `error` {message}
  */
 export async function POST(req: Request): Promise<Response> {
+  if (tooLarge(req)) return Response.json({ error: "payload too large" }, { status: 413 });
   let body: Record<string, unknown> = {};
   try {
     const parsed = await req.json();

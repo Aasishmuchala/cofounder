@@ -50,6 +50,14 @@ function headers(extra?: Record<string, string>): HeadersInit {
 const DETAIL_PREFIX = "cf:";
 const DETAIL_SEP = "|";
 
+/** Backstop on stripDetailEnvelope's peel loop. Each peel strips one envelope AND
+ *  strictly shortens the string, so the loop always terminates on its own; this
+ *  cap only bounds pathologically deep input. It comfortably exceeds the most
+ *  envelope layers that fit the route's 1000-char detail cap (min layer
+ *  `cf:{"deps":[""]}|` ≈ 17 chars -> ≤ 58 layers), so capped input always reaches
+ *  the true fixed point before the cap; a fail-safe handles anything deeper. */
+const MAX_ENVELOPE_PEELS = 64;
+
 /** The only executor value the envelope may carry — anything else is dropped on
  *  decode so a user-typed `cf:{"executor":"…"}|` can't invent a routing hint. */
 const ALLOWED_EXECUTORS = new Set(["claude-code"]);
@@ -116,15 +124,27 @@ export function encodeDetail(detail: string, meta: DetailMeta): string {
  */
 export function stripDetailEnvelope(detail: string): string {
   if (typeof detail !== "string") return detail;
-  // Strip to a FIXED POINT (bounded loop) — a nested `cf:{...}|cf:{...}|text`
-  // must not smuggle a privileged envelope (executor/deps/objectiveId) past a
-  // single decode pass. Each iteration peels one real envelope; a plain detail
-  // that merely starts with "cf:" but isn't an envelope is returned untouched.
+  // Strip to a FIXED POINT — a nested `cf:{...}|cf:{...}|text` must not smuggle a
+  // privileged envelope (executor/deps/objectiveId) past the strip. ONE decode
+  // pass peels only the OUTERMOST layer, and the bare remainder it returns can
+  // itself be a still-live envelope that rowToTask -> decodeDetail would later
+  // honor on read. Each peel strips one real envelope AND strictly shortens the
+  // string, so this terminates on its own; MAX_ENVELOPE_PEELS is a backstop. A
+  // plain detail that merely starts with "cf:" but isn't a real envelope (no
+  // JSON object after the prefix) decodes to empty meta and is returned untouched.
   let cur = detail;
-  for (let i = 0; i < 8 && cur.startsWith(DETAIL_PREFIX); i++) {
+  for (let i = 0; i < MAX_ENVELOPE_PEELS && cur.startsWith(DETAIL_PREFIX); i++) {
     const { meta, detail: bare } = decodeDetail(cur);
-    if (Object.keys(meta).length === 0) break;
+    if (Object.keys(meta).length === 0) break; // not (or no longer) a real envelope
     cur = bare;
+  }
+  // Fail safe: if the backstop was exhausted while a live envelope still remains
+  // (pathologically deep nesting from a direct caller, beyond the route's 1000-
+  // char cap), break the leading prefix so the result can NEVER decode back to a
+  // privileged hint. The trust boundary is the STORED column — it must be inert
+  // by construction, NOT depend on decodeDetail re-stripping on read.
+  if (cur.startsWith(DETAIL_PREFIX) && Object.keys(decodeDetail(cur).meta).length > 0) {
+    cur = cur.slice(DETAIL_PREFIX.length);
   }
   return cur;
 }
@@ -247,20 +267,30 @@ export function withWorkspaceLock<T>(id: string, fn: () => Promise<T>): Promise<
  * Shallow-merge a patch into a workspace's meta and persist it. Read-modify-write
  * (PostgREST can't do a partial jsonb merge in one PATCH); the patch wins on
  * conflicting top-level keys (e.g. the full customAgents array is replaced).
- * Returns the merged meta.
+ *
+ * Returns the merged meta when a row matched, or `null` when NO row matched (the
+ * workspace id is valid-shaped but doesn't exist). We ask PostgREST for
+ * `return=representation` and inspect the returned row array: an empty array means
+ * 0 rows were affected, so a caller can report persisted:false / 404 instead of a
+ * falsely-successful result. Throws only on a transport/HTTP error.
  */
 export async function updateWorkspaceMeta(
   id: string,
   patch: WorkspaceMeta,
-): Promise<WorkspaceMeta> {
+): Promise<WorkspaceMeta | null> {
   const current = (await getWorkspace(id))?.meta ?? {};
   const next: WorkspaceMeta = { ...current, ...patch };
   const res = await rest(`cofounder_workspaces?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: headers({ Prefer: "return=minimal" }),
+    // return=representation makes PostgREST echo the updated row(s), so we can detect
+    // a no-op PATCH against a non-existent workspace (empty array = 0 rows matched).
+    headers: headers({ Prefer: "return=representation" }),
     body: JSON.stringify({ meta: next }),
   });
   if (!res.ok) throw new Error(`updateWorkspaceMeta failed (${res.status})`);
+  // PATCH ... return=representation responds with an ARRAY of the affected rows.
+  const rows = (await res.json().catch(() => [])) as unknown;
+  if (!Array.isArray(rows) || rows.length === 0) return null; // no such workspace
   return next;
 }
 

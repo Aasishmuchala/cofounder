@@ -29,3 +29,32 @@ describe("authorizeWrite — no DB + APP_SECRET enforces HMAC tokens", () => {
     expect(auth.verifyWorkspaceToken("ws1", undefined)).toBe(false);
   });
 });
+
+describe("tooLarge — request body size guard (FIX 4)", () => {
+  const make = (contentLength?: string): Request =>
+    new Request("https://example.com/api/x", {
+      method: "POST",
+      headers: contentLength === undefined ? {} : { "content-length": contentLength },
+    });
+
+  it("rejects a body whose Content-Length exceeds the cap", () => {
+    expect(auth.tooLarge(make(String(auth.JSON_BODY_LIMIT + 1)))).toBe(true);
+    expect(auth.tooLarge(make(String(5 * 1024 * 1024)))).toBe(true); // 5 MB
+  });
+
+  it("allows a body at or under the cap", () => {
+    expect(auth.tooLarge(make(String(auth.JSON_BODY_LIMIT)))).toBe(false); // exactly the cap
+    expect(auth.tooLarge(make("1024"))).toBe(false);
+    expect(auth.tooLarge(make("0"))).toBe(false);
+  });
+
+  it("honors a custom maxBytes argument", () => {
+    expect(auth.tooLarge(make("2000"), 1000)).toBe(true);
+    expect(auth.tooLarge(make("500"), 1000)).toBe(false);
+  });
+
+  it("does NOT reject when Content-Length is absent or unparseable (fails open — field caps still bound it)", () => {
+    expect(auth.tooLarge(make(undefined))).toBe(false);
+    expect(auth.tooLarge(make("not-a-number"))).toBe(false);
+  });
+});

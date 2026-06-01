@@ -275,6 +275,11 @@ export interface OrchestratorPlan {
   goal: string;
   objectives: PlanObjective[];
   tasks: PlanTask[];
+  /** True when this is the deterministic HEURISTIC fallback (no model, or the model
+   *  reply was unusable/truncated) — a generic template, not a bespoke plan. The UI
+   *  surfaces this so the founder knows to refine it. NOT client-settable: sanitizePlan
+   *  drops it from untrusted input; only decomposeGoal/heuristicPlan stamp it. */
+  fallback?: boolean;
 }
 
 /** Caps for the orchestration layer — bounded decomposition, no runaway plans. */

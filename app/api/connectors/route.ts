@@ -1,6 +1,6 @@
 import { coerceText, sanitizeWorkspaceMeta } from "@/lib/agent-types";
 import type { ConnectorConfig } from "@/lib/agent-types";
-import { authorizeWrite } from "@/lib/auth";
+import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { dbConfigured, getWorkspace, updateWorkspaceMeta } from "@/lib/supabase-rest";
 import { BUILT_IN_IDS, getConnectorRegistry, type ConnectorDef } from "@/lib/connectors";
 
@@ -43,6 +43,7 @@ export async function GET(req: Request): Promise<Response> {
 }
 
 export async function PATCH(req: Request): Promise<Response> {
+  if (tooLarge(req)) return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
   let body: Record<string, unknown> = {};
   try {
     const parsed = await req.json();
@@ -102,6 +103,10 @@ export async function PATCH(req: Request): Promise<Response> {
     // Re-run through the meta sanitizer (caps + validates the connectors array).
     const patch = sanitizeWorkspaceMeta({ connectors: next });
     const meta = await updateWorkspaceMeta(workspaceId, patch);
+    // null => no such workspace (the PATCH matched 0 rows). Don't report success.
+    if (!meta) {
+      return Response.json({ ok: false, persisted: false, error: "workspace not found" }, { status: 404 });
+    }
     return Response.json({
       ok: true,
       persisted: true,

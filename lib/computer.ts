@@ -593,13 +593,48 @@ interface PwPage {
   press(selector: string, key: string, opts?: { timeout?: number }): Promise<void>;
   url(): string;
 }
-interface PwBrowser {
+interface PwContext {
   newPage(): Promise<PwPage>;
+  close(): Promise<void>;
+}
+interface PwBrowser {
+  newContext(): Promise<PwContext>;
   close(): Promise<void>;
 }
 
 let browserPromise: Promise<PwBrowser | null> | null = null;
-let activePage: PwPage | null = null;
+
+/* ──────────────── per-workspace browsing sessions (cross-tenant isolation) ────────────────
+ * A single Chromium PROCESS is shared (cheap), but each workspace gets its OWN
+ * Playwright BrowserContext (browser.newContext()) — an isolated cookie jar /
+ * storage / page set — so browse -> screenshot -> browser_act share a page WITHIN a
+ * workspace but NEVER bleed across workspaces. Sessions are keyed by an opaque
+ * session key threaded from dispatchConnectorTool; with no key we use a single
+ * shared DEFAULT context (preserving the prior single-page behavior).
+ *
+ * The live-context count is CAPPED: when a new session would exceed the cap we evict
+ * the OLDEST context (closing it) so contexts can't leak unbounded across many
+ * workspaces. Each context holds exactly one page (one browsing tab per workspace).
+ * --------------------------------------------------------------------- */
+
+const DEFAULT_SESSION_KEY = "__default__";
+/** Max simultaneously-live browser contexts. Oldest is evicted + closed beyond this. */
+const MAX_BROWSER_CONTEXTS = 8;
+
+interface BrowserSession {
+  context: PwContext;
+  page: PwPage;
+}
+// Insertion-ordered (Map preserves order) so the first key is the oldest session.
+const browserSessions = new Map<string, BrowserSession>();
+
+/** TEST-ONLY: drop all live browsing sessions (does not touch the shared browser).
+ *  Lets unit tests assert context creation/eviction from a known baseline. Never
+ *  called by production code. */
+export function __resetBrowserSessionsForTest(): void {
+  for (const s of browserSessions.values()) void s.context.close().catch(() => {});
+  browserSessions.clear();
+}
 
 /** Lazily load Playwright + launch Chromium once. Returns null (never throws) if
  *  Playwright/Chromium is unavailable, so callers degrade gracefully. */
@@ -620,17 +655,33 @@ async function getBrowser(): Promise<PwBrowser | null> {
   return browserPromise;
 }
 
-async function getPage(): Promise<PwPage | null> {
+/** Get (or lazily create) the isolated browsing page for `sessionKey`. Each session
+ *  is a distinct BrowserContext so workspaces never share cookies/pages. Returns
+ *  null (never throws) when Playwright/Chromium is unavailable. */
+async function getPage(sessionKey?: string): Promise<PwPage | null> {
+  const key = sessionKey || DEFAULT_SESSION_KEY;
+  const existing = browserSessions.get(key);
+  if (existing) return existing.page;
+
   const browser = await getBrowser();
   if (!browser) return null;
-  if (!activePage) {
-    try {
-      activePage = await browser.newPage();
-    } catch {
-      return null;
+  try {
+    // Evict the OLDEST context first if we're at the cap, so live contexts stay
+    // bounded no matter how many workspaces browse. close() is best-effort.
+    while (browserSessions.size >= MAX_BROWSER_CONTEXTS) {
+      const oldestKey = browserSessions.keys().next().value as string | undefined;
+      if (oldestKey === undefined) break;
+      const victim = browserSessions.get(oldestKey);
+      browserSessions.delete(oldestKey);
+      if (victim) await victim.context.close().catch(() => {});
     }
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    browserSessions.set(key, { context, page });
+    return page;
+  } catch {
+    return null;
   }
-  return activePage;
 }
 
 // NOTE: computed lazily (a function, not a module-level const). connectors.ts
@@ -646,7 +697,7 @@ function browserUnavailable(): string {
   );
 }
 
-async function browseExec(input: Record<string, unknown>): Promise<string> {
+async function browseExec(input: Record<string, unknown>, sessionKey?: string): Promise<string> {
   const url = str(input, "url").trim();
   if (!/^https?:\/\//i.test(url)) return errorOut("browse requires an http(s) URL.");
   // browse/screenshot are SAFE (auto-run, no approval) — apply the SAME SSRF guard
@@ -655,20 +706,28 @@ async function browseExec(input: Record<string, unknown>): Promise<string> {
   if (!isAllowedEndpoint(url)) {
     return blocked("PROHIBITED: SSRF policy blocks this destination (loopback / private / cloud-metadata). Set MCP_ALLOW_PRIVATE=1 to allow in dev.");
   }
-  const page = await getPage();
+  const page = await getPage(sessionKey);
   if (!page) return browserUnavailable();
   try {
     await page.goto(url, { timeout: SHELL_TIMEOUT_MS, waitUntil: "domcontentloaded" });
+    // Redirect SSRF guard: Playwright follows 30x, so an allowed public host can
+    // bounce Chromium to a private / cloud-metadata address. Re-check the FINAL
+    // url and refuse to RETURN anything from a disallowed landing page (no page
+    // data reaches the model). Set MCP_ALLOW_PRIVATE=1 to allow in dev.
+    const finalUrl = page.url();
+    if (!isAllowedEndpoint(finalUrl)) {
+      return blocked("PROHIBITED: navigation redirected to a blocked destination (SSRF policy).");
+    }
     const title = await page.title();
     // Page title is UNTRUSTED web content — sanitize.
-    return sanitizeToolOutput(JSON.stringify({ status: "ok", url: page.url(), title }));
+    return sanitizeToolOutput(JSON.stringify({ status: "ok", url: finalUrl, title }));
   } catch (e) {
     return errorOut(`navigation failed: ${errMsg(e)}`);
   }
 }
 
-async function screenshotExec(): Promise<string> {
-  const page = await getPage();
+async function screenshotExec(sessionKey?: string): Promise<string> {
+  const page = await getPage(sessionKey);
   if (!page) return browserUnavailable();
   try {
     const buf = await page.screenshot({ fullPage: true });
@@ -678,7 +737,7 @@ async function screenshotExec(): Promise<string> {
   }
 }
 
-async function browserActExec(input: Record<string, unknown>): Promise<string> {
+async function browserActExec(input: Record<string, unknown>, sessionKey?: string): Promise<string> {
   const action = str(input, "action");
   const selector = str(input, "selector").trim();
   const value = str(input, "value");
@@ -686,7 +745,7 @@ async function browserActExec(input: Record<string, unknown>): Promise<string> {
     return errorOut("browser_act action must be one of: click, type, submit.");
   }
   if (!selector) return errorOut("browser_act requires a CSS selector.");
-  const page = await getPage();
+  const page = await getPage(sessionKey);
   if (!page) return browserUnavailable();
   try {
     if (action === "click") {
@@ -741,10 +800,16 @@ const MUTATING_GIT = new Set(["git_commit", "git_push", "git_reset", "git_checko
  * Defense-in-depth: the env gate is RE-CHECKED here at execution time, so even if
  * a computer connector somehow slipped past the registry gate, no executor runs
  * unless COMPUTER_USE is active. Returns the {status:'disabled'} sentinel instead.
+ *
+ * `sessionKey` (optional) scopes the browsing SESSION (Playwright BrowserContext)
+ * so browse/screenshot/browser_act share a page WITHIN one workspace but are
+ * isolated ACROSS workspaces. With no key, a single shared default context is used
+ * (preserving prior behavior). It does NOT affect the filesystem/shell/git tools.
  */
 export async function runComputerTool(
   toolName: string,
   input: Record<string, unknown>,
+  sessionKey?: string,
 ): Promise<string> {
   if (!computerUseActive()) return disabled();
   const args = input ?? {};
@@ -761,11 +826,11 @@ export async function runComputerTool(
     case "run_shell":
       return runShellExec(args);
     case "browse":
-      return browseExec(args);
+      return browseExec(args, sessionKey);
     case "screenshot":
-      return screenshotExec();
+      return screenshotExec(sessionKey);
     case "browser_act":
-      return browserActExec(args);
+      return browserActExec(args, sessionKey);
     default:
       if (SAFE_GIT.has(toolName) || MUTATING_GIT.has(toolName)) return gitExec(toolName, args);
       return errorOut(`unknown computer tool: ${toolName}`);

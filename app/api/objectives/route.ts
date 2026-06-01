@@ -1,6 +1,6 @@
 import { coerceText, sanitizeWorkspaceMeta } from "@/lib/agent-types";
 import type { PlanObjective, ObjectiveStatus } from "@/lib/agent-types";
-import { authorizeWrite } from "@/lib/auth";
+import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { dbConfigured, getWorkspace, updateWorkspaceMeta } from "@/lib/supabase-rest";
 
 export const runtime = "nodejs";
@@ -29,6 +29,7 @@ export async function GET(req: Request): Promise<Response> {
 const VALID_STATUS = new Set<ObjectiveStatus>(["open", "achieved", "needs_action", "cancelled"]);
 
 export async function PATCH(req: Request): Promise<Response> {
+  if (tooLarge(req)) return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
   let body: Record<string, unknown> = {};
   try {
     const parsed = await req.json();
@@ -62,6 +63,10 @@ export async function PATCH(req: Request): Promise<Response> {
     // Re-run through the meta sanitizer (caps + validates the objectives array).
     const patch = sanitizeWorkspaceMeta({ objectives: next });
     const meta = await updateWorkspaceMeta(workspaceId, patch);
+    // null => no such workspace (the PATCH matched 0 rows). Don't report success.
+    if (!meta) {
+      return Response.json({ ok: false, persisted: false, error: "workspace not found" }, { status: 404 });
+    }
     return Response.json({ ok: true, persisted: true, objectives: meta.objectives ?? [] });
   } catch {
     return Response.json({ ok: false, error: "save failed" }, { status: 500 });

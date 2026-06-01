@@ -1,5 +1,5 @@
 import { coerceText } from "@/lib/agent-types";
-import { authorizeWrite } from "@/lib/auth";
+import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { dbConfigured, getWorkspace } from "@/lib/supabase-rest";
 import { decomposeGoal, materializePlan } from "@/lib/orchestrator";
 
@@ -21,6 +21,7 @@ export const maxDuration = 60;
  */
 
 export async function POST(req: Request): Promise<Response> {
+  if (tooLarge(req)) return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
   let body: Record<string, unknown> = {};
   try {
     const parsed = await req.json();
@@ -40,13 +41,16 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     const plan = await decomposeGoal(workspaceId, goal, meta);
-    return Response.json({ ok: true, plan });
+    // Surface the heuristic-fallback flag at the top level too (mirrors plan.fallback)
+    // so the UI can warn the founder the plan is a generic template, not bespoke.
+    return Response.json({ ok: true, plan, fallback: plan.fallback === true });
   } catch {
     return Response.json({ ok: false, error: "decomposition failed" }, { status: 500 });
   }
 }
 
 export async function PATCH(req: Request): Promise<Response> {
+  if (tooLarge(req)) return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
   let body: Record<string, unknown> = {};
   try {
     const parsed = await req.json();

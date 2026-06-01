@@ -54,3 +54,43 @@ describe("decomposeGoal — graceful degradation (no live model)", () => {
     expect(plan.tasks.length).toBeLessThanOrEqual(ORCH_MAX_OBJECTIVES * 6);
   });
 });
+
+/* ──────────────────────────── FIX 6 — fallback flag + max_tokens ──────────────────────────── */
+
+describe("decomposeGoal — heuristic fallback is FLAGGED, model plan is not", () => {
+  it("marks the no-client heuristic plan with fallback:true", async () => {
+    getAnthropicMock.mockReturnValue(null);
+    const plan = await decomposeGoal("ws1", "Launch a paid beta", null);
+    expect(plan.fallback).toBe(true);
+  });
+
+  it("marks a thrown / truncated model call's heuristic fallback with fallback:true", async () => {
+    getAnthropicMock.mockReturnValue({ messages: { create: vi.fn().mockRejectedValue(new Error("proxy timeout (truncated)")) } });
+    const plan = await decomposeGoal(undefined, "Build an app", null);
+    expect(plan.fallback).toBe(true);
+  });
+
+  it("a real model-derived plan is NOT a fallback (fallback:false)", async () => {
+    const good = {
+      objectives: [{ id: "o1", title: "Ship MVP", description: "", department: "Engineering" }],
+      tasks: [{ id: "t1", title: "Build it", department: "Engineering", detail: "", objectiveId: "o1" }],
+    };
+    getAnthropicMock.mockReturnValue({
+      messages: { create: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "```json\n" + JSON.stringify(good) + "\n```" }] }) },
+    });
+    const plan = await decomposeGoal(undefined, "Grow", null);
+    expect(plan.fallback).toBe(false);
+    expect(plan.objectives[0].title).toBe("Ship MVP");
+  });
+
+  it("raises max_tokens to 4500 so a large objectives+tasks JSON isn't truncated", async () => {
+    const create = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "```json\n" + JSON.stringify({ objectives: [{ id: "o1", title: "X", description: "", department: "Engineering" }], tasks: [] }) + "\n```" }],
+    });
+    getAnthropicMock.mockReturnValue({ messages: { create } });
+    await decomposeGoal(undefined, "Grow", null);
+    expect(create).toHaveBeenCalledTimes(1);
+    const arg = create.mock.calls[0][0] as { max_tokens: number };
+    expect(arg.max_tokens).toBe(4500);
+  });
+});

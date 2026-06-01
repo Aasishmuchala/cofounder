@@ -1,6 +1,6 @@
 import { coerceText, redactArgs, coerceDepartment, SPEND_MAX_RECORDS } from "@/lib/agent-types";
 import type { PendingApproval, AuditEntry, SpendRecord } from "@/lib/agent-types";
-import { authorizeWrite } from "@/lib/auth";
+import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { dbConfigured, getWorkspace, updateWorkspaceMeta, patchTask, withWorkspaceLock } from "@/lib/supabase-rest";
 import { getConnectorRegistry, classifyTool, isContentProhibited, dispatchConnectorTool } from "@/lib/connectors";
 
@@ -58,6 +58,7 @@ export async function GET(req: Request): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  if (tooLarge(req)) return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
   let body: Record<string, unknown> = {};
   try {
     const parsed = await req.json();
@@ -126,8 +127,9 @@ export async function POST(req: Request): Promise<Response> {
   let spendRecords: SpendRecord[] | undefined;
   if (action === "approve") {
     // Execute the FROZEN { tool, args } deterministically — output is
-    // injection-scanned + capped inside dispatchConnectorTool.
-    result = await dispatchConnectorTool(approval.toolName, approval.args, registry);
+    // injection-scanned + capped inside dispatchConnectorTool. workspaceId scopes
+    // the computer connector's browsing context per workspace (cross-tenant guard).
+    result = await dispatchConnectorTool(approval.toolName, approval.args, registry, workspaceId);
     auditLog.push({ approvalId, action: "approve", outcome: result, ts: Date.now(), redactedArgs });
     const spend = spendRecordFromApproval(approval);
     if (spend) {

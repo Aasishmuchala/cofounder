@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { coerceText } from "@/lib/agent-types";
+import { tooLarge } from "@/lib/auth";
 import { getAnthropic, aiConfigured, MODEL } from "@/lib/anthropic";
 import {
   mockQuestions,
@@ -61,6 +62,7 @@ async function callClaude(system: string, userText: string): Promise<string | nu
 }
 
 export async function POST(req: Request): Promise<Response> {
+  if (tooLarge(req)) return Response.json({ error: "payload too large" }, { status: 413 });
   let body: Body = {};
   try {
     const parsed = await req.json();

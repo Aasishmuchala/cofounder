@@ -7,7 +7,7 @@ import {
   insertTasks,
 } from "@/lib/supabase-rest";
 import { getAnthropic, aiConfigured, MODEL } from "@/lib/anthropic";
-import { authorizeWrite } from "@/lib/auth";
+import { authorizeWrite, tooLarge } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -211,6 +211,7 @@ async function finalize(
 }
 
 export async function POST(req: Request): Promise<Response> {
+  if (tooLarge(req)) return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
   let body: AgentBody = {};
   try {
     const parsed = await req.json();

@@ -6,13 +6,14 @@ import {
   VALID_STATUSES,
   matchDepartment,
 } from "@/lib/agent-types";
-import { authorizeWrite } from "@/lib/auth";
+import { authorizeWrite, tooLarge } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
 // POST /api/tasks  { workspaceId, workspaceSecret, title, department, detail?, status? }
 //   -> create a single task agent (used by the canvas "+ New Task").
 export async function POST(req: Request) {
+  if (tooLarge(req)) return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
   try {
     const raw = await req.json();
     const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -58,6 +59,7 @@ export async function GET(req: Request) {
 
 // PATCH /api/tasks  { id, workspaceId, workspaceSecret, status?, detail?, title?, department? }
 export async function PATCH(req: Request) {
+  if (tooLarge(req)) return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
   try {
     const raw = await req.json();
     const body = (raw && typeof raw === "object" ? raw : {}) as Record<

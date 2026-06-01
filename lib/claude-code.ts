@@ -206,6 +206,10 @@ function slug(taskId: string): string {
 interface Worktree {
   dir: string;
   branch: string;
+  /** HEAD sha of the repo AT THE MOMENT the worktree was created. captureDiff diffs
+   *  against this base so the diff includes COMMITTED work the session made (not
+   *  just the still-staged/unstaged delta). Empty string if it couldn't be read. */
+  baseSha: string;
 }
 
 /** Create an isolated git worktree off the repo at `repoRoot`. Returns null if the
@@ -223,30 +227,55 @@ async function addWorktree(repoRoot: string, taskId: string): Promise<Worktree |
       maxBuffer: MAX_BUFFER,
       encoding: "utf-8",
     });
-    return { dir, branch };
+    // Capture the BASE sha (HEAD) so captureDiff can diff against it later and thus
+    // surface COMMITTED changes too. Best-effort — an empty base degrades to a
+    // "compare against HEAD" diff in captureDiff, preserving prior behavior.
+    let baseSha = "";
+    try {
+      const { stdout } = await execFileP("git", ["-C", repoRoot, "rev-parse", "HEAD"], {
+        cwd: repoRoot,
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: MAX_BUFFER,
+        encoding: "utf-8",
+      });
+      baseSha = stdout.trim();
+    } catch {
+      baseSha = "";
+    }
+    return { dir, branch, baseSha };
   } catch {
     return null;
   }
 }
 
-/** Capture the diff of everything the session changed in the worktree (tracked +
- *  untracked), then remove the worktree and delete its branch. Never throws. */
-async function captureDiff(repoRoot: string, dir: string): Promise<string> {
+/** Capture the diff of everything the session changed in the worktree — staged,
+ *  unstaged, AND COMMITTED — then the caller removes the worktree. Never throws.
+ *
+ *  We `git add -A` (so new/untracked files show) then diff against `baseSha` (the
+ *  repo HEAD captured at worktree creation). Diffing against the BASE — not the
+ *  index (`--cached`) — is what makes COMMITTED work visible: if the session ran
+ *  `git commit`, those changes moved out of the index and would be invisible to a
+ *  `diff --cached`, silently defeating the "human reviews the diff" guarantee.
+ *  Falls back to diffing HEAD when no base sha was captured. */
+async function captureDiff(repoRoot: string, dir: string, baseSha: string): Promise<string> {
   try {
-    // Stage everything (so new/untracked files show in the diff), then diff HEAD.
+    // Stage everything (so new/untracked files show in the diff).
     await execFileP("git", ["-C", dir, "add", "-A"], {
       cwd: dir,
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER,
       encoding: "utf-8",
     }).catch(() => ({ stdout: "", stderr: "" }));
+    // Diff the working tree (staged + unstaged) against the base commit. A bare
+    // `diff <base>` compares the WORKING TREE to <base>, capturing committed +
+    // staged + unstaged changes in one go. With no base, fall back to HEAD.
+    const target = baseSha || "HEAD";
     const { stdout } = await execFileP(
       "git",
       // --no-ext-diff is the CORRECT way to disable external-diff drivers (so a
-      // repo-level diff.external config can't exec a command). The previous
-      // `-c diff.external=` set an EMPTY external-diff driver, which made git emit
-      // an EMPTY diff — silently defeating the "human reviews the diff" guarantee.
-      ["-C", dir, "--no-pager", "diff", "--cached", "--no-color", "--no-ext-diff"],
+      // repo-level diff.external config can't exec a command). KEEP it — it is the
+      // exec-safety fix; an EMPTY `-c diff.external=` would silently empty the diff.
+      ["-C", dir, "--no-pager", "diff", target, "--no-color", "--no-ext-diff"],
       {
         cwd: dir,
         timeout: GIT_TIMEOUT_MS,
@@ -382,8 +411,9 @@ export async function runClaudeCode(
 
     if (!parsed) return UNAVAILABLE;
 
-    // (4) Capture the diff of what changed (best-effort).
-    const rawDiff = await captureDiff(repoRoot, wt.dir);
+    // (4) Capture the diff of what changed (best-effort) — staged + unstaged +
+    // COMMITTED, by diffing against the base sha captured at worktree creation.
+    const rawDiff = await captureDiff(repoRoot, wt.dir, wt.baseSha);
 
     // (5) Sanitize BOTH the summary and the diff — model + repo output is untrusted.
     const summary = sanitizeToolOutput(parsed.result || "(Claude Code produced no summary.)");

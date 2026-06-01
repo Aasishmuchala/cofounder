@@ -29,10 +29,14 @@ function words(s: string): string[] {
  * always land on the genuine best match, not the best within one silo.
  *
  * Department is a strong ranking SIGNAL, not a hard filter: same-department
- * skills get a meaningful edge (+6) and cross-cutting "General" skills a small
+ * skills get a meaningful edge (+12) and cross-cutting "General" skills a small
  * one (+2), but a skill from another department or source can still win if it
- * fits the task markedly better. Scoring is transparent so the Skills tab can
- * show exactly why the winner beat everything else.
+ * fits the task markedly better. To keep an off-topic cross-department skill from
+ * stealing the pick on a single generic NAME hit (e.g. "pentest-checklist" winning
+ * a Legal "incorporation checklist" task because both say "checklist"), a
+ * cross-department skill must clear a RELEVANCE BAR — a kind match OR >= 2 keyword
+ * hits — to be eligible at all; a lone name hit from another department is dropped.
+ * Scoring is transparent so the Skills tab can show exactly why the winner won.
  */
 export function compareSkills(req: {
   department: string;
@@ -73,16 +77,22 @@ export function compareSkills(req: {
       }
       if (hits) reasons.push(`${hits} keyword match${hits > 1 ? "es" : ""}`);
 
-      if (s.department === req.department) {
-        score += 6;
+      const sameDept = s.department === req.department;
+      if (sameDept) {
+        // Department fit is a STRONG signal: +12 outweighs a single cross-department
+        // name hit (+10), so a relevant same-department skill wins ties.
+        score += 12;
         reasons.push("department fit");
       } else if (s.department === "General") {
         score += 2;
         reasons.push("cross-cutting");
       }
+
+      let kindMatched = false;
       for (const kw of kindWords) {
         if (hay.includes(kw)) {
           score += 5;
+          kindMatched = true;
           reasons.push(`${kw} skill`);
         }
       }
@@ -92,6 +102,16 @@ export function compareSkills(req: {
       } else if (s.source && s.source !== "community" && s.source !== "unknown") {
         score += 1; // curated/official source
       }
+
+      // RELEVANCE BAR for a skill from ANOTHER department (not same-dept, not the
+      // cross-cutting "General" bucket): it must demonstrably fit THIS task — a kind
+      // match OR >= 2 keyword hits. A single generic name hit ("checklist", "plan")
+      // is NOT enough to pull an off-topic skill across department lines, so we mark
+      // it ineligible (score 0 -> filtered out below). Same-dept/General are exempt.
+      const crossDept = !sameDept && s.department !== "General";
+      const eligible = !crossDept || kindMatched || hits >= 2;
+      if (!eligible) score = 0;
+
       return { ...s, score, reasons: [...new Set(reasons)] };
     })
     .filter((s) => s.score > 0)
