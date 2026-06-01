@@ -52,7 +52,8 @@ export interface UseCofounder {
   /** Whether THIS client may write (owner / legacy-open) vs view-only. */
   canEdit: boolean;
   /** The deliverable being streamed live right now, if any. */
-  streaming: StreamState | null;
+  /** Live token streams for every currently-running agent (each panel expandable). */
+  streams: StreamState[];
   error: string | null;
   /** Connectors enabled for this workspace (derived from meta). */
   connectors: ConnectorConfig[];
@@ -122,7 +123,10 @@ export function useCofounder(): UseCofounder {
   // Default to editable; narrowed to false only for a protected workspace we
   // don't hold the key for (a shared view link).
   const [canEdit, setCanEdit] = useState(true);
-  const [streaming, setStreaming] = useState<StreamState | null>(null);
+  // Per-agent live token streams, keyed by task id — every running agent streams
+  // simultaneously so the founder can watch (and expand) each one, not just the focus.
+  const [streamMap, setStreamMap] = useState<Record<string, StreamState>>({});
+  const streamList = useMemo(() => Object.values(streamMap), [streamMap]);
   const [error, setError] = useState<string | null>(null);
   const ideaRef = useRef<string>("");
   const secretRef = useRef<string | null>(null);
@@ -300,7 +304,7 @@ export function useCofounder(): UseCofounder {
     setMeta({});
     setIsProtected(false);
     setCanEdit(true);
-    setStreaming(null);
+    setStreamMap({});
     setError(null);
     ideaRef.current = "";
     secretRef.current = null;
@@ -499,7 +503,10 @@ export function useCofounder(): UseCofounder {
         phase: "writing",
         tools: [],
       };
-      setStreaming(base);
+      // Update only THIS agent's entry in the shared map (all stream in parallel).
+      const setMine = (fn: (s: StreamState) => StreamState) =>
+        setStreamMap((p) => ({ ...p, [task.id]: fn(p[task.id] ?? base) }));
+      setStreamMap((p) => ({ ...p, [task.id]: base }));
       try {
         for (;;) {
           const { done, value } = await reader.read();
@@ -520,14 +527,14 @@ export function useCofounder(): UseCofounder {
             }
             if (ev === "reset") {
               live = "";
-              setStreaming((s) => (s ? { ...s, text: "" } : s));
+              setMine((s) => ({ ...s, text: "" }));
             } else if (ev === "delta") {
               live += data.t ?? "";
-              setStreaming((s) => ({ ...(s ?? base), text: live, phase: "writing" }));
+              setMine((s) => ({ ...s, text: live, phase: "writing" }));
             } else if (ev === "tool") {
-              setStreaming((s) => ({ ...(s ?? base), phase: "researching", tools: data.names ?? [] }));
+              setMine((s) => ({ ...s, phase: "researching", tools: data.names ?? [] }));
             } else if (ev === "status") {
-              if (data.phase) setStreaming((s) => ({ ...(s ?? base), phase: data.phase as string }));
+              if (data.phase) setMine((s) => ({ ...s, phase: data.phase as string }));
             } else if (ev === "done") {
               result = { ran: task.id, remaining: 0 };
             } else if (ev === "error") {
@@ -538,7 +545,11 @@ export function useCofounder(): UseCofounder {
       } catch {
         result = { ran: null, remaining: 0, error: "stream interrupted" };
       } finally {
-        setStreaming(null);
+        setStreamMap((p) => {
+          const n = { ...p };
+          delete n[task.id];
+          return n;
+        });
       }
       return result;
     };
@@ -564,10 +575,9 @@ export function useCofounder(): UseCofounder {
         // Optimistically show the batch running while the server works on it.
         const batchIds = new Set(batch.map((t) => t.id));
         setTasks((prev) => prev.map((t) => (batchIds.has(t.id) ? { ...t, status: "running" } : t)));
-        // Stream the focus task (index 0) live; run the rest silently in parallel.
-        const results = await Promise.all(
-          batch.map((t, i) => (i === 0 ? runOneStreamed(t) : runOne(t.id))),
-        );
+        // Stream EVERY agent in the batch live (each into its own panel) — not just
+        // the focus — so the founder can watch and expand any of them.
+        const results = await Promise.all(batch.map((t) => runOneStreamed(t)));
         // Don't reselect these ids; done/needs_action drop out next refresh anyway.
         batch.forEach((t) => attempted.add(t.id));
         // Whole batch failed to reach the server (offline) -> stop looping.
@@ -575,7 +585,7 @@ export function useCofounder(): UseCofounder {
       }
       await refresh();
     } finally {
-      setStreaming(null);
+      setStreamMap({});
       drivingRef.current = false;
     }
   }, [persisted, workspaceId, refresh]);
@@ -928,7 +938,7 @@ export function useCofounder(): UseCofounder {
     meta,
     isProtected,
     canEdit,
-    streaming,
+    streams: streamList,
     error,
     connectors: meta.connectors ?? [],
     send,

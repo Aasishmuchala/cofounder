@@ -818,7 +818,7 @@ export default function Canvas({
       <InboxPanel cf={cf} onSelectDepartment={onSelectDepartment} />
 
       {/* Live streaming deliverable (bottom-center) */}
-      <LiveWriter streaming={cf.streaming} />
+      <LiveWriter streams={cf.streams} />
 
       {/* Create menu (+ bottom-center): New Agent / New Task — owners only */}
       {cf.canEdit && (
