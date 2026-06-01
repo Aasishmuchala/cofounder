@@ -117,14 +117,15 @@ describe("browser sessions — per-workspace context isolation", () => {
     expect(navigations.every((n) => n.contextId === 1)).toBe(true);
   });
 
-  it("caps live contexts at 8 and evicts (closes) the OLDEST beyond the cap", async () => {
-    // Open 9 distinct workspaces; the 9th must evict the 1st.
+  it("caps live contexts at 8 and evicts (closes) the least-recently-used beyond the cap", async () => {
+    // Open 9 distinct workspaces, never reusing any. With no reuse, insertion order
+    // IS recency order, so the LRU victim is the oldest-inserted (ws-1 / context #1).
     for (let i = 1; i <= 9; i++) {
       await runComputerTool("browse", { url: `https://w${i}.example.com` }, `ws-${i}`);
     }
     // 9 contexts were created in total...
     expect(contextCount).toBe(9);
-    // ...but the oldest (context #1, ws-1) was evicted + CLOSED to keep <= 8 live.
+    // ...but the LRU (context #1, ws-1) was evicted + CLOSED to keep <= 8 live.
     expect(closedContexts).toContain(1);
     expect(closedContexts).toHaveLength(1);
 
@@ -132,6 +133,49 @@ describe("browser sessions — per-workspace context isolation", () => {
     const before = contextCount;
     await runComputerTool("browse", { url: "https://w1-again.example.com" }, "ws-1");
     expect(contextCount).toBe(before + 1);
+  });
+
+  it("treats reuse as recency (LRU): re-using the oldest key protects it from eviction", async () => {
+    // Fill the cap exactly: ws-1..ws-8 -> contexts #1..#8 (ids assigned in create order).
+    for (let i = 1; i <= 8; i++) {
+      await runComputerTool("browse", { url: `https://w${i}.example.com` }, `ws-${i}`);
+    }
+    expect(contextCount).toBe(8);
+
+    // REUSE ws-1 (a cache hit) — bumps it to most-recently-used. Creates NO new
+    // context (proves reuse refreshes recency without re-launching a session).
+    await runComputerTool("browse", { url: "https://w1-again.example.com" }, "ws-1");
+    expect(contextCount).toBe(8);
+
+    // Now open a 9th workspace. Under naive FIFO this would evict ws-1 (oldest
+    // INSERTED); under true LRU it must evict ws-2 (oldest USED), because ws-1 was
+    // just refreshed.
+    await runComputerTool("browse", { url: "https://w9.example.com" }, "ws-9");
+    expect(contextCount).toBe(9);
+
+    // The recently-used key's context (#1) is PROTECTED — not closed; the genuine
+    // LRU (ws-2 / context #2) was the eviction victim instead.
+    expect(closedContexts).not.toContain(1);
+    expect(closedContexts).toContain(2);
+    expect(closedContexts).toHaveLength(1);
+  });
+
+  it("memoizes the in-flight create: concurrent first-calls for ONE key share ONE context", async () => {
+    // Two tools dispatched for the SAME brand-new workspace BEFORE its context exists
+    // (e.g. a browse + a browser_act in flight together). Without promise-memoization
+    // both calls miss the cache, both create a context, and the 2nd set() orphans the
+    // 1st (leaked — never closed, never in the map) while splitting the calls across
+    // two different pages — violating "share a page within a workspace".
+    await Promise.all([
+      runComputerTool("browse", { url: "https://example.com" }, "ws-concurrent"),
+      runComputerTool("browser_act", { action: "click", selector: "#go" }, "ws-concurrent"),
+    ]);
+
+    // Exactly ONE context + ONE page was created and SHARED; nothing was orphaned,
+    // so nothing was closed.
+    expect(contextCount).toBe(1);
+    expect(pageCount).toBe(1);
+    expect(closedContexts).toHaveLength(0);
   });
 
   it("returns {status:'disabled'} (no browser launch) when COMPUTER_USE is off", async () => {

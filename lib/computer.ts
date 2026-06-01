@@ -613,26 +613,42 @@ let browserPromise: Promise<PwBrowser | null> | null = null;
  * shared DEFAULT context (preserving the prior single-page behavior).
  *
  * The live-context count is CAPPED: when a new session would exceed the cap we evict
- * the OLDEST context (closing it) so contexts can't leak unbounded across many
- * workspaces. Each context holds exactly one page (one browsing tab per workspace).
+ * the LEAST-RECENTLY-USED context (closing it) so contexts can't leak unbounded
+ * across many workspaces. Reuse counts as use — a cache hit re-inserts its key, so
+ * the genuinely hottest session is protected and a colder one is dropped instead.
+ * The in-flight creation is MEMOIZED (the Map holds the create Promise, not just the
+ * resolved session), so two calls dispatched for one new workspace before its context
+ * exists await a SINGLE create rather than racing to build two. Each context holds
+ * exactly one page (one browsing tab per workspace).
  * --------------------------------------------------------------------- */
 
 const DEFAULT_SESSION_KEY = "__default__";
-/** Max simultaneously-live browser contexts. Oldest is evicted + closed beyond this. */
+/** Max simultaneously-live browser contexts. The least-recently-used is evicted +
+ *  closed beyond this. */
 const MAX_BROWSER_CONTEXTS = 8;
 
 interface BrowserSession {
   context: PwContext;
   page: PwPage;
 }
-// Insertion-ordered (Map preserves order) so the first key is the oldest session.
-const browserSessions = new Map<string, BrowserSession>();
+/** A live OR in-flight session: the value is the creation PROMISE (memoized), not
+ *  the resolved session, so concurrent first-calls for one key await a single create
+ *  instead of racing to build duplicate (orphaned) contexts. Resolves to null when
+ *  Playwright/Chromium is unavailable or context/page creation fails. */
+type BrowserSessionEntry = Promise<BrowserSession | null>;
+// Insertion-ordered (Map preserves order). A cache hit RE-INSERTS its key (see
+// getPage), so the FIRST key is always the genuine least-recently-used (LRU) — the
+// eviction victim — never merely the oldest-created.
+const browserSessions = new Map<string, BrowserSessionEntry>();
 
 /** TEST-ONLY: drop all live browsing sessions (does not touch the shared browser).
  *  Lets unit tests assert context creation/eviction from a known baseline. Never
- *  called by production code. */
+ *  called by production code. Closes each context once its (possibly in-flight)
+ *  creation resolves; clears the map synchronously. */
 export function __resetBrowserSessionsForTest(): void {
-  for (const s of browserSessions.values()) void s.context.close().catch(() => {});
+  for (const entry of browserSessions.values()) {
+    void entry.then((s) => s?.context.close().catch(() => {})).catch(() => {});
+  }
   browserSessions.clear();
 }
 
@@ -655,33 +671,73 @@ async function getBrowser(): Promise<PwBrowser | null> {
   return browserPromise;
 }
 
-/** Get (or lazily create) the isolated browsing page for `sessionKey`. Each session
- *  is a distinct BrowserContext so workspaces never share cookies/pages. Returns
- *  null (never throws) when Playwright/Chromium is unavailable. */
-async function getPage(sessionKey?: string): Promise<PwPage | null> {
-  const key = sessionKey || DEFAULT_SESSION_KEY;
-  const existing = browserSessions.get(key);
-  if (existing) return existing.page;
-
+/** Build a brand-new isolated session (a BrowserContext + its single page), evicting
+ *  the least-recently-used live session first while over the cap. Returns null (never
+ *  throws) when Playwright/Chromium is unavailable or context/page creation fails;
+ *  getPage then drops the cache slot. `key` is the session being created: getPage has
+ *  already stored this creation as the NEWEST map entry, so it is counted in `size`
+ *  (hence STRICTLY-greater below) and is never its own eviction victim. */
+async function createSession(key: string): Promise<BrowserSession | null> {
   const browser = await getBrowser();
   if (!browser) return null;
   try {
-    // Evict the OLDEST context first if we're at the cap, so live contexts stay
-    // bounded no matter how many workspaces browse. close() is best-effort.
-    while (browserSessions.size >= MAX_BROWSER_CONTEXTS) {
-      const oldestKey = browserSessions.keys().next().value as string | undefined;
-      if (oldestKey === undefined) break;
-      const victim = browserSessions.get(oldestKey);
-      browserSessions.delete(oldestKey);
+    // Evict the LEAST-RECENTLY-USED context(s) while over the cap. The first map key
+    // is the LRU because a cache hit re-inserts its key (see getPage). close() is
+    // best-effort. We never evict `key` itself (newest); the guard is belt-and-braces
+    // for the case where many creations are in flight at once.
+    while (browserSessions.size > MAX_BROWSER_CONTEXTS) {
+      const lruKey = browserSessions.keys().next().value as string | undefined;
+      if (lruKey === undefined || lruKey === key) break;
+      const victimEntry = browserSessions.get(lruKey);
+      browserSessions.delete(lruKey);
+      const victim = await victimEntry?.catch(() => null);
       if (victim) await victim.context.close().catch(() => {});
     }
     const context = await browser.newContext();
     const page = await context.newPage();
-    browserSessions.set(key, { context, page });
-    return page;
+    return { context, page };
   } catch {
     return null;
   }
+}
+
+/** Get (or lazily create) the isolated browsing page for `sessionKey`, with true-LRU
+ *  reuse and concurrency-safe creation. Each session is a distinct BrowserContext so
+ *  workspaces never share cookies/pages. A cache hit RE-INSERTS the key so reuse
+ *  refreshes recency (eviction drops the genuinely least-recently-used session, not
+ *  merely the oldest-created). On a miss the in-flight creation Promise is stored
+ *  SYNCHRONOUSLY — with no await between the lookup and the store — so a second
+ *  concurrent first-call for the same key awaits this SAME creation instead of
+ *  building a duplicate (which would orphan one context and split the calls across
+ *  two pages). Returns null (never throws) when Playwright/Chromium is unavailable. */
+async function getPage(sessionKey?: string): Promise<PwPage | null> {
+  const key = sessionKey || DEFAULT_SESSION_KEY;
+
+  const existing = browserSessions.get(key);
+  if (existing) {
+    // LRU bump: delete + re-set moves this key to the most-recently-used end (Map
+    // preserves insertion order), so reuse protects it from the next eviction.
+    browserSessions.delete(key);
+    browserSessions.set(key, existing);
+    const session = await existing.catch(() => null);
+    // A shared in-flight creation that ultimately failed must not poison the cache.
+    if (!session && browserSessions.get(key) === existing) browserSessions.delete(key);
+    return session ? session.page : null;
+  }
+
+  // Miss: store the in-flight creation Promise SYNCHRONOUSLY (no await between the
+  // get() above and this set()), so a concurrent first-call for this key takes the
+  // cache-hit branch above and shares this single create.
+  const creation = createSession(key);
+  browserSessions.set(key, creation);
+  const session = await creation.catch(() => null);
+  if (!session) {
+    // Browser unavailable / creation failed: drop the slot so we neither cache the
+    // miss nor hold a cap slot. Guard with === so we never delete a newer entry.
+    if (browserSessions.get(key) === creation) browserSessions.delete(key);
+    return null;
+  }
+  return session.page;
 }
 
 // NOTE: computed lazily (a function, not a module-level const). connectors.ts

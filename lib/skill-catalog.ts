@@ -24,9 +24,16 @@ export interface CatalogSkill {
 }
 
 const HOME = process.env.SKILLS_HOME || os.homedir();
+// Scan the user's local skill library AND the skills vendored INTO this repo
+// (skills/ — the 208 imported from trending GitHub repos via
+// scripts/import-skills.mjs). The repo copy makes the imported catalog
+// reproducible on any machine / deploy, not just one with a populated
+// ~/.claude/skills. loadCatalog() dedupes by skill name, so the home-dir and
+// repo copies of the same skill collapse to a single entry.
 const ROOTS = [
   path.join(HOME, ".claude", "skills"),
   path.join(HOME, ".cursor", "skills-cursor"),
+  path.join(process.cwd(), "skills"),
 ];
 
 // First matching rule wins — specific departments before the broad Engineering
