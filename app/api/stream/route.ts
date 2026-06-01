@@ -1,4 +1,5 @@
-import { coerceText, isTaskReady, blockedObjectiveIds, type PlanObjective } from "@/lib/agent-types";
+import { coerceText, isTaskReady, blockedObjectiveIds, deliverableFor, type PlanObjective } from "@/lib/agent-types";
+import { needsDesignDirection } from "@/lib/design-catalog";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { dbConfigured, listTasks, listArtifacts, claimTask, patchTask, getWorkspace } from "@/lib/supabase-rest";
@@ -75,13 +76,20 @@ export async function POST(req: Request): Promise<Response> {
   // by an unachieved prerequisite objective (same rule as /api/run + /api/cron).
   const objectives = (workspace?.meta?.objectives ?? []) as PlanObjective[];
   const blockedObjs = blockedObjectiveIds(objectives, tasks);
+  // Design gate (same as /api/run): a visual deliverable waits for the founder's
+  // design direction — a per-task choice OR a workspace default — before streaming.
+  const designChoices = workspace?.meta?.designChoices ?? {};
+  const hasDesignDefault = !!workspace?.meta?.designDefault;
   const target = tasks.find(
     (t) =>
       t.id === taskId &&
       (t.status === "todo" || t.status === "running") &&
       !withArtifact.has(t.id) &&
       !(t.objectiveId && blockedObjs.has(t.objectiveId)) &&
-      isTaskReady(t, doneIds),
+      isTaskReady(t, doneIds) &&
+      (!needsDesignDirection(deliverableFor(t.department).kind) ||
+        hasDesignDefault ||
+        Boolean(designChoices[t.id])),
   );
   if (!target) {
     return Response.json({ error: "not actionable" }, { status: 409 });

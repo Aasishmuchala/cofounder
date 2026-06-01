@@ -518,6 +518,10 @@ export async function produceDeliverable(
       : Promise.resolve(null),
   ]);
   const vibeId = meta?.vibeId ?? null;
+  // Founder design direction for this task: a per-task choice, else the workspace
+  // default. Overrides the auto-selected open-design style/layout and injects a
+  // highest-priority brief into the prompt.
+  const designChoice = (meta?.designChoices?.[task.id] ?? meta?.designDefault) ?? null;
   const authored =
     dbConfigured && workspaceId ? await findAuthoredSkill(workspaceId, kind).catch(() => null) : null;
 
@@ -568,13 +572,16 @@ export async function produceDeliverable(
   // Ground the deliverable in open-design: the SKILL chosen for this request +
   // the DESIGN.md system chosen for the brand vibe. Becomes the headline skill.
   const openDesign = await fetchOpenDesign(
-    selectOpenDesign({
-      department: task.department,
-      kind,
-      title: task.title,
-      detail: task.detail,
-      vibeId,
-    }),
+    selectOpenDesign(
+      {
+        department: task.department,
+        kind,
+        title: task.title,
+        detail: task.detail,
+        vibeId,
+      },
+      designChoice ? { system: designChoice.style, template: designChoice.template } : undefined,
+    ),
   ).catch(() => null);
 
   let headline: SkillRef = catalog
@@ -597,7 +604,12 @@ export async function produceDeliverable(
     (authored ? `\n\nYour company's own authored skill — apply it:\n${authored.content}` : "") +
     // Prefer open-design grounding; fall back to the generically-discovered skill.
     (openDesign ? openDesign.content : discovered ? buildSkillBlock(discovered) : "") +
-    (heroUrl ? `\n\nPRE-GENERATED HERO IMAGE — embed this EXACT url in the hero <img src>: ${heroUrl}` : "");
+    (heroUrl ? `\n\nPRE-GENERATED HERO IMAGE — embed this EXACT url in the hero <img src>: ${heroUrl}` : "") +
+    // FOUNDER DESIGN DIRECTION — last + explicitly highest priority, so it overrides
+    // any conflicting guidance from the house standard or the open-design grounding.
+    (designChoice?.brief?.trim()
+      ? `\n\n=== FOUNDER DESIGN DIRECTION (HIGHEST PRIORITY — follow this exactly; it overrides any conflicting guidance above) ===\n${designChoice.brief.trim().slice(0, 2000)}\n=== END FOUNDER DESIGN DIRECTION ===`
+      : "");
 
   let title = "";
   let content = "";

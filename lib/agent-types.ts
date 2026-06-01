@@ -367,6 +367,17 @@ export const SPEND_MAX_RECORDS = 500;
 export const BUDGET_MAX_USD = 1_000_000_000;
 
 /** The JSON blob stored in cofounder_workspaces.meta. All fields optional. */
+/** A founder's chosen design direction for a deliverable — overrides the
+ *  auto-selected open-design style/layout, plus a free-text brief. */
+export interface DesignChoice {
+  /** design-system id (visual style), or null = let the agent pick. */
+  style: string | null;
+  /** template/layout id, or null = let the agent pick. */
+  template: string | null;
+  /** Founder's free-text design brief (highest-priority guidance). */
+  brief: string;
+}
+
 export interface WorkspaceMeta {
   /** Chosen visual-identity vibe id (drives the brand kit). */
   vibeId?: string | null;
@@ -392,6 +403,10 @@ export interface WorkspaceMeta {
   budget?: BudgetConfig | null;
   /** Approved spends recorded for governance (ring buffer, capped at 500). */
   spendRecords?: SpendRecord[];
+  /** Founder design direction per task id (overrides auto-selected style/layout). */
+  designChoices?: Record<string, DesignChoice>;
+  /** Default design direction applied to design tasks with no per-task choice. */
+  designDefault?: DesignChoice | null;
 }
 
 /** Env-var-NAME shape: uppercase, digits, underscore — never an actual secret
@@ -489,6 +504,33 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
     } catch {
       /* circular / non-serializable -> drop */
     }
+  }
+
+  // ---- founder design direction (capped) ----
+  const sanitizeChoice = (v: unknown): DesignChoice | null => {
+    const o = (v && typeof v === "object" ? v : null) as Record<string, unknown> | null;
+    if (!o) return null;
+    const style = typeof o.style === "string" && o.style ? o.style.slice(0, 60) : null;
+    const template = typeof o.template === "string" && o.template ? o.template.slice(0, 60) : null;
+    return { style, template, brief: coerceText(o.brief, 2000) };
+  };
+  if (m.designChoices && typeof m.designChoices === "object" && !Array.isArray(m.designChoices)) {
+    const src = m.designChoices as Record<string, unknown>;
+    const dst: Record<string, DesignChoice> = {};
+    let n = 0;
+    for (const k of Object.keys(src)) {
+      if (n >= 200) break; // bound the map
+      const c = sanitizeChoice(src[k]);
+      const key = coerceText(k, 100);
+      if (c && key) {
+        dst[key] = c;
+        n++;
+      }
+    }
+    if (n > 0) out.designChoices = dst;
+  }
+  if (m.designDefault !== undefined) {
+    out.designDefault = m.designDefault === null ? null : sanitizeChoice(m.designDefault);
   }
 
   // ---- MCP connector layer (capped + redacted) ----

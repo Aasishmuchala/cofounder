@@ -1,4 +1,5 @@
-import { coerceText, isTaskReady, blockedObjectiveIds, type PlanObjective } from "@/lib/agent-types";
+import { coerceText, isTaskReady, blockedObjectiveIds, deliverableFor, type PlanObjective } from "@/lib/agent-types";
+import { needsDesignDirection } from "@/lib/design-catalog";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { dbConfigured, listTasks, listArtifacts, patchTask, claimTask, getWorkspace } from "@/lib/supabase-rest";
@@ -83,12 +84,20 @@ export async function POST(req: Request): Promise<Response> {
   // DEPENDENCY GATE: a task is actionable only when its prerequisite tasks are
   // done (isTaskReady) AND its owning objective isn't blocked. Tasks with no deps
   // / no objective are always ready (back-compat).
+  // DESIGN GATE: a visual deliverable (landing page / email / formatted doc) is
+  // not actionable until the founder's design direction exists — a per-task choice
+  // OR a workspace default — so design output is never produced without their say.
+  const designChoices = workspace?.meta?.designChoices ?? {};
+  const hasDesignDefault = !!workspace?.meta?.designDefault;
   const actionable = tasks.filter(
     (t) =>
       (t.status === "todo" || t.status === "running") &&
       !withArtifact.has(t.id) &&
       !(t.objectiveId && blockedObjs.has(t.objectiveId)) &&
-      isTaskReady(t, doneIds),
+      isTaskReady(t, doneIds) &&
+      (!needsDesignDirection(deliverableFor(t.department).kind) ||
+        hasDesignDefault ||
+        Boolean(designChoices[t.id])),
   );
   if (actionable.length === 0) {
     return Response.json({ ran: null, remaining: 0 });

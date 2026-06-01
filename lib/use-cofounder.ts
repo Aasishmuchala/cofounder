@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { isTaskReady } from "@/lib/agent-types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isTaskReady, deliverableFor, blockedObjectiveIds } from "@/lib/agent-types";
+import { needsDesignDirection } from "@/lib/design-catalog";
 import type {
   Task,
   ChatMessage,
@@ -10,6 +11,7 @@ import type {
   ConnectorConfig,
   OrchestratorPlan,
   BudgetConfig,
+  DesignChoice,
 } from "@/lib/agent-types";
 
 interface AgentResponse {
@@ -74,6 +76,15 @@ export interface UseCofounder {
    *  moves money). Optimistic in meta; persisted via PATCH /api/budget. */
   setBudget: (cfg: BudgetConfig | null) => Promise<void>;
   drive: () => Promise<void>;
+  /** Visual deliverables held until the founder gives design direction (the gate). */
+  pendingDesign: Task[];
+  /** Record design direction — per task, or as the workspace default (applyToAll). */
+  setDesignDirection: (
+    choice: DesignChoice,
+    opts: { taskId?: string; applyToAll?: boolean },
+  ) => Promise<void>;
+  /** Drop the workspace design default so each remaining design task is gated again. */
+  clearDesignDefault: () => Promise<void>;
 }
 
 /**
@@ -828,6 +839,84 @@ export function useCofounder(): UseCofounder {
     [canEdit, persisted, workspaceId, refresh],
   );
 
+  /* ---------- founder design direction ---------- */
+  /** Visual deliverables (landing page / email / formatted doc) that are otherwise
+   *  ready to run but are HELD until the founder gives design direction — mirrors
+   *  the server gate in /api/run + /api/stream. Empty once a workspace default is
+   *  set (it applies to all) or the viewer is read-only. The modal pops on these. */
+  const pendingDesign = useMemo<Task[]>(() => {
+    if (!canEdit || meta.designDefault) return [];
+    const choices = meta.designChoices ?? {};
+    const doneIds = new Set<string>(artifacts.map((a) => a.taskId).filter(Boolean) as string[]);
+    for (const t of tasks) if (t.status === "done") doneIds.add(t.id);
+    const blocked = blockedObjectiveIds(meta.objectives ?? [], tasks);
+    return tasks.filter(
+      (t) =>
+        (t.status === "todo" || t.status === "running") &&
+        !doneIds.has(t.id) &&
+        !(t.objectiveId && blocked.has(t.objectiveId)) &&
+        isTaskReady(t, doneIds) &&
+        needsDesignDirection(deliverableFor(t.department).kind) &&
+        !choices[t.id],
+    );
+  }, [tasks, artifacts, meta.designChoices, meta.designDefault, meta.objectives, canEdit]);
+
+  /** Record the founder's design direction — per task, or as the workspace default
+   *  (applyToAll). Optimistically updates meta so the gate clears instantly, POSTs
+   *  to /api/design, then kicks the runner for the now-unblocked tasks. */
+  const setDesignDirection = useCallback(
+    async (choice: DesignChoice, opts: { taskId?: string; applyToAll?: boolean }): Promise<void> => {
+      if (!canEdit) return;
+      setMeta((m) =>
+        opts.applyToAll
+          ? { ...m, designDefault: choice }
+          : opts.taskId
+            ? { ...m, designChoices: { ...(m.designChoices ?? {}), [opts.taskId]: choice } }
+            : m,
+      );
+      if (persisted && workspaceId) {
+        try {
+          await fetch("/api/design", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              workspaceId,
+              workspaceSecret: secretRef.current ?? undefined,
+              taskId: opts.taskId,
+              applyToAll: opts.applyToAll === true,
+              choice,
+            }),
+          });
+        } catch {
+          /* ignore — refresh + drive reconcile from server state */
+        }
+      }
+      drive();
+    },
+    [canEdit, persisted, workspaceId, drive],
+  );
+
+  /** Drop the workspace design default so each remaining design task is gated again. */
+  const clearDesignDefault = useCallback(async (): Promise<void> => {
+    if (!canEdit) return;
+    setMeta((m) => ({ ...m, designDefault: null }));
+    if (persisted && workspaceId) {
+      try {
+        await fetch("/api/design", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            clearDefault: true,
+          }),
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [canEdit, persisted, workspaceId]);
+
   return {
     messages,
     tasks,
@@ -855,5 +944,8 @@ export function useCofounder(): UseCofounder {
     approvePlan,
     setBudget,
     drive,
+    pendingDesign,
+    setDesignDirection,
+    clearDesignDefault,
   };
 }

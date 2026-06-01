@@ -6,6 +6,7 @@ import { useCofounder } from "@/lib/use-cofounder";
 import { useOnboarding } from "@/lib/use-onboarding";
 import { useCustomAgents } from "@/lib/use-custom-agents";
 import Canvas from "@/components/app/Canvas";
+import DesignChoiceModal from "@/components/app/DesignChoiceModal";
 import RightPanel from "@/components/app/RightPanel";
 import { brandName } from "@/lib/cofounder-data";
 
@@ -210,6 +211,9 @@ export default function AppPage() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--background)] text-[var(--text)]">
+      {/* Design Direction gate — overlays everything when a visual deliverable is
+          waiting for the founder's style / layout / brief. Self-hides otherwise. */}
+      <DesignChoiceModal cf={cf} />
       {/* Left — radial department canvas */}
       <div className="relative hidden min-w-0 flex-1 md:block">
         <Canvas
