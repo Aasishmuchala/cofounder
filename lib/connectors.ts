@@ -450,10 +450,74 @@ export const BUILT_IN_CONNECTORS: ConnectorDef[] = [
 /** The set of built-in connector ids — the only ids a workspace may enable. */
 export const BUILT_IN_IDS = new Set(BUILT_IN_CONNECTORS.map((c) => c.id));
 
+/** Every tool name the built-ins already expose — a custom connector's tool may
+ *  not reuse one of these (uniqueness across the whole registry). */
+const BUILT_IN_TOOL_NAMES = new Set(
+  BUILT_IN_CONNECTORS.flatMap((c) => c.tools.map((t) => t.name)),
+);
+
+/**
+ * Turn a CUSTOM connector config (a user-defined http-mcp bundle, already
+ * sanitized by sanitizeWorkspaceMeta) into a live ConnectorDef, or null if it is
+ * not a usable custom connector (not custom, not http-mcp, a built-in id, or it
+ * has no valid tools left). Each ConnectorToolSpec becomes a ConnectorTool whose
+ * inputSchema is built from `params` (every param a required {type:"string"}).
+ *
+ * SECURITY: kind is forced "http-mcp" (the only user-definable transport), risk
+ * is CLAMPED to safe|sensitive (never user-settable to "prohibited" — the
+ * PROHIBITED_NAME guard in classifyTool still blocks dangerous names for these
+ * tools too), and a tool whose name collides with a built-in is DROPPED so a
+ * custom connector can never shadow a built-in tool.
+ */
+export function buildCustomConnectorDef(cfg: ConnectorConfig): ConnectorDef | null {
+  if (!cfg || typeof cfg.id !== "string" || !cfg.id) return null;
+  // Only user-defined http-mcp bundles, and never one masquerading as a built-in.
+  if (cfg.custom !== true) return null;
+  if (cfg.kind && cfg.kind !== "http-mcp") return null;
+  if (BUILT_IN_IDS.has(cfg.id)) return null;
+
+  const seen = new Set<string>();
+  const tools: ConnectorTool[] = [];
+  for (const spec of cfg.tools ?? []) {
+    if (!spec || typeof spec.name !== "string" || !spec.name) continue;
+    // Uniqueness: drop a name that collides with a built-in tool or a sibling
+    // custom tool already taken (defense-in-depth over the sanitizer).
+    if (BUILT_IN_TOOL_NAMES.has(spec.name) || seen.has(spec.name)) continue;
+    seen.add(spec.name);
+    // Build the JSON schema from the simple param-name list: each param a
+    // required string property.
+    const params = Array.isArray(spec.params) ? spec.params : [];
+    const properties: Record<string, { type: "string" }> = {};
+    for (const p of params) {
+      if (typeof p === "string" && p) properties[p] = { type: "string" };
+    }
+    const required = Object.keys(properties);
+    tools.push({
+      name: spec.name,
+      description: typeof spec.description === "string" ? spec.description : "",
+      // Clamp to the two user-allowed tiers (never "prohibited").
+      risk: spec.risk === "sensitive" ? "sensitive" : "safe",
+      inputSchema: { type: "object", properties, required },
+    });
+  }
+  // A connector with no usable tools is not worth registering.
+  if (tools.length === 0) return null;
+
+  return {
+    id: cfg.id,
+    label: typeof cfg.label === "string" && cfg.label ? cfg.label : cfg.id,
+    kind: "http-mcp",
+    enabled: cfg.enabled === true,
+    secretEnvVar: cfg.secretEnvVar,
+    tools,
+  };
+}
+
 /**
  * Resolve the live connector registry for a workspace: the built-in definitions
- * merged with the workspace's persisted overrides (enabled flag + secretEnvVar).
- * Unknown overrides are ignored. Always returns the full built-in set so the UI
+ * merged with the workspace's persisted overrides (enabled flag + secretEnvVar),
+ * then the workspace's CUSTOM http-mcp connectors appended after them. Unknown
+ * built-in overrides are ignored. Always returns the full built-in set so the UI
  * can list every connector (enabled or not).
  */
 export function getConnectorRegistry(
@@ -463,7 +527,7 @@ export function getConnectorRegistry(
   for (const c of workspaceConnectors ?? []) {
     if (c && typeof c.id === "string") byId.set(c.id, c);
   }
-  return BUILT_IN_CONNECTORS.map((def) => {
+  const builtIns = BUILT_IN_CONNECTORS.map((def) => {
     const override = byId.get(def.id);
     const merged = override
       ? { ...def, enabled: override.enabled === true, secretEnvVar: override.secretEnvVar ?? def.secretEnvVar }
@@ -488,6 +552,18 @@ export function getConnectorRegistry(
     }
     return merged;
   });
+  // Append the workspace's CUSTOM http-mcp connectors AFTER the built-ins. Each
+  // non-built-in config that yields a valid custom def (buildCustomConnectorDef)
+  // is included, carrying its own enabled flag. Built-in behavior is unchanged;
+  // the SSRF guard + risk policy + approval gate apply to these tools exactly as
+  // they do to http-mcp tools generally (see dispatchConnectorTool / classifyTool).
+  const custom: ConnectorDef[] = [];
+  for (const c of workspaceConnectors ?? []) {
+    if (!c || typeof c.id !== "string" || BUILT_IN_IDS.has(c.id)) continue;
+    const def = buildCustomConnectorDef(c);
+    if (def) custom.push(def);
+  }
+  return [...builtIns, ...custom];
 }
 
 /** Find a tool (and its connector) by tool name across the whole registry. */

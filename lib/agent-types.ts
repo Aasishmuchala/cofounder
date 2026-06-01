@@ -206,13 +206,35 @@ export interface UploadedFile {
  * DB table). See lib/connectors.ts for the risk policy + executors.
  * ------------------------------------------------------------------ */
 
+/** One tool a CUSTOM connector exposes, in client-safe form. The registry turns
+ *  `params` into a JSON schema {type:object, properties:{[p]:{type:string}}, required:[...]}
+ *  at build time (see buildCustomConnectorDef in lib/connectors.ts). */
+export interface ConnectorToolSpec {
+  name: string;
+  description: string;
+  /** Risk tier — custom tools are NEVER user-settable to 'prohibited' (the
+   *  PROHIBITED_NAME guard still blocks dangerous names for ALL tools). */
+  risk: "safe" | "sensitive";
+  /** Simple string parameter names; the registry builds the JSON schema from them. */
+  params?: string[];
+}
+
 /** A connector enabled for this workspace. Secrets are referenced by ENV VAR
- *  NAME only — the actual value is NEVER stored here. */
+ *  NAME only — the actual value is NEVER stored here. A workspace may also define
+ *  CUSTOM http-mcp connectors (custom===true) carrying their own label + tools. */
 export interface ConnectorConfig {
   id: string;
   enabled: boolean;
   /** Name of the env var holding the connector secret (http-mcp only). */
   secretEnvVar?: string;
+  /** True for a user-defined connector (vs. a built-in). */
+  custom?: boolean;
+  /** Display name (custom connectors only). */
+  label?: string;
+  /** Connector transport — ONLY http-mcp is user-definable. */
+  kind?: "http-mcp";
+  /** The tools a custom connector exposes (mapped into the registry). */
+  tools?: ConnectorToolSpec[];
 }
 
 /** A frozen snapshot of a SENSITIVE tool call awaiting human approval. The
@@ -376,6 +398,18 @@ export interface WorkspaceMeta {
  *  value (rejects lowercase + spaces, so a pasted key value is dropped). */
 const ENV_VAR_NAME = /^[A-Z_][A-Z0-9_]{0,60}$/;
 
+/** Custom-connector tool NAME shape: lowercase identifier (namespaced by the UI
+ *  with the connector id). Anything else is dropped. */
+const CONNECTOR_TOOL_NAME = /^[a-z][a-z0-9_]{0,48}$/;
+
+/** Custom-connector tool PARAM name shape: a short lowercase identifier. */
+const CONNECTOR_PARAM_NAME = /^[a-z][a-z0-9_]{0,32}$/;
+
+/** Caps for user-defined connectors — bounded growth of the meta jsonb blob. */
+const CUSTOM_CONNECTORS_MAX = 12;
+const CUSTOM_TOOLS_MAX = 12;
+const CUSTOM_PARAMS_MAX = 10;
+
 /** Keys whose values must be redacted in persisted args / audit entries.
  *  Covers auth material (key/secret/password/token/credential/authorization) plus
  *  financial + PII fields (card/pan/iban/cvv/cvc/ssn/passport/pin). Short tokens
@@ -460,6 +494,9 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
   // ---- MCP connector layer (capped + redacted) ----
 
   if (Array.isArray(m.connectors)) {
+    // Track how many CUSTOM connectors we've kept so they stay <= CUSTOM_CONNECTORS_MAX
+    // (independent of the overall <=20 cap, which also bounds built-in overrides).
+    let customKept = 0;
     out.connectors = (m.connectors as unknown[]).slice(0, 20).map((c) => {
       const o = (c && typeof c === "object" ? c : {}) as Record<string, unknown>;
       const cfg: ConnectorConfig = {
@@ -471,8 +508,50 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
       if (typeof o.secretEnvVar === "string" && ENV_VAR_NAME.test(o.secretEnvVar)) {
         cfg.secretEnvVar = o.secretEnvVar;
       }
+      // CUSTOM http-mcp connector: flagged custom, or a non-built-in carrying a
+      // tools array. http-mcp is the ONLY user-definable kind, so kind is FORCED
+      // (never user-settable to computer/finance/etc.). Built-in configs (no
+      // custom flag, no tools) persist exactly as before.
+      const isCustom = o.custom === true || Array.isArray(o.tools);
+      if (isCustom) {
+        // Over the custom cap → drop the entry entirely rather than persist an
+        // inert {id,enabled} husk that carries no tools and never registers.
+        if (customKept >= CUSTOM_CONNECTORS_MAX) return null;
+        customKept++;
+        cfg.custom = true;
+        cfg.kind = "http-mcp";
+        const label = coerceText(o.label, 60);
+        if (label) cfg.label = label;
+        // Tools: cap the array, validate each name/desc/risk/params; drop a tool
+        // whose name fails the identifier pattern (the registry also de-dupes
+        // against built-in tool names). risk is clamped to {safe,sensitive} —
+        // 'prohibited' is NEVER user-settable.
+        if (Array.isArray(o.tools)) {
+          cfg.tools = (o.tools as unknown[])
+            .slice(0, CUSTOM_TOOLS_MAX)
+            .map((t) => {
+              const to = (t && typeof t === "object" ? t : {}) as Record<string, unknown>;
+              const name = coerceText(to.name, 48).toLowerCase();
+              const spec: ConnectorToolSpec = {
+                name,
+                description: coerceText(to.description, 300),
+                risk: to.risk === "sensitive" ? "sensitive" : "safe",
+              };
+              if (Array.isArray(to.params)) {
+                const params = (to.params as unknown[])
+                  .slice(0, CUSTOM_PARAMS_MAX)
+                  .map((p) => coerceText(p, 32).toLowerCase())
+                  .filter((p) => CONNECTOR_PARAM_NAME.test(p));
+                if (params.length) spec.params = params;
+              }
+              return spec;
+            })
+            // Drop tools whose name doesn't match the identifier pattern.
+            .filter((t) => CONNECTOR_TOOL_NAME.test(t.name));
+        }
+      }
       return cfg;
-    });
+    }).filter((c): c is ConnectorConfig => c !== null);
   }
 
   if (Array.isArray(m.pendingApprovals)) {
