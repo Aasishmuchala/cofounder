@@ -258,6 +258,30 @@ export default function OrgTab({
               {proposal.objectives.length} objective{proposal.objectives.length === 1 ? "" : "s"} · {proposal.tasks.length} task{proposal.tasks.length === 1 ? "" : "s"}
             </span>
           </div>
+          {proposal.departments.length > 0 && (
+            <div className="mt-2.5">
+              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--text-50)]">
+                Your C-suite — {proposal.departments.length} {proposal.departments.length === 1 ? "leader" : "leaders"} the CEO will hire
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {proposal.departments.map((dept) => {
+                  const roleId = getRoleForDepartment(dept);
+                  const role = ORG_ROLES.find((r) => r.id === roleId);
+                  return (
+                    <span
+                      key={dept}
+                      title={role ? `${role.title} — ${dept}` : dept}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-white px-2 py-0.5 shadow-raised"
+                    >
+                      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: departmentColor(dept) }} />
+                      <span className="font-display text-[11px] font-medium text-[var(--text-80)]">{roleId}</span>
+                      <span className="font-mono text-[9px] text-[var(--text-40)]">{dept}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div className="mt-2 space-y-2">
             {proposal.objectives.map((o) => (
               <ProposedObjective key={o.id} objective={o} tasks={proposal.tasks.filter((t) => t.objectiveId === o.id)} />
