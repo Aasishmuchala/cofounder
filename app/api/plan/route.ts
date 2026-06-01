@@ -1,5 +1,6 @@
 import { coerceText } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { dbConfigured, getWorkspace } from "@/lib/supabase-rest";
 import { decomposeGoal, materializePlan } from "@/lib/orchestrator";
 
@@ -33,6 +34,19 @@ export async function POST(req: Request): Promise<Response> {
   const goal = coerceText(body.goal, 600);
   if (!goal) {
     return Response.json({ ok: false, error: "no goal" }, { status: 400 });
+  }
+
+  // Per-workspace rate limit (PRODUCTION-ONLY) — POST decomposes the goal via a paid
+  // model call. Keyed by workspaceId when present (an anonymous decompose with no
+  // workspace can't be per-workspace keyed). Dev/keyless demo is unchanged.
+  if (workspaceId && (process.env.NODE_ENV === "production" || process.env.VERCEL)) {
+    const rl = checkRateLimit(workspaceId);
+    if (!rl.allowed) {
+      return Response.json(
+        { ok: false, error: "rate limited" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
+    }
   }
 
   // Read the workspace meta to ground the decomposition (brand + plan). The

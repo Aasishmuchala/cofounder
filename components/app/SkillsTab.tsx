@@ -127,7 +127,7 @@ export default function SkillsTab({ cf }: { cf: UseCofounder }) {
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Search 1,500+ skills…"
+        placeholder={overview ? `Search ${overview.total} skills…` : "Search skills…"}
         className="mt-2 w-full rounded-[10px] bg-white px-3 py-2 font-display text-[13px] text-[var(--text)] shadow-raised outline-none placeholder:text-[var(--text-50)]"
       />
       {!q.trim() && (

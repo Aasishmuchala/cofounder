@@ -4,11 +4,18 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
-import type { TaskStatus } from "@/lib/agent-types";
+import type { Task, TaskStatus } from "@/lib/agent-types";
 import { departmentColor } from "@/lib/agent-types";
+import {
+  ORG_ROLES,
+  specialistsForDepartment,
+  routeTaskToSpecialist,
+} from "@/lib/org";
+import { cx, StatusBadge } from "@/components/ui/primitives";
 import type { UseCofounder } from "@/lib/use-cofounder";
 import ArtifactPanel from "@/components/app/ArtifactPanel";
 import InboxPanel from "@/components/app/InboxPanel";
@@ -16,27 +23,57 @@ import CreateMenu from "@/components/app/CreateMenu";
 import LiveWriter from "@/components/app/LiveWriter";
 
 /* ---------- geometry ---------- */
-const NODE_W = 224;
-const NODE_H = 116;
-const MANAGER_W = 200;
-const MANAGER_H = 96;
-const RING = 340;
+const CEO_W = 200;
+const CEO_H = 96;
+const ROLE_W = 208;
+const ROLE_H = 104;
+const SPEC_W = 168;
+const SPEC_H = 78;
+/** Radius of the C-suite ring around the CEO (world units). Wide enough that the
+ *  12 role cards (208×104) don't collide where the circle is vertically narrow. */
+const RING = 480;
+/** Base radius of the specialist arc, measured from the CEO — clears the C-suite ring. */
+const SPEC_RING = 740;
+/** Adjacent specialists alternate between SPEC_RING and SPEC_RING+SPEC_STAGGER, so
+ *  angular neighbours never share a radial band (no overlap at any team size). */
+const SPEC_STAGGER = 120;
 
 type Pt = { x: number; y: number };
 
-/** Color a 0–10 quality score: green (great) → amber (ok) → coral (weak). */
-function scoreStyle(score: number): { background: string; color: string } {
-  if (score >= 8) return { background: "var(--green-tint)", color: "#2c7a3f" };
-  if (score >= 6) return { background: "#fbf0d4", color: "#8a6d1f" };
-  return { background: "#fff0ed", color: "var(--coral)" };
+/** Position the i-th C-suite role evenly around the CEO (full radial circle). */
+function ringPosition(index: number, total: number): Pt {
+  const a = -Math.PI / 2 + (index / Math.max(1, total)) * 2 * Math.PI;
+  // Round to whole world-units. Math.cos/sin aren't bit-identical across JS
+  // engines, so sub-pixel drift between the SSR and client renders would trip a
+  // React hydration mismatch on the node's left/top and the SVG edge path.
+  return { x: Math.round(Math.cos(a) * RING), y: Math.round(Math.sin(a) * RING) };
 }
 
-function ringPosition(index: number, total: number): Pt {
-  // distribute around the manager, biased to a pleasing spread
-  const golden = 2.399963229; // golden angle in radians
-  const a = -Math.PI / 2 + index * golden;
-  const r = RING + (index % 3) * 26;
-  return { x: Math.cos(a) * r, y: Math.sin(a) * r * 0.78 };
+/** The angle (radians) of the i-th C-suite role — drives the specialist fan. */
+function ringAngle(index: number, total: number): number {
+  return -Math.PI / 2 + (index / Math.max(1, total)) * 2 * Math.PI;
+}
+
+/** Half-spread (radians) of the fan — widens with team size so 5–6 specialists
+ *  don't bunch, capped so an expanded fan stays within its slice of the ring. */
+function specSpread(count: number): number {
+  return Math.min(0.46, 0.24 + count * 0.04);
+}
+
+/**
+ * Place the j-th specialist of a department on an arc beyond its parent role,
+ * clustered around the parent's angle. The fan widens with count, and adjacent
+ * specialists alternate radial bands (SPEC_RING / +SPEC_STAGGER) so angular
+ * neighbours never overlap — even a 6-person team stays legible. A lone
+ * specialist sits dead-on the parent angle.
+ */
+function specialistPosition(parentAngle: number, j: number, count: number): Pt {
+  const spread = specSpread(count);
+  const t = count <= 1 ? 0.5 : j / (count - 1);
+  const a = parentAngle - spread + t * (spread * 2);
+  const r = SPEC_RING + (j % 2) * SPEC_STAGGER;
+  // Rounded for the same SSR/client hydration-stability reason as ringPosition.
+  return { x: Math.round(Math.cos(a) * r), y: Math.round(Math.sin(a) * r) };
 }
 
 /* ---------- status meta ---------- */
@@ -58,6 +95,35 @@ function statusMeta(s: TaskStatus): {
   }
 }
 
+/** The C-suite roles that report to the CEO (everyone but the CEO), in order. */
+const REPORTS = ORG_ROLES.filter((r) => r.id !== "CEO");
+
+/** Rolled-up task activity for one department: counts + a dominant live status. */
+interface DeptActivity {
+  total: number;
+  running: number;
+  needsAction: number;
+  done: number;
+  /** Any task running -> the edge should pulse. */
+  live: boolean;
+  /** The status that should drive a status dot (needs_action > running > done). */
+  status: TaskStatus | null;
+}
+
+function rollUp(tasks: Task[]): DeptActivity {
+  let running = 0;
+  let needsAction = 0;
+  let done = 0;
+  for (const t of tasks) {
+    if (t.status === "running") running++;
+    else if (t.status === "needs_action") needsAction++;
+    else if (t.status === "done") done++;
+  }
+  const status: TaskStatus | null =
+    needsAction > 0 ? "needs_action" : running > 0 ? "running" : done > 0 ? "done" : tasks.length > 0 ? "todo" : null;
+  return { total: tasks.length, running, needsAction, done, live: running > 0, status };
+}
+
 export default function Canvas({
   cf,
   brand,
@@ -73,20 +139,10 @@ export default function Canvas({
   onCreatedTask?: () => void;
   onCreatedAgent?: () => void;
 }) {
-  const {
-    tasks,
-    artifacts,
-    loading,
-    executeTask,
-    persisted,
-    reset,
-  } = cf;
+  const { tasks, artifacts, loading, persisted, reset } = cf;
 
-  // newest artifact per task, for the "View output" affordance
-  const artifactByTask = new Map<string, (typeof artifacts)[number]>();
-  for (const a of artifacts) {
-    if (a.taskId && !artifactByTask.has(a.taskId)) artifactByTask.set(a.taskId, a);
-  }
+  // The deliverables counter + viewer read `artifacts` directly; task-level
+  // "view output" now lives in the side panel (onSelectDepartment).
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null);
   // Guard the null case: an unpersisted artifact can have id === null, and
   // find(a => a.id === null) would match it and auto-open the panel with no click.
@@ -100,25 +156,55 @@ export default function Canvas({
   const [scale, setScale] = useState(1);
   const centered = useRef(false);
 
-  /* node positions (world coords), keyed by task id */
-  const [positions, setPositions] = useState<Record<string, Pt>>({});
-
-  /* Assign a ring slot to any task that doesn't have a position yet. This is a
-     one-shot init of derived state from incoming task data: the functional
-     updater returns `prev` unchanged once every task is placed, so it can't loop. */
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot placement of new nodes; no-op when nothing changed
-    setPositions((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      tasks.forEach((t, i) => {
-        if (!next[t.id]) {
-          next[t.id] = ringPosition(i, tasks.length);
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
+  /* Which C-suite roles are expanded (showing their specialists). Default: all
+     collapsed, so ~50 specialist nodes aren't on-screen at once — the org reads
+     as CEO + C-suite until the founder drills into a function. */
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggleRole = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
     });
+  }, []);
+  const allExpanded = expanded.size >= REPORTS.length;
+  const toggleAll = useCallback(() => {
+    setExpanded((prev) =>
+      prev.size >= REPORTS.length ? new Set() : new Set(REPORTS.map((r) => r.id)),
+    );
+  }, []);
+
+  /* Group tasks by department once per change, so each role/specialist can read
+     its slice without re-scanning the whole list. */
+  const tasksByDept = useMemo(() => {
+    const map = new Map<string, Task[]>();
+    for (const t of tasks) {
+      const list = map.get(t.department);
+      if (list) list.push(t);
+      else map.set(t.department, [t]);
+    }
+    return map;
+  }, [tasks]);
+
+  /* Route every task to its specialist ONCE (honours agentId, even cross-department),
+     so the specialist tier reads its slice by id — removes the per-render re-routing
+     and fixes a cross-dept agentId task being dropped from the canvas. */
+  const tasksBySpecialist = useMemo(() => {
+    const map = new Map<string, Task[]>();
+    for (const t of tasks) {
+      const routed = routeTaskToSpecialist({
+        department: t.department,
+        agentId: t.agentId,
+        title: t.title,
+        detail: t.detail,
+      });
+      if (!routed) continue;
+      const list = map.get(routed.id);
+      if (list) list.push(t);
+      else map.set(routed.id, [t]);
+    }
+    return map;
   }, [tasks]);
 
   /* center the world origin in the viewport once it has a size */
@@ -134,12 +220,11 @@ export default function Canvas({
 
   // The auto-run agent simulation (todo → running → execute → done) is owned by
   // the workspace shell so it keeps running even when this canvas is hidden
-  // (e.g. on mobile). This component is a pure view + manual actions.
+  // (e.g. on mobile). This component is a pure view of the standing org.
 
-  /* ---------- pointer interactions (pan + node drag) ---------- */
+  /* ---------- pan interaction ---------- */
   const drag = useRef<
     | { kind: "pan"; startX: number; startY: number; ox: number; oy: number }
-    | { kind: "node"; id: string; startX: number; startY: number; px: number; py: number }
     | null
   >(null);
 
@@ -157,34 +242,11 @@ export default function Canvas({
     [offset],
   );
 
-  const startNodeDrag = useCallback(
-    (id: string) => (e: React.PointerEvent) => {
-      e.stopPropagation();
-      const p = positions[id] ?? { x: 0, y: 0 };
-      drag.current = {
-        kind: "node",
-        id,
-        startX: e.clientX,
-        startY: e.clientY,
-        px: p.x,
-        py: p.y,
-      };
-      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-    },
-    [positions],
-  );
-
   useEffect(() => {
     const move = (e: PointerEvent) => {
       const d = drag.current;
       if (!d) return;
-      if (d.kind === "pan") {
-        setOffset({ x: d.ox + (e.clientX - d.startX), y: d.oy + (e.clientY - d.startY) });
-      } else {
-        const nx = d.px + (e.clientX - d.startX) / scale;
-        const ny = d.py + (e.clientY - d.startY) / scale;
-        setPositions((prev) => ({ ...prev, [d.id]: { x: nx, y: ny } }));
-      }
+      setOffset({ x: d.ox + (e.clientX - d.startX), y: d.oy + (e.clientY - d.startY) });
     };
     const up = () => (drag.current = null);
     window.addEventListener("pointermove", move);
@@ -193,7 +255,7 @@ export default function Canvas({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
-  }, [scale]);
+  }, []);
 
   const onWheel = useCallback((e: React.WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) {
@@ -215,7 +277,17 @@ export default function Canvas({
     setScale(1);
   };
 
-  const managerPos: Pt = { x: 0, y: 0 };
+  const ceoPos: Pt = { x: 0, y: 0 };
+
+  /* Pre-compute each report's geometry + rolled-up activity once per render. */
+  const nodes = REPORTS.map((role, i) => {
+    const dept = role.departments[0] ?? "";
+    const pos = ringPosition(i, REPORTS.length);
+    const angle = ringAngle(i, REPORTS.length);
+    const specialists = dept ? specialistsForDepartment(dept) : [];
+    const activity = rollUp(dept ? tasksByDept.get(dept) ?? [] : []);
+    return { role, dept, pos, angle, specialists, activity, open: expanded.has(role.id) };
+  });
 
   return (
     <div className="relative h-full w-full overflow-hidden">
@@ -245,28 +317,26 @@ export default function Canvas({
             className="pointer-events-none absolute overflow-visible"
             style={{ left: 0, top: 0 }}
           >
-            {tasks.map((t) => {
-              const p = positions[t.id];
-              if (!p) return null;
-              const c = departmentColor(t.department);
-              const sm = statusMeta(t.status);
-              const x1 = managerPos.x;
-              const y1 = managerPos.y + MANAGER_H / 2;
-              const x2 = p.x;
-              const y2 = p.y - NODE_H / 2;
-              const my = (y1 + y2) / 2;
-              const dpath = `M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`;
+            {nodes.map(({ role, dept, pos, angle, specialists, activity, open }) => {
+              const c = departmentColor(dept);
+              // CEO → this C-suite role (always drawn).
+              const x1 = ceoPos.x;
+              const y1 = ceoPos.y;
+              const x2 = pos.x;
+              const y2 = pos.y;
+              const mx = (x1 + x2) / 2;
+              const dpath = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+              const lit = activity.total > 0;
               return (
-                <g key={t.id}>
+                <g key={role.id}>
                   <path
                     d={dpath}
                     fill="none"
-                    stroke={t.status === "done" ? c : "rgba(38,35,35,0.18)"}
-                    strokeOpacity={t.status === "todo" ? 0.5 : 1}
+                    stroke={lit ? c : "rgba(38,35,35,0.18)"}
+                    strokeOpacity={lit ? 1 : 0.6}
                     strokeWidth={1.5}
-                    strokeDasharray={t.status === "todo" ? "3 4" : undefined}
                   />
-                  {sm.live && (
+                  {activity.live && (
                     <path
                       d={dpath}
                       fill="none"
@@ -276,30 +346,67 @@ export default function Canvas({
                       className="edge-flow"
                     />
                   )}
+                  {/* C-suite role → its specialists (only when expanded). */}
+                  {open &&
+                    specialists.map((s, j) => {
+                      const sp = specialistPosition(angle, j, specialists.length);
+                      // Fan out from just beyond the parent node toward the spec arc.
+                      const sx1 = pos.x;
+                      const sy1 = pos.y;
+                      const sx2 = sp.x;
+                      const sy2 = sp.y;
+                      const smx = (sx1 + sx2) / 2;
+                      const spath = `M ${sx1} ${sy1} C ${smx} ${sy1}, ${smx} ${sy2}, ${sx2} ${sy2}`;
+                      const routed = tasksBySpecialist.get(s.id) ?? [];
+                      const sact = rollUp(routed);
+                      const slit = sact.total > 0;
+                      return (
+                        <g key={s.id}>
+                          <path
+                            d={spath}
+                            fill="none"
+                            stroke={slit ? c : "rgba(38,35,35,0.14)"}
+                            strokeOpacity={slit ? 0.9 : 0.5}
+                            strokeWidth={1.25}
+                            strokeDasharray={slit ? undefined : "3 4"}
+                          />
+                          {sact.live && (
+                            <path
+                              d={spath}
+                              fill="none"
+                              stroke={c}
+                              strokeWidth={1.75}
+                              strokeDasharray="5 9"
+                              className="edge-flow"
+                            />
+                          )}
+                        </g>
+                      );
+                    })}
                 </g>
               );
             })}
           </svg>
 
-          {/* manager node */}
+          {/* CEO node (root, at world-center) */}
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2"
-            style={{ left: managerPos.x, top: managerPos.y }}
+            style={{ left: ceoPos.x, top: ceoPos.y }}
           >
             <div
               className="relative rounded-[16px] bg-white shadow-deep"
-              style={{ width: MANAGER_W, height: MANAGER_H }}
+              style={{ width: CEO_W, height: CEO_H }}
             >
               <span className="manager-ring" />
               <div className="flex h-full flex-col justify-center gap-1 px-4">
                 <div className="flex items-center gap-2">
                   <span className="manager-dot" />
                   <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--text-50)]">
-                    Manager agent
+                    Chief Executive Officer
                   </span>
                 </div>
                 <div className="font-display text-[18px] font-medium text-[var(--text)]">
-                  Cofounder
+                  {brand || "Cofounder"}
                 </div>
                 <div className="font-mono text-[10px] text-[var(--text-50)]">
                   {loading && tasks.length === 0 ? (
@@ -308,7 +415,7 @@ export default function Canvas({
                     </span>
                   ) : (
                     <>
-                      {tasks.length} task agent{tasks.length === 1 ? "" : "s"} ·{" "}
+                      {REPORTS.length} leaders ·{" "}
                       {tasks.filter((t) => t.status === "running").length} running
                     </>
                   )}
@@ -317,141 +424,178 @@ export default function Canvas({
             </div>
           </div>
 
-          {/* task nodes */}
-          {tasks.map((t) => {
-            const p = positions[t.id];
-            if (!p) return null;
-            const c = departmentColor(t.department);
+          {/* C-suite ring */}
+          {nodes.map(({ role, dept, pos, activity, specialists, open }) => {
+            const c = departmentColor(dept);
             return (
               <div
-                key={t.id}
-                onPointerDown={startNodeDrag(t.id)}
-                className="group absolute -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing"
-                style={{ left: p.x, top: p.y, width: NODE_W }}
+                key={role.id}
+                className="group absolute -translate-x-1/2 -translate-y-1/2"
+                style={{ left: pos.x, top: pos.y, width: ROLE_W }}
               >
-                <div
-                  className="rounded-[12px] bg-[var(--surface-raised)] shadow-raised transition-shadow group-hover:shadow-deep"
-                  style={{ minHeight: NODE_H }}
+                {/* The card body toggles expand/collapse of the specialists. */}
+                <button
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => toggleRole(role.id)}
+                  aria-expanded={open}
+                  title={open ? `Collapse ${role.title}` : `Expand ${role.title}`}
+                  className="block w-full cursor-pointer text-left"
                 >
-                  {/* dept header */}
-                  <div className="flex items-center justify-between px-3 pt-2.5">
-                    <button
-                      type="button"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => onSelectDepartment?.(t.department)}
-                      title={`Open ${t.department}`}
-                      className="flex items-center gap-1.5 rounded-[5px] px-1 py-0.5 -mx-1 transition-colors hover:bg-black/[0.05]"
-                    >
+                  <div
+                    className="rounded-[12px] bg-white shadow-raised transition-shadow group-hover:shadow-deep"
+                    style={{ minHeight: ROLE_H }}
+                  >
+                    {/* dept header — the label opens the side panel (not the toggle) */}
+                    <div className="flex items-center justify-between px-3 pt-2.5">
                       <span
-                        className="inline-block"
-                        style={{ width: 6, height: 6, borderRadius: 1, background: c }}
-                      />
-                      <span className="font-mono text-[8px] uppercase tracking-[0.1em] text-[var(--text-50)]">
-                        {t.department}
-                      </span>
-                    </button>
-                    <StatusPill s={t.status} />
-                  </div>
-                  <div className="px-3 pb-3 pt-1.5">
-                    <div className="font-display text-[14px] font-medium leading-tight text-[var(--text-80)]">
-                      {t.title}
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--text-50)]">
-                      {t.detail}
-                    </p>
-                    {t.status === "running" && (
-                      <div className="mt-2 h-[3px] w-full overflow-hidden rounded-full bg-black/5">
+                        role="button"
+                        tabIndex={0}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (dept) onSelectDepartment?.(dept);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (dept) onSelectDepartment?.(dept);
+                          }
+                        }}
+                        title={dept ? `Open ${dept}` : undefined}
+                        className="flex items-center gap-1.5 rounded-[5px] -mx-1 px-1 py-0.5 transition-colors hover:bg-black/[0.05]"
+                      >
                         <span
-                          className="progress-fill block h-full rounded-full"
-                          style={{ background: c }}
+                          className="inline-block"
+                          style={{ width: 6, height: 6, borderRadius: 1, background: c }}
                         />
+                        <span className="font-mono text-[8px] uppercase tracking-[0.1em] text-[var(--text-50)]">
+                          {dept || "Office of the CEO"}
+                        </span>
+                      </span>
+                      {activity.status ? (
+                        <StatusPill s={activity.status} />
+                      ) : (
+                        <span
+                          className={cx(
+                            "text-[var(--text-30)] transition-transform",
+                            open && "rotate-180",
+                          )}
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </span>
+                      )}
+                    </div>
+                    <div className="px-3 pb-3 pt-1.5">
+                      <div className="font-display text-[15px] font-medium leading-tight text-[var(--text)]">
+                        {role.id}
                       </div>
-                    )}
-
-                    {/* action footer */}
-                    {(() => {
-                      const art = artifactByTask.get(t.id);
-                      if (art) {
-                        return (
-                          <div className="mt-2.5">
-                            <button
-                              onPointerDown={(e) => e.stopPropagation()}
-                              onClick={() => onSelectDepartment?.(t.department)}
-                              title={`Open ${t.department}`}
-                              aria-label={`Open ${t.department} — ${art.title}`}
-                              className="block w-full overflow-hidden rounded-[8px] border border-black/[0.06] bg-white text-left transition-shadow hover:shadow-raised"
-                            >
-                              <div className="flex items-center gap-1 border-b border-black/[0.05] px-2 py-1">
-                                <span className="h-1.5 w-1.5 rounded-full" style={{ background: c }} />
-                                <span className="font-mono text-[7px] uppercase tracking-[0.08em] text-[var(--text-50)]">
-                                  {art.kind === "landing_page" ? "page" : art.kind === "brand_spec" ? "brand" : art.kind === "email" ? "email" : "doc"}
-                                </span>
-                                {art.eval && (
-                                  <span
-                                    className="ml-auto rounded-[3px] px-1 py-px font-mono text-[8px] font-semibold"
-                                    style={scoreStyle(art.eval.score)}
-                                    title={`Quality ${art.eval.score}/10${art.eval.iterations > 1 ? ` · ${art.eval.iterations} drafts` : ""}`}
-                                  >
-                                    {art.eval.score.toFixed(1)}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="space-y-1 px-2 py-1.5">
-                                {art.kind === "landing_page" ? (
-                                  <>
-                                    <div className="h-1.5 w-3/4 rounded-sm" style={{ background: c, opacity: 0.5 }} />
-                                    <div className="h-1.5 w-full rounded-sm bg-black/[0.07]" />
-                                    <div className="h-1.5 w-5/6 rounded-sm bg-black/[0.06]" />
-                                    <div className="mt-0.5 h-2 w-1/2 rounded-sm" style={{ background: c, opacity: 0.85 }} />
-                                  </>
-                                ) : (
-                                  <>
-                                    <div className="h-1.5 w-full rounded-sm bg-black/[0.08]" />
-                                    <div className="h-1.5 w-11/12 rounded-sm bg-black/[0.07]" />
-                                    <div className="h-1.5 w-3/4 rounded-sm bg-black/[0.06]" />
-                                  </>
-                                )}
-                              </div>
-                            </button>
-                            {art.skill && (
-                              <div
-                                className="mt-1.5 flex items-center gap-1 truncate font-mono text-[8px] uppercase tracking-[0.08em] text-[var(--text-50)]"
-                                title={`${art.skill.source === "authored" ? "Authored" : art.skill.source === "house" ? "House" : "Equipped"} skill: ${art.skill.name} (${art.skill.source})`}
-                              >
-                                <span>
-                                  {art.skill.source === "authored"
-                                    ? "✍️"
-                                    : art.skill.source === "house"
-                                      ? "🏛"
-                                      : "⚡"}
-                                </span>
-                                <span className="truncate">
-                                  {art.skill.name.split("/").pop()}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      }
-                      if (t.status !== "running" && t.status !== "done") {
-                        return (
-                          <button
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={() => executeTask(t)}
-                            className="mt-2.5 inline-flex items-center gap-1 rounded-[7px] px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-white shadow-glossy transition-opacity hover:opacity-90"
-                            style={{ background: c }}
+                      <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-[var(--text-50)]">
+                        {role.title}
+                      </p>
+                      {/* counts: specialists in this function + active work */}
+                      <div className="mt-2 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--text-50)]">
+                        <span className="inline-flex items-center gap-1">
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <circle cx="12" cy="8" r="3.4" />
+                            <path d="M5 20c0-3.6 3-6 7-6s7 2.4 7 6" strokeLinecap="round" />
+                          </svg>
+                          {specialists.length}
+                        </span>
+                        {activity.total > 0 && (
+                          <>
+                            <span className="text-[var(--text-30)]">·</span>
+                            <span style={{ color: activity.live ? "var(--blue)" : undefined }}>
+                              {activity.running + activity.needsAction} active
+                            </span>
+                          </>
+                        )}
+                        <span className="ml-auto inline-flex items-center gap-1 text-[var(--text-30)]">
+                          {open ? "Hide" : "Show"}
+                          <svg
+                            width="9"
+                            height="9"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.2"
+                            className={cx("transition-transform", open && "rotate-180")}
                           >
-                            Run agent ▸
-                          </button>
-                        );
-                      }
-                      return null;
-                    })()}
+                            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                </button>
               </div>
             );
           })}
+
+          {/* specialist tier (rendered for expanded roles only) */}
+          {nodes
+            .filter((n) => n.open && n.dept)
+            .flatMap(({ dept, angle, specialists }) => {
+              const c = departmentColor(dept);
+              return specialists.map((s, j) => {
+                const sp = specialistPosition(angle, j, specialists.length);
+                const routed = tasksBySpecialist.get(s.id) ?? [];
+                const sact = rollUp(routed);
+                return (
+                  <div
+                    key={s.id}
+                    className="group absolute -translate-x-1/2 -translate-y-1/2"
+                    style={{ left: sp.x, top: sp.y, width: SPEC_W }}
+                  >
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => onSelectDepartment?.(dept)}
+                      title={`${s.title} — open ${dept}`}
+                      className="block w-full cursor-pointer text-left"
+                    >
+                      <div
+                        className="rounded-[10px] bg-[var(--surface-raised)] shadow-raised transition-shadow group-hover:shadow-deep"
+                        style={{ minHeight: SPEC_H }}
+                      >
+                        <div className="flex items-center justify-between gap-1 px-2.5 pt-2">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span
+                              className="inline-block shrink-0"
+                              style={{ width: 5, height: 5, borderRadius: 1, background: c }}
+                            />
+                            <span className="truncate font-display text-[12px] font-medium leading-tight text-[var(--text-80)]">
+                              {s.title}
+                            </span>
+                          </div>
+                          {sact.total > 0 && (
+                            <span
+                              className="flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[8px] font-semibold"
+                              style={statusChipStyle(sact.status)}
+                              title={`${sact.total} task${sact.total === 1 ? "" : "s"} routed here`}
+                            >
+                              {sact.live && (
+                                <span
+                                  className="anim-badge-blink inline-block h-1 w-1 rounded-full"
+                                  style={{ background: "currentColor" }}
+                                />
+                              )}
+                              {sact.total}
+                            </span>
+                          )}
+                        </div>
+                        <p className="line-clamp-2 px-2.5 pb-2.5 pt-1 text-[10.5px] leading-snug text-[var(--text-50)]">
+                          {s.blurb}
+                        </p>
+                      </div>
+                    </button>
+                  </div>
+                );
+              });
+            })}
         </div>
       </div>
 
@@ -460,7 +604,7 @@ export default function Canvas({
       {/* top-left context */}
       <div className="absolute left-5 top-4 z-20">
         <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--text-50)]">
-          Agent canvas
+          Org chart
         </div>
         <div className="font-display text-[20px] font-medium text-[var(--text)]">
           {brand || "Cofounder"}
@@ -489,6 +633,28 @@ export default function Canvas({
             New company
           </button>
         </div>
+      </div>
+
+      {/* expand/collapse-all control */}
+      <div className="absolute left-5 top-[140px] z-20 hidden md:block">
+        <button
+          onClick={toggleAll}
+          title={allExpanded ? "Collapse every function" : "Expand every function"}
+          className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--text-50)] shadow-raised transition-colors hover:text-[var(--text)]"
+        >
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className={cx("transition-transform", allExpanded && "rotate-180")}
+          >
+            <path d="M8 9l4-4 4 4M8 15l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {allExpanded ? "Collapse all" : "Expand all"}
+        </button>
       </div>
 
       {/* zoom controls */}
@@ -545,20 +711,21 @@ export default function Canvas({
   );
 }
 
+/** Small status chip on a specialist node — mirrors the canvas status palette. */
+function statusChipStyle(s: TaskStatus | null): { background: string; color: string } {
+  const m = statusMeta(s ?? "todo");
+  return { background: m.bg, color: m.color };
+}
+
 function StatusPill({ s }: { s: TaskStatus }) {
   const m = statusMeta(s);
   return (
-    <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[8px] uppercase tracking-[0.08em]"
-      style={{ background: m.bg, color: m.color }}
-    >
-      {m.live && (
-        <span
-          className="anim-badge-blink inline-block h-1 w-1 rounded-full"
-          style={{ background: m.color }}
-        />
-      )}
-      {m.label}
-    </span>
+    <StatusBadge
+      label={m.label}
+      bg={m.bg}
+      fg={m.color}
+      dot={m.live}
+      animate={m.live}
+    />
   );
 }

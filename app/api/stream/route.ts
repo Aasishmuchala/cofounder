@@ -1,5 +1,6 @@
 import { coerceText, isTaskReady, blockedObjectiveIds, type PlanObjective } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { dbConfigured, listTasks, listArtifacts, claimTask, patchTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
@@ -39,6 +40,20 @@ export async function POST(req: Request): Promise<Response> {
   }
   if (!dbConfigured) {
     return Response.json({ error: "no database" }, { status: 400 });
+  }
+
+  // Per-workspace rate limit (PRODUCTION-ONLY) — /api/stream drives the same paid
+  // produceDeliverable() as /api/run, so throttle it identically BEFORE any model
+  // work (and before the DB load/claim below). Gated so the keyless local demo is
+  // unchanged; workspaceId is guaranteed non-empty above.
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+    const rl = checkRateLimit(workspaceId);
+    if (!rl.allowed) {
+      return Response.json(
+        { error: "rate limited" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
+    }
   }
 
   // Only run a task that's actionable and not already produced.

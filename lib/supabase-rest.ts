@@ -65,6 +65,7 @@ const ALLOWED_EXECUTORS = new Set(["claude-code"]);
 interface DetailMeta {
   deps?: string[];
   objectiveId?: string | null;
+  agentId?: string | null;
   executor?: string;
 }
 
@@ -91,6 +92,11 @@ export function decodeDetail(raw: string): { meta: DetailMeta; detail: string } 
       meta.deps = p.deps.filter((d): d is string => typeof d === "string").slice(0, 48);
     }
     if (typeof p.objectiveId === "string") meta.objectiveId = p.objectiveId;
+    // agentId is a specialist assignment (see lib/org.ts SPECIALISTS) — a short
+    // kebab-case id; cap it like its siblings so an oversized user-typed envelope
+    // value can't bloat the stored detail. Not a privileged routing hint (the
+    // runner gates execution on department/executor), so no allowlist is needed.
+    if (typeof p.agentId === "string") meta.agentId = p.agentId.slice(0, 40);
     // executor is a privileged routing hint — only honor an allowlisted value so
     // a user-typed `cf:{"executor":"claude-code"}|x` can't be the ONLY gate (the
     // runner still requires department + the claudeCodeActive double-gate too).
@@ -108,6 +114,7 @@ export function encodeDetail(detail: string, meta: DetailMeta): string {
   const env: DetailMeta = {};
   if (meta.deps && meta.deps.length > 0) env.deps = meta.deps.slice(0, 48);
   if (meta.objectiveId) env.objectiveId = meta.objectiveId;
+  if (meta.agentId) env.agentId = meta.agentId;
   if (meta.executor) env.executor = meta.executor;
   if (Object.keys(env).length === 0) return detail;
   return `${DETAIL_PREFIX}${JSON.stringify(env)}${DETAIL_SEP}${detail}`;
@@ -160,6 +167,7 @@ function rowToTask(r: DbTaskRow): Task {
   };
   if (meta.deps && meta.deps.length > 0) task.dependsOn = meta.deps;
   if (meta.objectiveId !== undefined) task.objectiveId = meta.objectiveId;
+  if (meta.agentId !== undefined) task.agentId = meta.agentId;
   if (meta.executor) task.executor = meta.executor;
   return task;
 }
@@ -310,6 +318,7 @@ export async function insertTasks(
     detail: encodeDetail(t.detail, {
       deps: t.dependsOn,
       objectiveId: t.objectiveId ?? undefined,
+      agentId: t.agentId ?? undefined,
       executor: t.executor,
     }),
   }));
@@ -458,7 +467,17 @@ export async function insertAuthoredSkill(
   });
 }
 
-/** A single artifact by id (used by the public preview route). */
+/**
+ * A single artifact by id (used by the public preview/export routes).
+ *
+ * ACCESS MODEL — BY DESIGN: an artifact is fetched by its unguessable id alone,
+ * with NO workspace scoping. The id IS the capability — possessing the URL is the
+ * authorization to view/export the deliverable. This is intentional: the core
+ * "share a deliverable" feature hands out exactly this public, login-free link.
+ * Do NOT add workspace scoping here without changing that product behavior.
+ * Database RLS (see supabase/migrations/0001_hardening.sql) is the
+ * defense-in-depth layer that keeps a leaked anon key from reading rows directly.
+ */
 export async function getArtifact(id: string): Promise<Artifact | null> {
   const res = await rest(
     `cofounder_artifacts?id=eq.${encodeURIComponent(id)}&limit=1`,

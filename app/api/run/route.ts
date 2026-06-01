@@ -1,5 +1,6 @@
 import { coerceText, isTaskReady, blockedObjectiveIds, type PlanObjective } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { dbConfigured, listTasks, listArtifacts, patchTask, claimTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
@@ -39,6 +40,19 @@ export async function POST(req: Request): Promise<Response> {
   }
   if (!(await authorizeWrite(workspaceId, workspaceSecret))) {
     return Response.json({ ran: null, remaining: 0, error: "unauthorized" }, { status: 403 });
+  }
+  // Per-workspace rate limit (PRODUCTION-ONLY) — cap how fast one workspace can
+  // drive Opus generations, BEFORE any DB load or model work. Gated so the
+  // keyless local demo (and the test/dev loop the client drives) is unchanged.
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+    const rl = checkRateLimit(workspaceId);
+    if (!rl.allowed) {
+      const retryAfter = Math.ceil(rl.retryAfterMs / 1000);
+      return Response.json(
+        { ran: null, remaining: 0, error: "rate limited" },
+        { status: 429, headers: { "Retry-After": String(retryAfter) } },
+      );
+    }
   }
   if (!dbConfigured) {
     return Response.json({ ran: null, remaining: 0, persisted: false });

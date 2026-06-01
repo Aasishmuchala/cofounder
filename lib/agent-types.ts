@@ -16,6 +16,8 @@ export interface Task {
   dependsOn?: string[];
   /** Links this task to a PlanObjective (orchestration layer), or null. */
   objectiveId?: string | null;
+  /** The specialist agent this task is assigned to (see lib/org.ts SPECIALISTS), or null. */
+  agentId?: string | null;
   /** Routing hint for the runner (e.g. "claude-code"); reserved for delegation. */
   executor?: string;
 }
@@ -71,6 +73,10 @@ export const DEPARTMENT_DELIVERABLE: Record<
   Operations: { kind: "markdown", noun: "ops checklist" },
   Finance: { kind: "markdown", noun: "financial model outline" },
   Legal: { kind: "markdown", noun: "incorporation checklist" },
+  Product: { kind: "markdown", noun: "product brief" },
+  People: { kind: "markdown", noun: "hiring plan" },
+  Data: { kind: "markdown", noun: "analytics plan" },
+  Security: { kind: "markdown", noun: "security checklist" },
 };
 
 export function deliverableFor(department: string): {
@@ -96,6 +102,10 @@ export const DEPARTMENT_META: Record<string, { color: string }> = {
   Operations: { color: "#5b7a8c" },
   Finance: { color: "#2f9e8f" },
   Legal: { color: "#8a6d3b" },
+  Product: { color: "#c2602f" },
+  People: { color: "#b0567f" },
+  Data: { color: "#3f6f9c" },
+  Security: { color: "#646079" },
 };
 
 /** Fallback color for any department not present in DEPARTMENT_META. */
@@ -113,7 +123,7 @@ export function departmentColor(department: string): string {
  * no handler ever calls `.trim()`/`.slice()` on a non-string.
  * ------------------------------------------------------------------ */
 
-/** The eight departments Helm can staff. */
+/** The twelve departments Helm can staff. */
 export const DEPARTMENTS = [
   "Engineering",
   "Sales",
@@ -123,6 +133,10 @@ export const DEPARTMENTS = [
   "Operations",
   "Finance",
   "Legal",
+  "Product",
+  "People",
+  "Data",
+  "Security",
 ] as const;
 
 /** Valid task lifecycle states. */

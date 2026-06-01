@@ -101,6 +101,10 @@ export const DEPARTMENT_INFO: Record<string, DepartmentInfo> = {
   Operations: { blurb: "Operations agents streamline your processes, coordinate teams, and keep everything running smoothly.", cover: "/depts/operations.jpg", agent: "Ops Agent" },
   Finance: { blurb: "Finance agents handle collections, close support, and billing inbox triage.", cover: "/depts/finance.jpg", agent: "Finance Agent" },
   Legal: { blurb: "Legal agents review contracts, policies, and compliance artifacts.", cover: "/depts/legal.jpg", agent: "Legal Agent" },
+  Product: { blurb: "Product agents shape the roadmap, specs, and analytics that guide what gets built.", cover: "/depts/engineering.jpg", agent: "Product Agent" },
+  People: { blurb: "People agents run recruiting, onboarding, and the culture that scales the team.", cover: "/depts/operations.jpg", agent: "People Agent" },
+  Data: { blurb: "Data agents build pipelines, analytics, and the ML that turns data into decisions.", cover: "/depts/engineering.jpg", agent: "Data Agent" },
+  Security: { blurb: "Security agents harden the company — SecOps, IT, and audit & compliance.", cover: "/depts/legal.jpg", agent: "Security Agent" },
 };
 
 export function departmentInfo(dept: string | null | undefined): DepartmentInfo | null {

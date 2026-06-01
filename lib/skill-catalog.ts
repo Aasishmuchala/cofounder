@@ -139,3 +139,15 @@ export function readSkillBody(dir: string, cap = 6000): string {
 export function skillByName(name: string): CatalogSkill | null {
   return loadCatalog().find((s) => s.name === name) ?? null;
 }
+
+/**
+ * Public URL for a catalog skill, derived from its provenance `source`. Imported
+ * skills carry `source: github:owner/repo` (a bare `owner/repo` also works); anything
+ * without repo provenance falls back to a GitHub search for the skill — so an equipped
+ * catalog skill ALWAYS exposes a live, clickable link (not an empty string).
+ */
+export function catalogSkillUrl(source: string | undefined, name: string): string {
+  const m = (source || "").trim().match(/^(?:github:)?([\w.-]+\/[\w.-]+)$/i);
+  if (m) return `https://github.com/${m[1]}`;
+  return `https://github.com/search?q=${encodeURIComponent(`${name} skill`)}&type=repositories`;
+}

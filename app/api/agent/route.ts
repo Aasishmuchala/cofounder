@@ -8,6 +8,7 @@ import {
 } from "@/lib/supabase-rest";
 import { getAnthropic, aiConfigured, MODEL } from "@/lib/anthropic";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -246,6 +247,20 @@ export async function POST(req: Request): Promise<Response> {
       idea: lastUser,
       meta,
     });
+  }
+
+  // Per-workspace rate limit (PRODUCTION-ONLY) — a real (paid) planner model call
+  // follows, so cap how fast one workspace can drive it. Keyed by workspaceId, so it
+  // only applies once a workspace exists (the first turn has none). Dev/keyless demo
+  // is unchanged.
+  if (workspaceId && (process.env.NODE_ENV === "production" || process.env.VERCEL)) {
+    const rl = checkRateLimit(workspaceId);
+    if (!rl.allowed) {
+      return Response.json(
+        { error: "rate limited" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
+    }
   }
 
   try {

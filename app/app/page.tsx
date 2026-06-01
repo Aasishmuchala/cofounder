@@ -96,7 +96,9 @@ export default function AppPage() {
   const site = cf.artifacts.find((a) => a.kind === "landing_page" && a.id);
   const [published, setPublished] = React.useState(false);
   function handlePublish() {
-    if (!site || typeof window === "undefined") return;
+    // Guard the id too: an unpersisted artifact can carry a null/empty id, which
+    // would build a broken /p/ URL — skip (no-op) rather than open it.
+    if (!site || !site.id || typeof window === "undefined") return;
     const url = `${window.location.origin}/p/${site.id}`;
     try {
       navigator.clipboard?.writeText(url)?.catch(() => {});

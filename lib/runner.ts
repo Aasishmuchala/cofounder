@@ -35,7 +35,7 @@ const CLAUDE_CODE_DEPARTMENTS = new Set(["Engineering"]);
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
 import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
 import { compareSkills } from "@/lib/skill-select";
-import { readSkillBody } from "@/lib/skill-catalog";
+import { readSkillBody, catalogSkillUrl } from "@/lib/skill-catalog";
 import { houseSkill, synthesizeSkill } from "@/lib/skill-foundry";
 import { generateImageUrl } from "@/lib/images";
 import { runChecks, judgeDeliverable, heuristicScore, QUALITY_BAR } from "@/lib/verify";
@@ -578,7 +578,7 @@ export async function produceDeliverable(
   ).catch(() => null);
 
   let headline: SkillRef = catalog
-    ? { name: catalog.name, source: catalog.source, url: "" }
+    ? { name: catalog.name, source: catalog.source, url: catalogSkillUrl(catalog.source, catalog.name), metric: "curated" }
     : openDesign
       ? openDesign.skill
       : authored

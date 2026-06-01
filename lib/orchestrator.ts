@@ -224,7 +224,7 @@ function contextBlock(idea: string, meta: WorkspaceMeta | null): string {
   return parts.join(" ");
 }
 
-/** The departments the model may assign work to (the 8 staffed departments). */
+/** The departments the model may assign work to (the 12 staffed departments). */
 const DECOMPOSE_SYSTEM = `You are the COO / chief of staff of an AI-run startup. Given the founder's GOAL and the company context, produce a BOUNDED execution plan that the C-suite will run.
 
 Return ONLY a single fenced json block of this exact shape:
@@ -241,7 +241,7 @@ Return ONLY a single fenced json block of this exact shape:
 
 HARD RULES:
 - AT MOST 8 objectives. AT MOST 6 tasks per objective. Depth is exactly 2 (objective -> task) — never nest deeper.
-- Every objective.department and task.department MUST be one of: Engineering, Design, Marketing, Sales, Support, Operations, Finance, Legal.
+- Every objective.department and task.department MUST be one of: Engineering, Product, Design, Marketing, Sales, Finance, People, Operations, Support, Data, Legal, Security.
 - Each task.objectiveId MUST reference an objective id you defined. Each dependsOn entry MUST reference an id you defined earlier (objectives depend on objectives; tasks depend on tasks). NO cycles.
 - Order matters: foundational work (e.g. brand, product) should come before work that depends on it, expressed via dependsOn.
 - Be specific and realistic to THIS company. No filler. Output ONLY the json block.`;

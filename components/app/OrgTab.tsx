@@ -2,10 +2,11 @@
 
 import * as React from "react";
 import { useState } from "react";
-import { cx, MonoLabel } from "@/components/ui/primitives";
+import { cx, MonoLabel, StatusBadge } from "@/components/ui/primitives";
 import { departmentColor, objectiveStatus, totalSpent, isOverBudget } from "@/lib/agent-types";
 import type { OrchestratorPlan, PlanObjective, PlanTask, ObjectiveStatus, Task, BudgetConfig, SpendRecord } from "@/lib/agent-types";
-import { ORG_ROLES, getRoleForDepartment } from "@/lib/org";
+import { ORG_ROLES, getRoleForDepartment, specialistsForDepartment, routeTaskToSpecialist } from "@/lib/org";
+import type { OrgRole } from "@/lib/org";
 import type { UseCofounder } from "@/lib/use-cofounder";
 import type { CustomAgent } from "@/lib/use-custom-agents";
 
@@ -19,13 +20,126 @@ const OBJ_STATUS_STYLE: Record<ObjectiveStatus, { label: string; bg: string; col
 
 function ObjStatusBadge({ status }: { status: ObjectiveStatus }) {
   const s = OBJ_STATUS_STYLE[status];
+  return <StatusBadge label={s.label} bg={s.bg} fg={s.color} className="shrink-0" />;
+}
+
+/* ── One C-suite role row in the org chart — its department chips plus an
+   expandable 3rd tier of specialist agents (collapsed by default so the panel
+   stays compact with ~50 agents). The CEO (no departments) just shows its blurb. ── */
+function RoleRow({
+  role,
+  countByDept,
+  customByDept,
+  countByAgent,
+}: {
+  role: OrgRole;
+  countByDept: Map<string, number>;
+  customByDept: Map<string, number>;
+  countByAgent: Map<string, number>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDepartments = role.departments.length > 0;
+  // Roll-up across every department this role owns: total specialists + tasks.
+  const agentCount = role.departments.reduce((n, d) => n + specialistsForDepartment(d).length, 0);
+  const taskCount = role.departments.reduce((n, d) => n + (countByDept.get(d) ?? 0), 0);
+  const avatar = role.id === "CEO" ? "CEO" : role.id.replace(/[^A-Z]/g, "").slice(0, 3);
+
   return (
-    <span
-      className="shrink-0 rounded-full px-2 py-0.5 font-mono text-[8px] uppercase tracking-[0.08em]"
-      style={{ background: s.bg, color: s.color }}
-    >
-      {s.label}
-    </span>
+    <div className="rounded-[10px] bg-white p-3 shadow-raised">
+      {hasDepartments ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="flex w-full items-center gap-2 text-left"
+        >
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--surface-raised)] font-mono text-[9px] uppercase tracking-[0.04em] text-[var(--text-70)] shadow-raised">
+            {avatar}
+          </span>
+          <span className="font-display text-[14px] text-[var(--text-80)]">{role.title}</span>
+          <span className="ml-auto shrink-0 font-mono text-[9px] text-[var(--text-50)]">
+            {agentCount} agent{agentCount === 1 ? "" : "s"} · {taskCount} task{taskCount === 1 ? "" : "s"}
+          </span>
+          <svg
+            width="9"
+            height="9"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            className={cx("shrink-0 text-[var(--text-50)] transition-transform", expanded && "rotate-90")}
+            aria-hidden
+          >
+            <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      ) : (
+        <div className="flex items-center gap-2">
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--surface-raised)] font-mono text-[9px] uppercase tracking-[0.04em] text-[var(--text-70)] shadow-raised">
+            {avatar}
+          </span>
+          <span className="font-display text-[14px] text-[var(--text-80)]">{role.title}</span>
+        </div>
+      )}
+
+      {hasDepartments ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {role.departments.map((dept) => {
+            const n = countByDept.get(dept) ?? 0;
+            const c = customByDept.get(dept) ?? 0;
+            return (
+              <span
+                key={dept}
+                className="inline-flex items-center gap-1.5 rounded-[7px] bg-[var(--surface-raised)] px-2 py-1 font-mono text-[10px] text-[var(--text-70)] shadow-raised"
+              >
+                <span className="h-2 w-2 rounded-[2px]" style={{ background: departmentColor(dept) }} />
+                {dept}
+                {n > 0 && <span className="text-[var(--text-50)]">· {n} task{n === 1 ? "" : "s"}</span>}
+                {c > 0 && <span className="text-[var(--text-50)]">· +{c}</span>}
+              </span>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="mt-1.5 text-[11.5px] leading-snug text-[var(--text-50)]">{role.blurb}</p>
+      )}
+
+      {/* 3rd tier: the specialists that staff each owned department (revealed on click). */}
+      {hasDepartments && expanded && (
+        <div className="mt-2 space-y-2 border-t border-[var(--surface-raised)] pt-2">
+          {role.departments.map((dept) => {
+            const specialists = specialistsForDepartment(dept);
+            if (specialists.length === 0) return null;
+            return (
+              <div key={dept}>
+                <div className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-[2px]" style={{ background: departmentColor(dept) }} />
+                  <MonoLabel>{dept}</MonoLabel>
+                </div>
+                <div className="mt-1 space-y-0.5">
+                  {specialists.map((s) => {
+                    const n = countByAgent.get(s.id) ?? 0;
+                    return (
+                      <div key={s.id} className="flex items-center gap-2 pl-3">
+                        <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--text-30)]" />
+                        <span className="flex-1 truncate font-display text-[12px] text-[var(--text-70)]" title={s.blurb}>
+                          {s.title}
+                        </span>
+                        {n > 0 && (
+                          <span className="shrink-0 font-mono text-[9px] text-[var(--text-50)]">
+                            {n} task{n === 1 ? "" : "s"}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -52,6 +166,13 @@ export default function OrgTab({
   for (const t of tasks) countByDept.set(t.department, (countByDept.get(t.department) ?? 0) + 1);
   const customByDept = new Map<string, number>();
   for (const a of customAgents) customByDept.set(a.department, (customByDept.get(a.department) ?? 0) + 1);
+  // Task counts per specialist (3rd tier) — route every task to its specialist so
+  // each individual contributor carries its own task tally in the org chart.
+  const countByAgent = new Map<string, number>();
+  for (const t of tasks) {
+    const s = routeTaskToSpecialist(t);
+    if (s) countByAgent.set(s.id, (countByAgent.get(s.id) ?? 0) + 1);
+  }
 
   async function onPropose(e?: React.FormEvent) {
     e?.preventDefault();
@@ -92,35 +213,13 @@ export default function OrgTab({
 
       <div className="mt-3 space-y-1.5">
         {ORG_ROLES.map((role) => (
-          <div key={role.id} className="rounded-[10px] bg-white p-3 shadow-raised">
-            <div className="flex items-center gap-2">
-              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--surface-raised)] font-mono text-[9px] uppercase tracking-[0.04em] text-[var(--text-70)] shadow-raised">
-                {role.id === "CEO" ? "CEO" : role.id.replace(/[^A-Z]/g, "").slice(0, 3)}
-              </span>
-              <span className="font-display text-[14px] text-[var(--text-80)]">{role.title}</span>
-            </div>
-            {role.departments.length > 0 ? (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {role.departments.map((dept) => {
-                  const n = countByDept.get(dept) ?? 0;
-                  const c = customByDept.get(dept) ?? 0;
-                  return (
-                    <span
-                      key={dept}
-                      className="inline-flex items-center gap-1.5 rounded-[7px] bg-[var(--surface-raised)] px-2 py-1 font-mono text-[10px] text-[var(--text-70)] shadow-raised"
-                    >
-                      <span className="h-2 w-2 rounded-[2px]" style={{ background: departmentColor(dept) }} />
-                      {dept}
-                      {n > 0 && <span className="text-[var(--text-50)]">· {n} task{n === 1 ? "" : "s"}</span>}
-                      {c > 0 && <span className="text-[var(--text-50)]">· +{c}</span>}
-                    </span>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="mt-1.5 text-[11.5px] leading-snug text-[var(--text-50)]">{role.blurb}</p>
-            )}
-          </div>
+          <RoleRow
+            key={role.id}
+            role={role}
+            countByDept={countByDept}
+            customByDept={customByDept}
+            countByAgent={countByAgent}
+          />
         ))}
       </div>
 

@@ -13,6 +13,12 @@ function esc(s: string): string {
  * Public, chrome-free published view of a deliverable — a real shareable URL.
  * Landing pages are served as their own standalone HTML document; other
  * deliverables get a minimal readable wrapper.
+ *
+ * CAPABILITY URL — BY DESIGN: the deliverable is served by its unguessable
+ * artifact id with NO workspace scoping or auth check. Holding this URL IS the
+ * authorization to view it — that is the whole point of a shareable public link.
+ * RLS on cofounder_artifacts (supabase/migrations/0001_hardening.sql) is the
+ * defense-in-depth layer; it does not change this intentional read path.
  */
 export async function GET(
   _req: Request,

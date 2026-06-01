@@ -1,7 +1,11 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ROADMAP_STAGES, type RoadmapStatus } from "@/lib/site-data";
-import { RaisedCard, MonoLabel } from "@/components/ui/primitives";
+import {
+  RaisedCard,
+  MonoLabel,
+  StatusBadge as StatusBadgeBase,
+} from "@/components/ui/primitives";
 
 const STATUS_META: Record<
   RoadmapStatus,
@@ -18,16 +22,7 @@ const STATUS_META: Record<
 function StatusBadge({ status }: { status: RoadmapStatus }) {
   const v = STATUS_META[status] ?? STATUS_META.user;
   return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full px-2 py-[3px] font-mono text-[9px] font-medium uppercase tracking-[0.06em]"
-      style={{ background: v.bg, color: v.fg, boxShadow: "inset 0 0 0 0.6px rgba(0,0,0,0.06)" }}
-    >
-      <span
-        className="inline-block h-[5px] w-[5px] rounded-full"
-        style={{ background: v.dot }}
-      />
-      {v.label}
-    </span>
+    <StatusBadgeBase label={v.label} bg={v.bg} fg={v.fg} dot dotColor={v.dot} size="md" ring />
   );
 }
 
