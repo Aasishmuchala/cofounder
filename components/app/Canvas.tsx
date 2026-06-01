@@ -772,24 +772,11 @@ export default function Canvas({
           </button>
           {persisted && canEdit && workspaceId && (
             <button
-              onClick={() => {
-                if (confirmDelete) {
-                  void deleteCompany();
-                  setConfirmDelete(false);
-                } else {
-                  setConfirmDelete(true);
-                  window.setTimeout(() => setConfirmDelete(false), 3500);
-                }
-              }}
-              title="Permanently delete this company (and everything in it), then start fresh"
-              className={cx(
-                "rounded-full px-2.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] shadow-raised transition-colors",
-                confirmDelete
-                  ? "bg-[var(--coral)] text-white"
-                  : "bg-white text-[var(--text-50)] hover:text-[var(--coral)]",
-              )}
+              onClick={() => setConfirmDelete(true)}
+              title="Permanently delete this company (and everything in it)"
+              className="rounded-full bg-white px-2.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--text-50)] shadow-raised transition-colors hover:text-[var(--coral)]"
             >
-              {confirmDelete ? "Delete forever?" : "Delete"}
+              Delete
             </button>
           )}
         </div>
@@ -878,6 +865,62 @@ export default function Canvas({
           onOpenArtifact={setOpenArtifactId}
           onClose={() => setOpenArtifactId(null)}
         />
+      )}
+
+      {/* Delete-company caution dialog — destructive + irreversible, so it spells
+          out exactly what's lost and requires a deliberate confirm. */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-[70] grid place-items-center bg-black/45 p-4 backdrop-blur-sm"
+          onClick={() => setConfirmDelete(false)}
+        >
+          <div
+            className="w-full max-w-[430px] rounded-[16px] bg-white p-5 shadow-deep"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#fff0ed] text-[var(--coral)]">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </span>
+              <div className="font-display text-[18px] font-medium leading-tight text-[var(--text)]">
+                Delete {brand || "this company"}?
+              </div>
+            </div>
+            <p className="mt-3 text-[13px] leading-relaxed text-[var(--text-60)]">
+              This permanently removes the company and{" "}
+              <span className="font-semibold text-[var(--text)]">everything in it</span> — every
+              deliverable, task, agent, and its entire history — from the database.{" "}
+              <span className="font-semibold text-[var(--coral)]">This cannot be undone.</span>
+            </p>
+            <p className="mt-2 font-mono text-[10.5px] leading-relaxed text-[var(--text-40)]">
+              Just want a clean slate? Use &ldquo;New company&rdquo; instead — it keeps this one saved.
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="rounded-[9px] px-3.5 py-2 font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--text-60)] transition-colors hover:bg-black/[0.05] hover:text-[var(--text)]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmDelete(false);
+                  void deleteCompany();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-[9px] bg-[var(--coral)] px-3.5 py-2 font-mono text-[11px] uppercase tracking-[0.06em] text-white transition-opacity hover:opacity-90"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6" />
+                </svg>
+                Delete permanently
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
