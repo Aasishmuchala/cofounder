@@ -32,11 +32,20 @@ const SPEC_H = 78;
 /** Radius of the C-suite ring around the CEO (world units). Wide enough that the
  *  12 role cards (208×104) don't collide where the circle is vertically narrow. */
 const RING = 480;
-/** Base radius of the specialist arc, measured from the CEO — clears the C-suite ring. */
-const SPEC_RING = 740;
-/** Adjacent specialists alternate between SPEC_RING and SPEC_RING+SPEC_STAGGER, so
- *  angular neighbours never share a radial band (no overlap at any team size). */
-const SPEC_STAGGER = 120;
+/** Inner radius of the specialist grid, measured from the CEO — clears the C-suite ring. */
+const SPEC_RING = 900;
+/** Radial spacing between specialist bands. Must exceed the card DIAGONAL
+ *  (√(168²+78²) ≈ 186), not just its height: for departments at the 3/9-o'clock
+ *  positions the bands stack horizontally, so a smaller gap overlaps the 168-wide
+ *  cards. 200 is verified collision-free (brute-forced over all ring positions). */
+const SPEC_STAGGER = 200;
+/** Specialists per radial band. 2 is the most that fits inside one role's ring slice
+ *  at the inner radius without colliding with the neighbouring department; bigger
+ *  teams extend OUTWARD into further bands rather than widening the fan. */
+const PER_BAND = 2;
+/** Largest department today is 6 specialists -> ceil(6 / PER_BAND) = 3 bands. Drives
+ *  the fit-to-view reach so an expanded big team is never clipped. */
+const MAX_SPEC_BANDS = 3;
 
 type Pt = { x: number; y: number };
 
@@ -54,24 +63,23 @@ function ringAngle(index: number, total: number): number {
   return -Math.PI / 2 + (index / Math.max(1, total)) * 2 * Math.PI;
 }
 
-/** Half-spread (radians) of the fan — widens with team size so 5–6 specialists
- *  don't bunch, capped so an expanded fan stays within its slice of the ring. */
-function specSpread(count: number): number {
-  return Math.min(0.46, 0.24 + count * 0.04);
-}
-
 /**
- * Place the j-th specialist of a department on an arc beyond its parent role,
- * clustered around the parent's angle. The fan widens with count, and adjacent
- * specialists alternate radial bands (SPEC_RING / +SPEC_STAGGER) so angular
- * neighbours never overlap — even a 6-person team stays legible. A lone
- * specialist sits dead-on the parent angle.
+ * Place the j-th specialist of a department as a radial GRID beyond its parent
+ * role: up to PER_BAND columns clustered tightly around the parent's angle,
+ * stacked into successive radial bands as the team grows. The column half-width
+ * is capped to a fraction of the role's ring `slice`, so the fan stays well
+ * inside its wedge — two adjacent expanded departments never collide — and bands
+ * are SPEC_STAGGER apart radially so a column never overlaps the band beyond it.
+ * A lone specialist (or the odd one in the last band) sits dead-on the parent angle.
  */
-function specialistPosition(parentAngle: number, j: number, count: number): Pt {
-  const spread = specSpread(count);
-  const t = count <= 1 ? 0.5 : j / (count - 1);
-  const a = parentAngle - spread + t * (spread * 2);
-  const r = SPEC_RING + (j % 2) * SPEC_STAGGER;
+function specialistPosition(parentAngle: number, j: number, count: number, slice: number): Pt {
+  const band = Math.floor(j / PER_BAND);
+  const inBand = Math.min(PER_BAND, count - band * PER_BAND); // 1 or 2 nodes in this band
+  const col = j % PER_BAND;
+  const half = Math.min(0.13, slice * 0.26); // column half-spread (radians), < slice/2 — leaves a gutter
+  const t = inBand <= 1 ? 0.5 : col / (inBand - 1);
+  const a = parentAngle - half + t * (half * 2);
+  const r = SPEC_RING + band * SPEC_STAGGER;
   // Rounded for the same SSR/client hydration-stability reason as ringPosition.
   return { x: Math.round(Math.cos(a) * r), y: Math.round(Math.sin(a) * r) };
 }
@@ -175,6 +183,24 @@ export default function Canvas({
     );
   }, []);
 
+  /* Frame the whole org in the viewport: center the CEO and pick a scale that fits
+     the furthest node — the C-suite ring when collapsed, the specialist arc when any
+     function is expanded — with padding. Used on first mount + the recenter button,
+     so the org is never clipped by the panel-narrowed canvas. */
+  const fitView = useCallback(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return;
+    const reach =
+      expanded.size > 0
+        ? SPEC_RING + (MAX_SPEC_BANDS - 1) * SPEC_STAGGER + SPEC_W / 2
+        : RING + ROLE_W / 2;
+    const fit = Math.min(r.width / (2 * reach), r.height / (2 * reach)) * 0.88;
+    setScale(Math.min(1.6, Math.max(0.3, fit)));
+    setOffset({ x: r.width / 2, y: r.height / 2 });
+  }, [expanded]);
+
   /* Group tasks by department once per change, so each role/specialist can read
      its slice without re-scanning the whole list. */
   const tasksByDept = useMemo(() => {
@@ -207,37 +233,40 @@ export default function Canvas({
     return map;
   }, [tasks]);
 
-  /* center the world origin in the viewport once it has a size */
+  /* Frame the org in the viewport once it has a size (fit-to-view, not 1:1) so the
+     whole CEO → C-suite ring is visible immediately, never clipped by the panel. */
   useLayoutEffect(() => {
     if (centered.current) return;
     const el = viewportRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    if (r.width === 0) return;
-    setOffset({ x: r.width / 2, y: r.height / 2 });
+    if (!el || el.getBoundingClientRect().width === 0) return;
     centered.current = true;
+    fitView();
   });
 
   // The auto-run agent simulation (todo → running → execute → done) is owned by
   // the workspace shell so it keeps running even when this canvas is hidden
   // (e.g. on mobile). This component is a pure view of the standing org.
 
-  /* ---------- pan interaction ---------- */
+  /* ---------- pan interaction ----------
+     The canvas is densely tiled with role/specialist cards, so the bare background
+     is barely grabbable. Instead a press ANYWHERE starts a *candidate* pan; it only
+     becomes a real pan once the pointer travels past a small threshold. A node's
+     click (expand / open) is suppressed when that happens (movedRef), so
+     drag-to-pan and click-to-act coexist on the same surface — you can grab the
+     canvas from any card, the way an infinite canvas should behave. */
   const drag = useRef<
-    | { kind: "pan"; startX: number; startY: number; ox: number; oy: number }
+    | { startX: number; startY: number; ox: number; oy: number }
     | null
   >(null);
+  // True once the current press has crossed the drag threshold — read by node
+  // onClicks to tell a pan apart from a click. Reset at the start of each press.
+  const movedRef = useRef(false);
 
   const onPointerDownBg = useCallback(
     (e: React.PointerEvent) => {
-      drag.current = {
-        kind: "pan",
-        startX: e.clientX,
-        startY: e.clientY,
-        ox: offset.x,
-        oy: offset.y,
-      };
-      (e.target as Element).setPointerCapture?.(e.pointerId);
+      if (e.button !== 0) return; // primary (left) button only
+      drag.current = { startX: e.clientX, startY: e.clientY, ox: offset.x, oy: offset.y };
+      movedRef.current = false;
     },
     [offset],
   );
@@ -246,9 +275,20 @@ export default function Canvas({
     const move = (e: PointerEvent) => {
       const d = drag.current;
       if (!d) return;
-      setOffset({ x: d.ox + (e.clientX - d.startX), y: d.oy + (e.clientY - d.startY) });
+      // Released outside the window (we missed the pointerup) — stop, don't pan forever.
+      if (e.buttons === 0) {
+        drag.current = null;
+        return;
+      }
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+      if (!movedRef.current && Math.abs(dx) + Math.abs(dy) < 5) return; // below threshold: not yet a drag
+      movedRef.current = true;
+      setOffset({ x: d.ox + dx, y: d.oy + dy });
     };
-    const up = () => (drag.current = null);
+    const up = () => {
+      drag.current = null; // movedRef is intentionally left set for the click handler that fires next
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     return () => {
@@ -264,20 +304,18 @@ export default function Canvas({
       return;
     }
     e.preventDefault();
-    setScale((s) => Math.min(1.6, Math.max(0.5, s - e.deltaY * 0.0015)));
+    setScale((s) => Math.min(1.6, Math.max(0.3, s - e.deltaY * 0.0015)));
   }, []);
 
   const zoomBy = (f: number) =>
-    setScale((s) => Math.min(1.6, Math.max(0.5, s + f)));
-  const recenter = () => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setOffset({ x: r.width / 2, y: r.height / 2 });
-    setScale(1);
-  };
+    setScale((s) => Math.min(1.6, Math.max(0.3, s + f)));
+  // The recenter (⤢) control re-frames the org to fit — collapsed or expanded.
+  const recenter = fitView;
 
   const ceoPos: Pt = { x: 0, y: 0 };
+  // Angular wedge each C-suite role owns on the ring — caps the specialist grid's
+  // width so two adjacent expanded departments never overlap.
+  const slice = (2 * Math.PI) / REPORTS.length;
 
   /* Pre-compute each report's geometry + rolled-up activity once per render. */
   const nodes = REPORTS.map((role, i) => {
@@ -296,7 +334,7 @@ export default function Canvas({
         ref={viewportRef}
         onPointerDown={onPointerDownBg}
         onWheel={onWheel}
-        className="absolute inset-0 cursor-grab active:cursor-grabbing"
+        className="absolute inset-0 cursor-grab select-none active:cursor-grabbing"
         style={{
           backgroundImage:
             "radial-gradient(rgba(38,35,35,0.10) 1px, transparent 1px)",
@@ -349,7 +387,7 @@ export default function Canvas({
                   {/* C-suite role → its specialists (only when expanded). */}
                   {open &&
                     specialists.map((s, j) => {
-                      const sp = specialistPosition(angle, j, specialists.length);
+                      const sp = specialistPosition(angle, j, specialists.length, slice);
                       // Fan out from just beyond the parent node toward the spec arc.
                       const sx1 = pos.x;
                       const sy1 = pos.y;
@@ -436,8 +474,10 @@ export default function Canvas({
                 {/* The card body toggles expand/collapse of the specialists. */}
                 <button
                   type="button"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => toggleRole(role.id)}
+                  onClick={() => {
+                    if (movedRef.current) return; // a pan, not a click
+                    toggleRole(role.id);
+                  }}
                   aria-expanded={open}
                   title={open ? `Collapse ${role.title}` : `Expand ${role.title}`}
                   className="block w-full cursor-pointer text-left"
@@ -451,9 +491,9 @@ export default function Canvas({
                       <span
                         role="button"
                         tabIndex={0}
-                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (movedRef.current) return; // a pan, not a click
                           if (dept) onSelectDepartment?.(dept);
                         }}
                         onKeyDown={(e) => {
@@ -541,7 +581,7 @@ export default function Canvas({
             .flatMap(({ dept, angle, specialists }) => {
               const c = departmentColor(dept);
               return specialists.map((s, j) => {
-                const sp = specialistPosition(angle, j, specialists.length);
+                const sp = specialistPosition(angle, j, specialists.length, slice);
                 const routed = tasksBySpecialist.get(s.id) ?? [];
                 const sact = rollUp(routed);
                 return (
@@ -552,8 +592,10 @@ export default function Canvas({
                   >
                     <button
                       type="button"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => onSelectDepartment?.(dept)}
+                      onClick={() => {
+                        if (movedRef.current) return; // a pan, not a click
+                        onSelectDepartment?.(dept);
+                      }}
                       title={`${s.title} — open ${dept}`}
                       className="block w-full cursor-pointer text-left"
                     >
