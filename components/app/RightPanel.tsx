@@ -74,7 +74,7 @@ export default function RightPanel({
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--surface-raised)]">
       {/* Tab bar */}
-      <div className="flex items-center gap-5 overflow-x-auto px-6 pt-5">
+      <div className="flex items-center justify-between gap-1 overflow-x-auto px-5 pt-5">
         {TABS.map((t) => {
           const active = t === tab && !selectedDept;
           return (
@@ -85,7 +85,7 @@ export default function RightPanel({
                 onTabChange(t);
               }}
               className={cx(
-                "relative shrink-0 pb-2 font-display text-[15px] tracking-[0.1px] transition-colors",
+                "relative shrink-0 pb-2 font-display text-[12.5px] tracking-[0.1px] transition-colors",
                 active ? "text-[var(--text)]" : "text-[var(--text-50)] hover:text-[var(--text-70)]",
               )}
             >
