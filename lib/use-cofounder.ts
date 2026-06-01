@@ -59,6 +59,8 @@ export interface UseCofounder {
   connectors: ConnectorConfig[];
   send: (text: string, creationMeta?: WorkspaceMeta) => Promise<void>;
   reset: () => void;
+  /** Permanently delete this company (DB rows + local state), then start fresh. Owner-only. */
+  deleteCompany: () => Promise<void>;
   updateTask: (id: string, patch: Partial<Task>) => void;
   executeTask: (task: Task) => Promise<void>;
   addTask: (title: string, department: string, detail?: string) => Promise<void>;
@@ -319,6 +321,28 @@ export function useCofounder(): UseCofounder {
       }
     }
   }, []);
+
+  /**
+   * Permanently DELETE this company — wipes the workspace + its tasks, artifacts,
+   * and skills from the DB (owner-only), then resets to a clean slate. Falls through
+   * to reset() even if the DB call fails, so the founder always lands on a fresh start.
+   */
+  const deleteCompany = useCallback(async (): Promise<void> => {
+    if (!canEdit) return;
+    const id = workspaceId;
+    if (persisted && id) {
+      try {
+        await fetch("/api/workspace", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspaceId: id, workspaceSecret: secretRef.current ?? undefined }),
+        });
+      } catch {
+        /* ignore — reset below still gives a clean start */
+      }
+    }
+    reset();
+  }, [canEdit, persisted, workspaceId, reset]);
 
   /**
    * Actually execute a task: the department agent generates a real deliverable
@@ -943,6 +967,7 @@ export function useCofounder(): UseCofounder {
     connectors: meta.connectors ?? [],
     send,
     reset,
+    deleteCompany,
     updateTask,
     executeTask,
     addTask,

@@ -203,6 +203,31 @@ export async function createWorkspace(
   return { id: rows[0].id, editKey };
 }
 
+/**
+ * Permanently delete a workspace and ALL of its rows (artifacts, tasks, skills),
+ * then the workspace itself. Children first, in case the FK has no ON DELETE
+ * CASCADE; child failures are swallowed so a missing/empty table never blocks the
+ * removal. The owner-token check happens in the route, BEFORE this runs.
+ */
+export async function deleteWorkspace(id: string): Promise<void> {
+  const enc = encodeURIComponent(id);
+  for (const table of ["cofounder_artifacts", "cofounder_tasks", "cofounder_skills"]) {
+    await rest(`${table}?workspace_id=eq.${enc}`, { method: "DELETE", headers: headers() }).catch(() => {});
+  }
+  // Ask PostgREST to echo the deleted rows so a 0-row result (RLS silently
+  // filtering the DELETE, or an already-gone workspace) is detectable rather than
+  // looking like success.
+  const res = await rest(`cofounder_workspaces?id=eq.${enc}`, {
+    method: "DELETE",
+    headers: headers({ Prefer: "return=representation" }),
+  });
+  if (!res.ok) throw new Error(`deleteWorkspace failed (${res.status})`);
+  const rows = (await res.json().catch(() => [])) as unknown[];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("deleteWorkspace removed 0 rows (workspace already gone, or RLS blocks DELETE)");
+  }
+}
+
 interface DbWorkspaceRow {
   id: string;
   name: string;

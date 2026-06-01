@@ -179,7 +179,9 @@ export default function Canvas({
   onCreatedTask?: () => void;
   onCreatedAgent?: () => void;
 }) {
-  const { tasks, artifacts, loading, persisted, reset } = cf;
+  const { tasks, artifacts, loading, persisted, reset, canEdit, workspaceId, deleteCompany } = cf;
+  // Two-step confirm for the destructive "delete company" action.
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // The deliverables counter + viewer read `artifacts` directly; task-level
   // "view output" now lives in the side panel (onSelectDepartment).
@@ -768,6 +770,28 @@ export default function Canvas({
           >
             New company
           </button>
+          {persisted && canEdit && workspaceId && (
+            <button
+              onClick={() => {
+                if (confirmDelete) {
+                  void deleteCompany();
+                  setConfirmDelete(false);
+                } else {
+                  setConfirmDelete(true);
+                  window.setTimeout(() => setConfirmDelete(false), 3500);
+                }
+              }}
+              title="Permanently delete this company (and everything in it), then start fresh"
+              className={cx(
+                "rounded-full px-2.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] shadow-raised transition-colors",
+                confirmDelete
+                  ? "bg-[var(--coral)] text-white"
+                  : "bg-white text-[var(--text-50)] hover:text-[var(--coral)]",
+              )}
+            >
+              {confirmDelete ? "Delete forever?" : "Delete"}
+            </button>
+          )}
         </div>
       </div>
 
