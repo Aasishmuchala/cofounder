@@ -667,9 +667,11 @@ export async function produceDeliverable(
         idea,
         hooks,
         kind !== "landing_page",
-        // A full React page (JSX + inline SVG + Tailwind) needs more headroom
-        // than text deliverables, or it truncates mid-component and won't compile.
-        kind === "landing_page" ? 16000 : 8000,
+        // A full React page (JSX + inline SVG + Tailwind) needs more headroom than
+        // text deliverables, or it truncates mid-component and won't compile — but
+        // 16k tokens is a LOT to stream through a slow proxy (a big chunk of the
+        // per-deliverable wall-clock). 12k still fits a complete page with margin.
+        kind === "landing_page" ? 12000 : 8000,
         connectorRegistry,
         connectorTools,
       );

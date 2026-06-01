@@ -9,8 +9,11 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 // A claim older than this is treated as orphaned (a runner that crashed
-// mid-production) and may be reclaimed.
-const STALE_LEASE_MS = 4 * 60 * 1000;
+// mid-production) and may be reclaimed. Must exceed the bounded worst-case
+// production time — model calls are now capped at ~150s × (1 retry) ≈ 5 min by
+// lib/anthropic.ts — so an in-flight task is never re-claimed and double-run
+// while it's still legitimately working.
+const STALE_LEASE_MS = 6 * 60 * 1000;
 
 /**
  * Server-side task runner. Each call claims the next ACTIONABLE task (a todo or

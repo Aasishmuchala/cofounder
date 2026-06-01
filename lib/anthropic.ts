@@ -23,15 +23,31 @@ const API_KEY =
 export const MODEL =
   process.env.HELM_ANTHROPIC_MODEL || process.env.ANTHROPIC_MODEL || "claude-opus-4-7";
 
+/**
+ * Per-request timeout (ms) + retry count for the model client. The SDK defaults
+ * (10-minute timeout × 2 retries) let a slow/hanging proxy block a single
+ * deliverable for ~30 MINUTES before giving up. These caps make a call fail fast
+ * so the runner falls back to its templated deliverable — the user always gets
+ * output in bounded time. Tune via HELM_ANTHROPIC_TIMEOUT_MS / HELM_ANTHROPIC_MAX_RETRIES.
+ */
+function envInt(name: string, fallback: number, min: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
+}
+const TIMEOUT_MS = envInt("HELM_ANTHROPIC_TIMEOUT_MS", 150000, 1000);
+const MAX_RETRIES = envInt("HELM_ANTHROPIC_MAX_RETRIES", 1, 0);
+
 /** True when some credential is configured (proxy token or direct key). */
 export const aiConfigured = Boolean(AUTH_TOKEN || API_KEY);
 
 export function getAnthropic(): Anthropic | null {
   if (!aiConfigured) return null;
+  // Bound every call so a slow proxy can't hang a deliverable (see TIMEOUT_MS).
+  const common = { baseURL: BASE_URL, timeout: TIMEOUT_MS, maxRetries: MAX_RETRIES };
   // Proxy via Bearer auth token (claudeopus.pro convention).
   if (AUTH_TOKEN) {
-    return new Anthropic({ baseURL: BASE_URL, authToken: AUTH_TOKEN });
+    return new Anthropic({ ...common, authToken: AUTH_TOKEN });
   }
   // Direct Anthropic API (x-api-key).
-  return new Anthropic({ baseURL: BASE_URL, apiKey: API_KEY });
+  return new Anthropic({ ...common, apiKey: API_KEY });
 }
