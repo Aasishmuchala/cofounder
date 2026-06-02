@@ -18,7 +18,10 @@ export async function GET(req: Request) {
 }
 
 // PATCH /api/artifacts  { id, workspaceId, workspaceSecret, content?, title? }
-//   -> edit a deliverable in place (owner only).
+//   -> edit a deliverable in place (owner only). Unlike the public read paths
+//   (/p/<id>, /api/export/<id>) which are capability URLs by design, this WRITE
+//   path is gated by authorizeWrite below AND updateArtifact scopes the UPDATE to
+//   the workspace — so a view link (id only) can read but never mutate.
 export async function PATCH(req: Request) {
   let body: Record<string, unknown> = {};
   try {

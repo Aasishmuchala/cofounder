@@ -26,11 +26,32 @@ function escAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
+/** Strip a UTF-8 BOM + any stray markdown code fences the model wrapped the
+ *  output in, then trim. */
+function stripFences(raw: string): string {
+  return raw.replace(/^﻿/, "").replace(/```[a-z]*\n?/gi, "").trim();
+}
+
+/** True when the deliverable is a complete HTML document rather than a React/JSX
+ *  component — e.g. the templated landing-page fallback, which starts with
+ *  `<!DOCTYPE html>` / `<html>`. Such a doc is already a renderable page; running
+ *  it through Babel as JSX throws "Unexpected token (1:0)" on the doctype. */
+function looksLikeHtmlDocument(raw: string): boolean {
+  const t = stripFences(raw);
+  return /^<!doctype\s+html/i.test(t) || /^<html[\s>]/i.test(t);
+}
+
 /**
  * The executable harness document (React + Tailwind + Babel from CDN). Loaded
  * inside a sandboxed iframe — never served as a top-level page directly.
  */
 export function buildReactHarness(rawCode: string, title = "Preview"): string {
+  // A complete HTML document deliverable (the templated landing-page fallback, or
+  // any raw HTML the model emits) is already a renderable page — return it as-is.
+  // Babel-parsing `<!DOCTYPE html>` as JSX would throw "Unexpected token (1:0)".
+  if (looksLikeHtmlDocument(rawCode)) {
+    return stripFences(rawCode);
+  }
   const cleaned = cleanComponent(rawCode);
   // Inject as a JS string literal; neutralize "</" so it can't close the script.
   const codeLiteral = JSON.stringify(cleaned).replace(/<\//g, "<\\/");

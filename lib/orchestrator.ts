@@ -19,6 +19,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import {
   coerceText,
   coerceDepartment,
+  DEPARTMENTS,
   ORCH_MAX_OBJECTIVES,
   ORCH_MAX_TASKS_PER_OBJECTIVE,
   type OrchestratorPlan,
@@ -205,7 +206,22 @@ export function sanitizePlan(raw: unknown, goalFallback = ""): OrchestratorPlan 
     for (const t of tasks) if (state.get(t.id) !== DONE) visit(t.id, new Set());
   }
 
-  return { goal, objectives, tasks };
+  // ---- Spawned org: the departments this business needs ----
+  // The model's explicit pick, UNIONED with every department that actually has an
+  // objective or task — so a working department can never be hidden from the org.
+  const deptSet = new Set<string>();
+  if (Array.isArray(r.departments)) {
+    const valid = new Set<string>(DEPARTMENTS);
+    for (const d of r.departments as unknown[]) {
+      const s = typeof d === "string" ? d : "";
+      if (valid.has(s)) deptSet.add(s);
+    }
+  }
+  for (const o of objectives) deptSet.add(o.department);
+  for (const t of tasks) deptSet.add(t.department);
+  const departments = Array.from(deptSet);
+
+  return { goal, objectives, tasks, departments };
 }
 
 /** Build the company-context block injected into the decomposition prompt. */
@@ -224,12 +240,14 @@ function contextBlock(idea: string, meta: WorkspaceMeta | null): string {
   return parts.join(" ");
 }
 
-/** The departments the model may assign work to (the 8 staffed departments). */
-const DECOMPOSE_SYSTEM = `You are the COO / chief of staff of an AI-run startup. Given the founder's GOAL and the company context, produce a BOUNDED execution plan that the C-suite will run.
+/** The decomposition prompt: the CEO FIRST picks the departments this specific
+ *  business needs, then plans work only within them (a tailored, not generic, org). */
+const DECOMPOSE_SYSTEM = `You are the CEO / chief of staff of an AI-run startup. Given the founder's GOAL and the company context, FIRST decide which functions THIS specific business actually needs, then produce a BOUNDED execution plan staffed only by them.
 
 Return ONLY a single fenced json block of this exact shape:
 \`\`\`json
 {
+  "departments": ["Engineering", "Marketing", "Finance"],
   "objectives": [
     { "id": "o1", "title": "...", "description": "one sentence on the outcome", "department": "Engineering", "dependsOn": [] }
   ],
@@ -240,8 +258,9 @@ Return ONLY a single fenced json block of this exact shape:
 \`\`\`
 
 HARD RULES:
+- FIRST choose the 3–7 departments this business genuinely needs (NOT all of them) from: Engineering, Product, Design, Marketing, Sales, Finance, People, Operations, Support, Data, Legal, Security. List them in "departments". A regulated fintech needs Finance + Security + Legal; a consumer app needs Marketing + Product + Design; a dev tool needs Engineering + Product + Marketing. Do NOT staff functions the business doesn't need yet.
+- Use ONLY the departments you listed for every objective.department and task.department.
 - AT MOST 8 objectives. AT MOST 6 tasks per objective. Depth is exactly 2 (objective -> task) — never nest deeper.
-- Every objective.department and task.department MUST be one of: Engineering, Design, Marketing, Sales, Support, Operations, Finance, Legal.
 - Each task.objectiveId MUST reference an objective id you defined. Each dependsOn entry MUST reference an id you defined earlier (objectives depend on objectives; tasks depend on tasks). NO cycles.
 - Order matters: foundational work (e.g. brand, product) should come before work that depends on it, expressed via dependsOn.
 - Be specific and realistic to THIS company. No filler. Output ONLY the json block.`;
@@ -417,9 +436,13 @@ export async function materializePlan(
     taskIds: realIdByObjective.get(o.id) ?? [],
   }));
 
-  const existing = (await getWorkspace(workspaceId)
-    .then((w) => (w?.meta?.objectives ?? []) as PlanObjective[])
-    .catch(() => [])) as PlanObjective[];
+  const existingMeta = await getWorkspace(workspaceId)
+    .then((w) => w?.meta ?? null)
+    .catch(() => null);
+  const existing = (existingMeta?.objectives ?? []) as PlanObjective[];
+  const existingActive = Array.isArray(existingMeta?.activeDepartments) ? existingMeta.activeDepartments : [];
+  // The spawned org accumulates across plans (the company grows over time).
+  const activeDepartments = Array.from(new Set<string>([...existingActive, ...plan.departments]));
   // Concurrency guard: updateWorkspaceMeta is a non-atomic read-modify-write, so
   // two near-simultaneous approvals (double-click / two tabs) could both read the
   // same base and clobber each other — silently evicting one materialization's
@@ -428,11 +451,13 @@ export async function materializePlan(
   // than drop someone's objectives; the freshly-inserted tasks still exist and
   // remain visible/runnable (they just aren't grouped under a new objective).
   if (existing.length >= ORCH_MAX_OBJECTIVES) {
+    // Contended cap path: write nothing (the concurrency guard) — activeDepartments
+    // was already persisted by the earlier plan that filled the objective cap.
     return { objectives: materializedObjectives, taskCount: realIdByPlanId.size, capped: true };
   }
   // Newest objectives last; cap at the objective limit (sanitizer re-caps too).
   const merged = [...existing, ...materializedObjectives].slice(-ORCH_MAX_OBJECTIVES);
-  await updateWorkspaceMeta(workspaceId, { objectives: merged }).catch(() => {});
+  await updateWorkspaceMeta(workspaceId, { objectives: merged, activeDepartments }).catch(() => {});
 
   return { objectives: materializedObjectives, taskCount: realIdByPlanId.size };
   });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,6 +32,26 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.unstubAllEnvs();
   if (TMP_ROOT) await fs.rm(TMP_ROOT, { recursive: true, force: true }).catch(() => {});
+});
+
+// CAPABILITY PROBE: unprivileged Windows refuses fs.symlink with EPERM (symlink
+// creation needs admin or Developer Mode). The symlink-escape tests below MUST
+// create a real link to exercise realResolve's canonicalization — there is no way
+// to fake it. So we probe ONCE whether this host can create a symlink and skip
+// those tests when it can't (it.skipIf), leaving POSIX to run them in full. The
+// product symlink-escape logic (realResolve) is unchanged; only the test harness
+// adapts to the platform's privilege model.
+let canSymlink = false;
+beforeAll(async () => {
+  const probeDir = await fs.mkdtemp(path.join(os.tmpdir(), "cofounder-symlink-probe-"));
+  try {
+    await fs.symlink(probeDir, path.join(probeDir, "link"));
+    canSymlink = true;
+  } catch {
+    canSymlink = false;
+  } finally {
+    await fs.rm(probeDir, { recursive: true, force: true }).catch(() => {});
+  }
 });
 
 /* ──────────────────────────── path policy ──────────────────────────── */
@@ -132,7 +152,9 @@ describe("path policy — symlink boundary (lexical resolvePath limitation)", ()
     vi.stubEnv("COMPUTER_ROOT", TMP_ROOT);
   });
 
-  it("DOCUMENTS that a symlink inside root escapes the lexical inside-root check", async () => {
+  // Skipped where symlinks are unavailable (unprivileged Windows): the assertion
+  // is only MEANINGFUL with a real link whose target escapes root.
+  it.skipIf(!canSymlink)("DOCUMENTS that a symlink inside root escapes the lexical inside-root check", async () => {
     // The symlink's LINK PATH stays under root, so the prefix check passes — even
     // though its target is outside root.
     const link = path.join(TMP_ROOT, "escape");
@@ -174,7 +196,7 @@ describe("symlink escape — closed at the executor layer (realResolve)", () => 
     vi.stubEnv("COMPUTER_ROOT", TMP_ROOT);
   });
 
-  it("read_file BLOCKS a symlink whose real target ESCAPES root", async () => {
+  it.skipIf(!canSymlink)("read_file BLOCKS a symlink whose real target ESCAPES root", async () => {
     const outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "cofounder-outside-")));
     try {
       await fs.writeFile(path.join(outside, "data.txt"), "outside-secret", "utf-8");
@@ -188,7 +210,7 @@ describe("symlink escape — closed at the executor layer (realResolve)", () => 
     }
   });
 
-  it("read_file BLOCKS an innocuously-named symlink that targets a credential file", async () => {
+  it.skipIf(!canSymlink)("read_file BLOCKS an innocuously-named symlink that targets a credential file", async () => {
     await fs.mkdir(path.join(TMP_ROOT, "vault"), { recursive: true });
     await fs.writeFile(path.join(TMP_ROOT, "vault", "id_rsa"), "PRIVATE KEY MATERIAL", "utf-8");
     await fs.symlink(path.join(TMP_ROOT, "vault", "id_rsa"), path.join(TMP_ROOT, "innocent"));
@@ -198,7 +220,7 @@ describe("symlink escape — closed at the executor layer (realResolve)", () => 
     expect(out).not.toContain("PRIVATE KEY MATERIAL");
   });
 
-  it("list_dir BLOCKS a symlinked directory that escapes root", async () => {
+  it.skipIf(!canSymlink)("list_dir BLOCKS a symlinked directory that escapes root", async () => {
     const outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "cofounder-outside-")));
     try {
       await fs.writeFile(path.join(outside, "leak.txt"), "x", "utf-8");
@@ -210,7 +232,7 @@ describe("symlink escape — closed at the executor layer (realResolve)", () => 
     }
   });
 
-  it("write_file BLOCKS writing through a symlinked parent that escapes root (nothing written)", async () => {
+  it.skipIf(!canSymlink)("write_file BLOCKS writing through a symlinked parent that escapes root (nothing written)", async () => {
     const outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "cofounder-outside-")));
     try {
       await fs.symlink(outside, path.join(TMP_ROOT, "wlink"));
@@ -497,7 +519,13 @@ describe("filesystem + shell executors — temp dir only, never real paths", () 
   it("run_shell executes a benign command (cwd = root)", async () => {
     await fs.writeFile(path.join(TMP_ROOT, "marker.txt"), "x", "utf-8");
     const out = await runComputerTool("run_shell", { command: "ls" });
-    expect(out).toContain("marker.txt");
+    if (process.platform === "win32") {
+      // run_shell is disabled on Windows (no /bin/sh, Unix-shaped denylist) — it
+      // must return the "unsupported" sentinel and run nothing.
+      expect(out).toContain("unsupported");
+    } else {
+      expect(out).toContain("marker.txt");
+    }
   });
 
   it("run_shell BLOCKS a destructive command at execution time, never spawning it", async () => {
@@ -696,7 +724,13 @@ describe("dispatchConnectorTool — the REAL execution path for computer tools",
   it("executes an approved run_shell through dispatch (benign) and returns output", async () => {
     await fs.writeFile(path.join(TMP_ROOT, "hello.txt"), "x", "utf-8");
     const out = await dispatchConnectorTool("run_shell", { command: "ls" }, reg());
-    expect(out).toContain("hello.txt");
+    if (process.platform === "win32") {
+      // Windows disables run_shell: dispatch surfaces the "unsupported" sentinel,
+      // and a benign (non-prohibited) command is never an ACTION_BLOCKED.
+      expect(out).toContain("unsupported");
+    } else {
+      expect(out).toContain("hello.txt");
+    }
     expect(out).not.toContain("ACTION_BLOCKED");
   });
 

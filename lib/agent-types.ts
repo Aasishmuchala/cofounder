@@ -16,6 +16,8 @@ export interface Task {
   dependsOn?: string[];
   /** Links this task to a PlanObjective (orchestration layer), or null. */
   objectiveId?: string | null;
+  /** The specialist agent this task is assigned to (see lib/org.ts SPECIALISTS), or null. */
+  agentId?: string | null;
   /** Routing hint for the runner (e.g. "claude-code"); reserved for delegation. */
   executor?: string;
 }
@@ -71,6 +73,10 @@ export const DEPARTMENT_DELIVERABLE: Record<
   Operations: { kind: "markdown", noun: "ops checklist" },
   Finance: { kind: "markdown", noun: "financial model outline" },
   Legal: { kind: "markdown", noun: "incorporation checklist" },
+  Product: { kind: "markdown", noun: "product brief" },
+  People: { kind: "markdown", noun: "hiring plan" },
+  Data: { kind: "markdown", noun: "analytics plan" },
+  Security: { kind: "markdown", noun: "security checklist" },
 };
 
 export function deliverableFor(department: string): {
@@ -96,6 +102,10 @@ export const DEPARTMENT_META: Record<string, { color: string }> = {
   Operations: { color: "#5b7a8c" },
   Finance: { color: "#2f9e8f" },
   Legal: { color: "#8a6d3b" },
+  Product: { color: "#c2602f" },
+  People: { color: "#b0567f" },
+  Data: { color: "#3f6f9c" },
+  Security: { color: "#646079" },
 };
 
 /** Fallback color for any department not present in DEPARTMENT_META. */
@@ -113,7 +123,7 @@ export function departmentColor(department: string): string {
  * no handler ever calls `.trim()`/`.slice()` on a non-string.
  * ------------------------------------------------------------------ */
 
-/** The eight departments Helm can staff. */
+/** The twelve departments Helm can staff. */
 export const DEPARTMENTS = [
   "Engineering",
   "Sales",
@@ -123,6 +133,10 @@ export const DEPARTMENTS = [
   "Operations",
   "Finance",
   "Legal",
+  "Product",
+  "People",
+  "Data",
+  "Security",
 ] as const;
 
 /** Valid task lifecycle states. */
@@ -192,13 +206,35 @@ export interface UploadedFile {
  * DB table). See lib/connectors.ts for the risk policy + executors.
  * ------------------------------------------------------------------ */
 
+/** One tool a CUSTOM connector exposes, in client-safe form. The registry turns
+ *  `params` into a JSON schema {type:object, properties:{[p]:{type:string}}, required:[...]}
+ *  at build time (see buildCustomConnectorDef in lib/connectors.ts). */
+export interface ConnectorToolSpec {
+  name: string;
+  description: string;
+  /** Risk tier — custom tools are NEVER user-settable to 'prohibited' (the
+   *  PROHIBITED_NAME guard still blocks dangerous names for ALL tools). */
+  risk: "safe" | "sensitive";
+  /** Simple string parameter names; the registry builds the JSON schema from them. */
+  params?: string[];
+}
+
 /** A connector enabled for this workspace. Secrets are referenced by ENV VAR
- *  NAME only — the actual value is NEVER stored here. */
+ *  NAME only — the actual value is NEVER stored here. A workspace may also define
+ *  CUSTOM http-mcp connectors (custom===true) carrying their own label + tools. */
 export interface ConnectorConfig {
   id: string;
   enabled: boolean;
   /** Name of the env var holding the connector secret (http-mcp only). */
   secretEnvVar?: string;
+  /** True for a user-defined connector (vs. a built-in). */
+  custom?: boolean;
+  /** Display name (custom connectors only). */
+  label?: string;
+  /** Connector transport — ONLY http-mcp is user-definable. */
+  kind?: "http-mcp";
+  /** The tools a custom connector exposes (mapped into the registry). */
+  tools?: ConnectorToolSpec[];
 }
 
 /** A frozen snapshot of a SENSITIVE tool call awaiting human approval. The
@@ -275,6 +311,10 @@ export interface OrchestratorPlan {
   goal: string;
   objectives: PlanObjective[];
   tasks: PlanTask[];
+  /** The subset of DEPARTMENTS this business needs — the C-suite the CEO spawns.
+   *  sanitizePlan unions the model's pick with every objective/task department, so
+   *  it never omits a department that actually has work. */
+  departments: string[];
   /** True when this is the deterministic HEURISTIC fallback (no model, or the model
    *  reply was unusable/truncated) — a generic template, not a bespoke plan. The UI
    *  surfaces this so the founder knows to refine it. NOT client-settable: sanitizePlan
@@ -331,6 +371,17 @@ export const SPEND_MAX_RECORDS = 500;
 export const BUDGET_MAX_USD = 1_000_000_000;
 
 /** The JSON blob stored in cofounder_workspaces.meta. All fields optional. */
+/** A founder's chosen design direction for a deliverable — overrides the
+ *  auto-selected open-design style/layout, plus a free-text brief. */
+export interface DesignChoice {
+  /** design-system id (visual style), or null = let the agent pick. */
+  style: string | null;
+  /** template/layout id, or null = let the agent pick. */
+  template: string | null;
+  /** Founder's free-text design brief (highest-priority guidance). */
+  brief: string;
+}
+
 export interface WorkspaceMeta {
   /** Chosen visual-identity vibe id (drives the brand kit). */
   vibeId?: string | null;
@@ -352,15 +403,34 @@ export interface WorkspaceMeta {
   auditLog?: AuditEntry[];
   /** Approved orchestration objectives for this company (capped at 8). */
   objectives?: PlanObjective[];
+  /** The C-suite departments this company has spawned (subset of DEPARTMENTS) —
+   *  drives which roles the org canvas shows. Absent = legacy full 12-role org. */
+  activeDepartments?: string[];
   /** Per-workspace spend budget (governance ceiling — money is never moved). */
   budget?: BudgetConfig | null;
   /** Approved spends recorded for governance (ring buffer, capped at 500). */
   spendRecords?: SpendRecord[];
+  /** Founder design direction per task id (overrides auto-selected style/layout). */
+  designChoices?: Record<string, DesignChoice>;
+  /** Default design direction applied to design tasks with no per-task choice. */
+  designDefault?: DesignChoice | null;
 }
 
 /** Env-var-NAME shape: uppercase, digits, underscore — never an actual secret
  *  value (rejects lowercase + spaces, so a pasted key value is dropped). */
 const ENV_VAR_NAME = /^[A-Z_][A-Z0-9_]{0,60}$/;
+
+/** Custom-connector tool NAME shape: lowercase identifier (namespaced by the UI
+ *  with the connector id). Anything else is dropped. */
+const CONNECTOR_TOOL_NAME = /^[a-z][a-z0-9_]{0,48}$/;
+
+/** Custom-connector tool PARAM name shape: a short lowercase identifier. */
+const CONNECTOR_PARAM_NAME = /^[a-z][a-z0-9_]{0,32}$/;
+
+/** Caps for user-defined connectors — bounded growth of the meta jsonb blob. */
+const CUSTOM_CONNECTORS_MAX = 12;
+const CUSTOM_TOOLS_MAX = 12;
+const CUSTOM_PARAMS_MAX = 10;
 
 /** Keys whose values must be redacted in persisted args / audit entries.
  *  Covers auth material (key/secret/password/token/credential/authorization) plus
@@ -443,9 +513,54 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
     }
   }
 
+  // ---- founder design direction (capped) ----
+  const sanitizeChoice = (v: unknown): DesignChoice | null => {
+    const o = (v && typeof v === "object" ? v : null) as Record<string, unknown> | null;
+    if (!o) return null;
+    const style = typeof o.style === "string" && o.style ? o.style.slice(0, 60) : null;
+    const template = typeof o.template === "string" && o.template ? o.template.slice(0, 60) : null;
+    return { style, template, brief: coerceText(o.brief, 2000) };
+  };
+  if (m.designChoices && typeof m.designChoices === "object" && !Array.isArray(m.designChoices)) {
+    const src = m.designChoices as Record<string, unknown>;
+    const dst: Record<string, DesignChoice> = {};
+    let n = 0;
+    for (const k of Object.keys(src)) {
+      if (n >= 200) break; // bound the map
+      const c = sanitizeChoice(src[k]);
+      const key = coerceText(k, 100);
+      if (c && key) {
+        dst[key] = c;
+        n++;
+      }
+    }
+    if (n > 0) out.designChoices = dst;
+  }
+  if (m.designDefault !== undefined) {
+    out.designDefault = m.designDefault === null ? null : sanitizeChoice(m.designDefault);
+  }
+
+  // ---- spawned org (subset of DEPARTMENTS) ----
+  if (Array.isArray(m.activeDepartments)) {
+    const valid = new Set<string>(DEPARTMENTS);
+    const seen = new Set<string>();
+    const arr: string[] = [];
+    for (const d of m.activeDepartments as unknown[]) {
+      const s = typeof d === "string" ? d : "";
+      if (valid.has(s) && !seen.has(s)) {
+        seen.add(s);
+        arr.push(s);
+      }
+    }
+    if (arr.length) out.activeDepartments = arr;
+  }
+
   // ---- MCP connector layer (capped + redacted) ----
 
   if (Array.isArray(m.connectors)) {
+    // Track how many CUSTOM connectors we've kept so they stay <= CUSTOM_CONNECTORS_MAX
+    // (independent of the overall <=20 cap, which also bounds built-in overrides).
+    let customKept = 0;
     out.connectors = (m.connectors as unknown[]).slice(0, 20).map((c) => {
       const o = (c && typeof c === "object" ? c : {}) as Record<string, unknown>;
       const cfg: ConnectorConfig = {
@@ -457,8 +572,50 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
       if (typeof o.secretEnvVar === "string" && ENV_VAR_NAME.test(o.secretEnvVar)) {
         cfg.secretEnvVar = o.secretEnvVar;
       }
+      // CUSTOM http-mcp connector: flagged custom, or a non-built-in carrying a
+      // tools array. http-mcp is the ONLY user-definable kind, so kind is FORCED
+      // (never user-settable to computer/finance/etc.). Built-in configs (no
+      // custom flag, no tools) persist exactly as before.
+      const isCustom = o.custom === true || Array.isArray(o.tools);
+      if (isCustom) {
+        // Over the custom cap → drop the entry entirely rather than persist an
+        // inert {id,enabled} husk that carries no tools and never registers.
+        if (customKept >= CUSTOM_CONNECTORS_MAX) return null;
+        customKept++;
+        cfg.custom = true;
+        cfg.kind = "http-mcp";
+        const label = coerceText(o.label, 60);
+        if (label) cfg.label = label;
+        // Tools: cap the array, validate each name/desc/risk/params; drop a tool
+        // whose name fails the identifier pattern (the registry also de-dupes
+        // against built-in tool names). risk is clamped to {safe,sensitive} —
+        // 'prohibited' is NEVER user-settable.
+        if (Array.isArray(o.tools)) {
+          cfg.tools = (o.tools as unknown[])
+            .slice(0, CUSTOM_TOOLS_MAX)
+            .map((t) => {
+              const to = (t && typeof t === "object" ? t : {}) as Record<string, unknown>;
+              const name = coerceText(to.name, 48).toLowerCase();
+              const spec: ConnectorToolSpec = {
+                name,
+                description: coerceText(to.description, 300),
+                risk: to.risk === "sensitive" ? "sensitive" : "safe",
+              };
+              if (Array.isArray(to.params)) {
+                const params = (to.params as unknown[])
+                  .slice(0, CUSTOM_PARAMS_MAX)
+                  .map((p) => coerceText(p, 32).toLowerCase())
+                  .filter((p) => CONNECTOR_PARAM_NAME.test(p));
+                if (params.length) spec.params = params;
+              }
+              return spec;
+            })
+            // Drop tools whose name doesn't match the identifier pattern.
+            .filter((t) => CONNECTOR_TOOL_NAME.test(t.name));
+        }
+      }
       return cfg;
-    });
+    }).filter((c): c is ConnectorConfig => c !== null);
   }
 
   if (Array.isArray(m.pendingApprovals)) {

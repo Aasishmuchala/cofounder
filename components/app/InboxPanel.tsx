@@ -37,6 +37,20 @@ function argStr(args: Record<string, unknown>, key: string, cap: number): string
   return (typeof v === "string" ? v : "").slice(0, cap);
 }
 
+/**
+ * Make a role="button" span operable by keyboard: fire the action on Enter and
+ * Space (preventDefault on Space so the page doesn't scroll). Returns an onKeyDown
+ * handler that mirrors the span's onClick.
+ */
+function keyActivate(action: () => void) {
+  return (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+      if (e.key !== "Enter") e.preventDefault();
+      action();
+    }
+  };
+}
+
 /** Shared monospace code-block style for the approval previews. */
 const CODE_BLOCK =
   "mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-all rounded-[4px] bg-[#f4f4f1] p-1.5 font-mono text-[10px] leading-snug text-[var(--text-70)]";
@@ -289,6 +303,7 @@ export default function InboxPanel({
                           e.stopPropagation();
                           updateTask(it.taskId as string, { status: "running" });
                         }}
+                        onKeyDown={keyActivate(() => updateTask(it.taskId as string, { status: "running" }))}
                         className="rounded-[6px] px-2 py-0.5 font-display text-[11px] font-medium text-white shadow-glossy"
                         style={{ background: "var(--green)" }}
                       >
@@ -301,6 +316,7 @@ export default function InboxPanel({
                           e.stopPropagation();
                           updateTask(it.taskId as string, { status: "todo" });
                         }}
+                        onKeyDown={keyActivate(() => updateTask(it.taskId as string, { status: "todo" }))}
                         className="rounded-[6px] bg-[#efefec] px-2 py-0.5 font-display text-[11px] font-medium text-[var(--text-70)]"
                       >
                         Decline
@@ -341,6 +357,7 @@ export default function InboxPanel({
                           role="button"
                           tabIndex={0}
                           onClick={() => resolveApproval(ap.id, "approve")}
+                          onKeyDown={keyActivate(() => resolveApproval(ap.id, "approve"))}
                           className="rounded-[6px] px-2 py-0.5 font-display text-[11px] font-medium text-white shadow-glossy"
                           style={{ background: "var(--green)" }}
                         >
@@ -350,6 +367,7 @@ export default function InboxPanel({
                           role="button"
                           tabIndex={0}
                           onClick={() => resolveApproval(ap.id, "deny")}
+                          onKeyDown={keyActivate(() => resolveApproval(ap.id, "deny"))}
                           className="rounded-[6px] bg-[#efefec] px-2 py-0.5 font-display text-[11px] font-medium text-[var(--text-70)]"
                         >
                           Decline

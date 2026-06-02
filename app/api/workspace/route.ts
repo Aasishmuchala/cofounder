@@ -1,6 +1,6 @@
 import { coerceText, sanitizeWorkspaceMeta } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
-import { dbConfigured, getWorkspace, updateWorkspaceMeta } from "@/lib/supabase-rest";
+import { dbConfigured, getWorkspace, updateWorkspaceMeta, deleteWorkspace } from "@/lib/supabase-rest";
 
 export const runtime = "nodejs";
 
@@ -64,5 +64,36 @@ export async function PATCH(req: Request): Promise<Response> {
     return Response.json({ ok: true, persisted: true, meta });
   } catch {
     return Response.json({ ok: false, error: "save failed" }, { status: 500 });
+  }
+}
+
+/**
+ * DELETE /api/workspace — permanently remove this company (the workspace plus its
+ * tasks, artifacts, and skills). Owner-only: same capability-token check as PATCH.
+ */
+export async function DELETE(req: Request): Promise<Response> {
+  let body: Record<string, unknown> = {};
+  try {
+    const parsed = await req.json();
+    if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
+  } catch {
+    body = {};
+  }
+  const workspaceId = coerceText(body.workspaceId, 100);
+  const workspaceSecret = coerceText(body.workspaceSecret, 200) || undefined;
+  if (!workspaceId) {
+    return Response.json({ ok: false, error: "no workspace" }, { status: 400 });
+  }
+  if (!(await authorizeWrite(workspaceId, workspaceSecret))) {
+    return Response.json({ ok: false, error: "unauthorized" }, { status: 403 });
+  }
+  if (!dbConfigured) {
+    return Response.json({ ok: true, persisted: false });
+  }
+  try {
+    await deleteWorkspace(workspaceId);
+    return Response.json({ ok: true });
+  } catch {
+    return Response.json({ ok: false, error: "delete failed" }, { status: 500 });
   }
 }

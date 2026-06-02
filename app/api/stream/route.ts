@@ -1,5 +1,7 @@
-import { coerceText, isTaskReady, blockedObjectiveIds, type PlanObjective } from "@/lib/agent-types";
+import { coerceText, isTaskReady, blockedObjectiveIds, deliverableFor, type PlanObjective } from "@/lib/agent-types";
+import { needsDesignDirection } from "@/lib/design-catalog";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { dbConfigured, listTasks, listArtifacts, claimTask, patchTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
@@ -41,6 +43,20 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "no database" }, { status: 400 });
   }
 
+  // Per-workspace rate limit (PRODUCTION-ONLY) — /api/stream drives the same paid
+  // produceDeliverable() as /api/run, so throttle it identically BEFORE any model
+  // work (and before the DB load/claim below). Gated so the keyless local demo is
+  // unchanged; workspaceId is guaranteed non-empty above.
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+    const rl = checkRateLimit(workspaceId);
+    if (!rl.allowed) {
+      return Response.json(
+        { error: "rate limited" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      );
+    }
+  }
+
   // Only run a task that's actionable and not already produced.
   let tasks, artifacts, workspace;
   try {
@@ -60,13 +76,20 @@ export async function POST(req: Request): Promise<Response> {
   // by an unachieved prerequisite objective (same rule as /api/run + /api/cron).
   const objectives = (workspace?.meta?.objectives ?? []) as PlanObjective[];
   const blockedObjs = blockedObjectiveIds(objectives, tasks);
+  // Design gate (same as /api/run): a visual deliverable waits for the founder's
+  // design direction — a per-task choice OR a workspace default — before streaming.
+  const designChoices = workspace?.meta?.designChoices ?? {};
+  const hasDesignDefault = !!workspace?.meta?.designDefault;
   const target = tasks.find(
     (t) =>
       t.id === taskId &&
       (t.status === "todo" || t.status === "running") &&
       !withArtifact.has(t.id) &&
       !(t.objectiveId && blockedObjs.has(t.objectiveId)) &&
-      isTaskReady(t, doneIds),
+      isTaskReady(t, doneIds) &&
+      (!needsDesignDirection(deliverableFor(t.department).kind) ||
+        hasDesignDefault ||
+        Boolean(designChoices[t.id])),
   );
   if (!target) {
     return Response.json({ error: "not actionable" }, { status: 409 });

@@ -110,6 +110,69 @@ export function MonoLabel({
   );
 }
 
+/* ── Status badge ──────────────────────────────────────────────────────────
+   One pill used for every status tag in the app (task status, roadmap status,
+   objective status). The status→color map differs per surface, so callers pass
+   the resolved visuals; this component only owns the pill chrome + dot. Size,
+   the inset hairline, and the dot itself are all opt-in via props so each call
+   site stays pixel-identical to its previous bespoke markup. */
+export function StatusBadge({
+  label,
+  bg,
+  fg,
+  /** Render the leading status dot. */
+  dot,
+  /** Dot color (defaults to the text color). */
+  dotColor,
+  /** Pulse the dot (running / live). */
+  animate,
+  /** "sm" = text-[8px] gap-1 (panels/canvas); "md" = text-[9px] gap-1.5 (full pages). */
+  size = "sm",
+  /** Inset hairline ring — used by the full-page badges. */
+  ring,
+  className,
+}: {
+  label: string;
+  bg: string;
+  fg: string;
+  dot?: boolean;
+  dotColor?: string;
+  animate?: boolean;
+  size?: "sm" | "md";
+  ring?: boolean;
+  className?: string;
+}) {
+  const md = size === "md";
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center rounded-full font-mono uppercase",
+        md
+          ? "gap-1.5 px-2 py-[3px] text-[9px] font-medium tracking-[0.06em]"
+          : "gap-1 px-2 py-0.5 text-[8px] tracking-[0.08em]",
+        className
+      )}
+      style={{
+        background: bg,
+        color: fg,
+        ...(ring ? { boxShadow: "inset 0 0 0 0.6px rgba(0,0,0,0.06)" } : null),
+      }}
+    >
+      {dot && (
+        <span
+          className={cx(
+            "inline-block rounded-full",
+            md ? "h-[5px] w-[5px]" : "h-1 w-1",
+            animate && "anim-badge-blink"
+          )}
+          style={{ background: dotColor ?? fg }}
+        />
+      )}
+      {label}
+    </span>
+  );
+}
+
 /* Department / category chip */
 export function Chip({
   children,

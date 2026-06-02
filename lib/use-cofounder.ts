@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { isTaskReady } from "@/lib/agent-types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isTaskReady, deliverableFor, blockedObjectiveIds } from "@/lib/agent-types";
+import { needsDesignDirection } from "@/lib/design-catalog";
 import type {
   Task,
   ChatMessage,
@@ -10,6 +11,7 @@ import type {
   ConnectorConfig,
   OrchestratorPlan,
   BudgetConfig,
+  DesignChoice,
 } from "@/lib/agent-types";
 
 interface AgentResponse {
@@ -50,12 +52,15 @@ export interface UseCofounder {
   /** Whether THIS client may write (owner / legacy-open) vs view-only. */
   canEdit: boolean;
   /** The deliverable being streamed live right now, if any. */
-  streaming: StreamState | null;
+  /** Live token streams for every currently-running agent (each panel expandable). */
+  streams: StreamState[];
   error: string | null;
   /** Connectors enabled for this workspace (derived from meta). */
   connectors: ConnectorConfig[];
   send: (text: string, creationMeta?: WorkspaceMeta) => Promise<void>;
   reset: () => void;
+  /** Permanently delete this company (DB rows + local state), then start fresh. Owner-only. */
+  deleteCompany: () => Promise<void>;
   updateTask: (id: string, patch: Partial<Task>) => void;
   executeTask: (task: Task) => Promise<void>;
   addTask: (title: string, department: string, detail?: string) => Promise<void>;
@@ -74,6 +79,15 @@ export interface UseCofounder {
    *  moves money). Optimistic in meta; persisted via PATCH /api/budget. */
   setBudget: (cfg: BudgetConfig | null) => Promise<void>;
   drive: () => Promise<void>;
+  /** Visual deliverables held until the founder gives design direction (the gate). */
+  pendingDesign: Task[];
+  /** Record design direction — per task, or as the workspace default (applyToAll). */
+  setDesignDirection: (
+    choice: DesignChoice,
+    opts: { taskId?: string; applyToAll?: boolean },
+  ) => Promise<void>;
+  /** Drop the workspace design default so each remaining design task is gated again. */
+  clearDesignDefault: () => Promise<void>;
 }
 
 /**
@@ -111,7 +125,10 @@ export function useCofounder(): UseCofounder {
   // Default to editable; narrowed to false only for a protected workspace we
   // don't hold the key for (a shared view link).
   const [canEdit, setCanEdit] = useState(true);
-  const [streaming, setStreaming] = useState<StreamState | null>(null);
+  // Per-agent live token streams, keyed by task id — every running agent streams
+  // simultaneously so the founder can watch (and expand) each one, not just the focus.
+  const [streamMap, setStreamMap] = useState<Record<string, StreamState>>({});
+  const streamList = useMemo(() => Object.values(streamMap), [streamMap]);
   const [error, setError] = useState<string | null>(null);
   const ideaRef = useRef<string>("");
   const secretRef = useRef<string | null>(null);
@@ -289,7 +306,7 @@ export function useCofounder(): UseCofounder {
     setMeta({});
     setIsProtected(false);
     setCanEdit(true);
-    setStreaming(null);
+    setStreamMap({});
     setError(null);
     ideaRef.current = "";
     secretRef.current = null;
@@ -306,19 +323,43 @@ export function useCofounder(): UseCofounder {
   }, []);
 
   /**
+   * Permanently DELETE this company — wipes the workspace + its tasks, artifacts,
+   * and skills from the DB (owner-only), then resets to a clean slate. Falls through
+   * to reset() even if the DB call fails, so the founder always lands on a fresh start.
+   */
+  const deleteCompany = useCallback(async (): Promise<void> => {
+    if (!canEdit) return;
+    const id = workspaceId;
+    if (persisted && id) {
+      try {
+        await fetch("/api/workspace", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspaceId: id, workspaceSecret: secretRef.current ?? undefined }),
+        });
+      } catch {
+        /* ignore — reset below still gives a clean start */
+      }
+    }
+    reset();
+  }, [canEdit, persisted, workspaceId, reset]);
+
+  /**
    * Actually execute a task: the department agent generates a real deliverable
    * (landing page / brand spec / copy), persists it, and flips the task to done.
    */
   /**
    * Stable queue drainer (held in a ref so it can recurse without a
    * use-before-declare cycle). Runs at most MAX_CONCURRENT real deliverables at
-   * a time — each takes ~minutes, so firing them all at once storms the model
-   * and freezes the canvas. The queue fills the canvas in progressively instead.
+   * a time; the rest queue and fill the canvas progressively. Each call is now
+   * bounded by the server-side model timeout (lib/anthropic.ts), so a wider
+   * fan-out can't hang — it just leans harder on the proxy (well under the
+   * 20-req/min per-workspace rate limit).
    */
   const pumpRef = useRef<() => void>(() => {});
   useEffect(() => {
     pumpRef.current = () => {
-      const MAX_CONCURRENT = 2;
+      const MAX_CONCURRENT = 5;
       const TIMEOUT_MS = 180_000;
       while (inFlightRef.current < MAX_CONCURRENT && queueRef.current.length > 0) {
         const task = queueRef.current.shift() as Task;
@@ -424,8 +465,11 @@ export function useCofounder(): UseCofounder {
     drivingRef.current = true;
     // Produce up to MAX_PARALLEL deliverables at once (fills the canvas the way
     // the old client pump did). Each call claims a DISTINCT task id, and the
-    // server claim is atomic — so two tabs or a cron can't double-produce.
-    const MAX_PARALLEL = 2;
+    // server claim is atomic — so two tabs or a cron can't double-produce. 5 is a
+    // throughput choice: every call is timeout-bounded (lib/anthropic.ts) so the
+    // wider fan-out can't hang, but it does push more concurrent load at the proxy
+    // (still well under the 20-req/min per-workspace rate limit).
+    const MAX_PARALLEL = 5;
     // Task ids already dispatched this run: prevents reselecting a contended
     // task (one another tab/cron is producing) and guarantees termination.
     const attempted = new Set<string>();
@@ -483,7 +527,10 @@ export function useCofounder(): UseCofounder {
         phase: "writing",
         tools: [],
       };
-      setStreaming(base);
+      // Update only THIS agent's entry in the shared map (all stream in parallel).
+      const setMine = (fn: (s: StreamState) => StreamState) =>
+        setStreamMap((p) => ({ ...p, [task.id]: fn(p[task.id] ?? base) }));
+      setStreamMap((p) => ({ ...p, [task.id]: base }));
       try {
         for (;;) {
           const { done, value } = await reader.read();
@@ -504,14 +551,14 @@ export function useCofounder(): UseCofounder {
             }
             if (ev === "reset") {
               live = "";
-              setStreaming((s) => (s ? { ...s, text: "" } : s));
+              setMine((s) => ({ ...s, text: "" }));
             } else if (ev === "delta") {
               live += data.t ?? "";
-              setStreaming((s) => ({ ...(s ?? base), text: live, phase: "writing" }));
+              setMine((s) => ({ ...s, text: live, phase: "writing" }));
             } else if (ev === "tool") {
-              setStreaming((s) => ({ ...(s ?? base), phase: "researching", tools: data.names ?? [] }));
+              setMine((s) => ({ ...s, phase: "researching", tools: data.names ?? [] }));
             } else if (ev === "status") {
-              if (data.phase) setStreaming((s) => ({ ...(s ?? base), phase: data.phase as string }));
+              if (data.phase) setMine((s) => ({ ...s, phase: data.phase as string }));
             } else if (ev === "done") {
               result = { ran: task.id, remaining: 0 };
             } else if (ev === "error") {
@@ -522,7 +569,11 @@ export function useCofounder(): UseCofounder {
       } catch {
         result = { ran: null, remaining: 0, error: "stream interrupted" };
       } finally {
-        setStreaming(null);
+        setStreamMap((p) => {
+          const n = { ...p };
+          delete n[task.id];
+          return n;
+        });
       }
       return result;
     };
@@ -548,10 +599,9 @@ export function useCofounder(): UseCofounder {
         // Optimistically show the batch running while the server works on it.
         const batchIds = new Set(batch.map((t) => t.id));
         setTasks((prev) => prev.map((t) => (batchIds.has(t.id) ? { ...t, status: "running" } : t)));
-        // Stream the focus task (index 0) live; run the rest silently in parallel.
-        const results = await Promise.all(
-          batch.map((t, i) => (i === 0 ? runOneStreamed(t) : runOne(t.id))),
-        );
+        // Stream EVERY agent in the batch live (each into its own panel) — not just
+        // the focus — so the founder can watch and expand any of them.
+        const results = await Promise.all(batch.map((t) => runOneStreamed(t)));
         // Don't reselect these ids; done/needs_action drop out next refresh anyway.
         batch.forEach((t) => attempted.add(t.id));
         // Whole batch failed to reach the server (offline) -> stop looping.
@@ -559,7 +609,7 @@ export function useCofounder(): UseCofounder {
       }
       await refresh();
     } finally {
-      setStreaming(null);
+      setStreamMap({});
       drivingRef.current = false;
     }
   }, [persisted, workspaceId, refresh]);
@@ -823,6 +873,84 @@ export function useCofounder(): UseCofounder {
     [canEdit, persisted, workspaceId, refresh],
   );
 
+  /* ---------- founder design direction ---------- */
+  /** Visual deliverables (landing page / email / formatted doc) that are otherwise
+   *  ready to run but are HELD until the founder gives design direction — mirrors
+   *  the server gate in /api/run + /api/stream. Empty once a workspace default is
+   *  set (it applies to all) or the viewer is read-only. The modal pops on these. */
+  const pendingDesign = useMemo<Task[]>(() => {
+    if (!canEdit || meta.designDefault) return [];
+    const choices = meta.designChoices ?? {};
+    const doneIds = new Set<string>(artifacts.map((a) => a.taskId).filter(Boolean) as string[]);
+    for (const t of tasks) if (t.status === "done") doneIds.add(t.id);
+    const blocked = blockedObjectiveIds(meta.objectives ?? [], tasks);
+    return tasks.filter(
+      (t) =>
+        (t.status === "todo" || t.status === "running") &&
+        !doneIds.has(t.id) &&
+        !(t.objectiveId && blocked.has(t.objectiveId)) &&
+        isTaskReady(t, doneIds) &&
+        needsDesignDirection(deliverableFor(t.department).kind) &&
+        !choices[t.id],
+    );
+  }, [tasks, artifacts, meta.designChoices, meta.designDefault, meta.objectives, canEdit]);
+
+  /** Record the founder's design direction — per task, or as the workspace default
+   *  (applyToAll). Optimistically updates meta so the gate clears instantly, POSTs
+   *  to /api/design, then kicks the runner for the now-unblocked tasks. */
+  const setDesignDirection = useCallback(
+    async (choice: DesignChoice, opts: { taskId?: string; applyToAll?: boolean }): Promise<void> => {
+      if (!canEdit) return;
+      setMeta((m) =>
+        opts.applyToAll
+          ? { ...m, designDefault: choice }
+          : opts.taskId
+            ? { ...m, designChoices: { ...(m.designChoices ?? {}), [opts.taskId]: choice } }
+            : m,
+      );
+      if (persisted && workspaceId) {
+        try {
+          await fetch("/api/design", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              workspaceId,
+              workspaceSecret: secretRef.current ?? undefined,
+              taskId: opts.taskId,
+              applyToAll: opts.applyToAll === true,
+              choice,
+            }),
+          });
+        } catch {
+          /* ignore — refresh + drive reconcile from server state */
+        }
+      }
+      drive();
+    },
+    [canEdit, persisted, workspaceId, drive],
+  );
+
+  /** Drop the workspace design default so each remaining design task is gated again. */
+  const clearDesignDefault = useCallback(async (): Promise<void> => {
+    if (!canEdit) return;
+    setMeta((m) => ({ ...m, designDefault: null }));
+    if (persisted && workspaceId) {
+      try {
+        await fetch("/api/design", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            workspaceSecret: secretRef.current ?? undefined,
+            clearDefault: true,
+          }),
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [canEdit, persisted, workspaceId]);
+
   return {
     messages,
     tasks,
@@ -834,11 +962,12 @@ export function useCofounder(): UseCofounder {
     meta,
     isProtected,
     canEdit,
-    streaming,
+    streams: streamList,
     error,
     connectors: meta.connectors ?? [],
     send,
     reset,
+    deleteCompany,
     updateTask,
     executeTask,
     addTask,
@@ -850,5 +979,8 @@ export function useCofounder(): UseCofounder {
     approvePlan,
     setBudget,
     drive,
+    pendingDesign,
+    setDesignDirection,
+    clearDesignDefault,
   };
 }

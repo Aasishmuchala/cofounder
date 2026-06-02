@@ -50,10 +50,24 @@ Workspaces are anonymous (no login), so writes are protected by a per-workspace
 **capability token** — a stateless `HMAC-SHA256(APP_SECRET, workspaceId)` handed to
 the client when a workspace is created. Creating tasks in an existing workspace,
 executing a task, and patching a task all require it; forged or missing tokens get
-`403`, and a task can only be mutated within its own workspace. Set `APP_SECRET` to
-turn enforcement on (it's off when unset, so the keyless local demo still runs).
-All untrusted request fields are coerced + length-capped before reaching the model
-or the database, and user input is HTML-escaped in generated artifacts (which are
+`403`, and a task can only be mutated within its own workspace.
+
+**In production, writes fail CLOSED:** `APP_SECRET` is **mandatory** — with no
+secret set (and no DB-backed edit key) a production deployment refuses writes rather
+than running open. Locally it stays fail-open so the keyless demo runs unchanged
+(production is `NODE_ENV=production` or any `VERCEL` var). The `HELM_ALLOW_OPEN_WRITES=1`
+escape hatch restores open writes in production but is **discouraged** — it defeats
+tenant isolation. See **[`LAUNCH.md`](LAUNCH.md)** for the full launch checklist.
+
+The generation routes (`/api/run`, `/api/execute`, `/api/stream`, plus the planner
+`/api/agent` and `/api/plan` when a workspace is known) are rate-limited per workspace,
+returning `429` past `HELM_RATELIMIT_PER_MIN` requests/minute (default 20; the counter
+is per-instance/in-memory). Pre-workspace model calls (`/api/onboarding`, the very first
+planning turn) aren't workspace-keyed — front them with an edge/WAF limiter. Uploads to
+`/api/upload` are bounded by a 10 MB size cap **and a
+content-type allowlist** (plus filename sanitization), so an unexpected MIME type is
+rejected. All untrusted request fields are coerced + length-capped before reaching the
+model or the database, and user input is HTML-escaped in generated artifacts (which are
 additionally rendered in a script-less `<iframe sandbox>`). Conservative security
 headers (CSP `frame-ancestors`/`base-uri`/`object-src`/`form-action`, `nosniff`,
 `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`) ship on every
@@ -67,6 +81,10 @@ cp .env.example .env.local   # optional: add ANTHROPIC_API_KEY for real agent ge
 npm run dev                  # http://localhost:3000
 ```
 
+Deploying to production? Follow **[`LAUNCH.md`](LAUNCH.md)** — it covers the env that
+becomes mandatory (`APP_SECRET`, `CRON_SECRET`), the RLS migration, and the dangerous
+capabilities that must stay off.
+
 ## Design system
 Tokens and reusable surfaces live in `app/globals.css`; primitives (`RaisedCard`, `LightButton`,
 `GlassButton`, `BlinkDot`, `Chip`, `EtchedDivider`, `MonoLabel`) in `components/ui/primitives.tsx`.
@@ -76,3 +94,6 @@ Tokens and reusable surfaces live in `app/globals.css`; primitives (`RaisedCard`
   variable, same friendly geometric character). Body = Inter, mono = IBM Plex Mono.
 - **Assets:** pixel-art / icon PNGs in `public/` were mirrored from the live site for fidelity.
   Replace with original artwork before any public deployment (the originals are copyrighted).
+- **Skill catalog size:** the bundled catalog is **208 skills** (`skills/`); the Skills-tab
+  search placeholder now shows the live catalog count from `/api/skills` rather than a
+  hardcoded figure.

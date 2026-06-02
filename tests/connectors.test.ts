@@ -164,10 +164,14 @@ describe("dispatchConnectorTool — the single deterministic execution path", ()
   // approved sensitive tools (the approvals route). Drive it directly.
   const ENABLED = getConnectorRegistry(BUILT_IN_CONNECTORS.map((c) => ({ id: c.id, enabled: true })));
 
-  it("executes a SAFE tool (web_search) and returns sanitized mock JSON", async () => {
+  // web/email/social are now REAL http-mcp connectors: with no endpoint env var set
+  // they return an honest "not_configured" (NEVER a fake success), and never a
+  // blocked sentinel. The real round-trip (endpoint set) is proven in
+  // tests/connectors-custom.test.ts against an in-process echo server.
+  it("executes a SAFE built-in tool (web_search) → http-mcp 'not_configured' with no endpoint", async () => {
     const out = await dispatchConnectorTool("web_search", { query: "specialty coffee" }, ENABLED);
-    expect(out).toContain("Mock Result");
-    expect(out).toContain("specialty coffee");
+    expect(out).toContain("not_configured");
+    expect(out).toContain("WEB_SEARCH_MCP_URL"); // tells the operator which env var to set
     expect(out).not.toContain("blocked");
   });
 
@@ -180,7 +184,8 @@ describe("dispatchConnectorTool — the single deterministic execution path", ()
       ENABLED,
     );
     expect(out).not.toContain("blocked");
-    expect(out).toContain("sent"); // mock executor returns {status:"sent",...}
+    // http-mcp built-in with no EMAIL_MCP_URL set → honest 'not_configured', never a fake 'sent'.
+    expect(out).toContain("not_configured");
   });
 
   it("executes an APPROVED post_update and returns its real result, NOT a blocked sentinel", async () => {
@@ -190,7 +195,7 @@ describe("dispatchConnectorTool — the single deterministic execution path", ()
       ENABLED,
     );
     expect(out).not.toContain("blocked");
-    expect(out).toContain("posted"); // mock executor returns {status:"posted",...}
+    expect(out).toContain("not_configured");
   });
 
   it("refuses to execute a PROHIBITED tool even if reached directly (final guard)", async () => {
@@ -270,7 +275,9 @@ describe("approval execution — drives the REAL executor (mirrors approvals rou
     expect(r.auditLog[0]).toMatchObject({ approvalId: "ap1", action: "approve" });
     expect(r.auditLog[0].outcome).toBeDefined();
     expect(r.auditLog[0].outcome).not.toContain("blocked");
-    expect(r.auditLog[0].outcome).toContain("sent");
+    // send_email is now a real http-mcp connector: with no EMAIL_MCP_URL set the
+    // approved action records an honest 'not_configured' outcome (never a fake 'sent').
+    expect(r.auditLog[0].outcome).toContain("not_configured");
   });
 
   it("deny removes the approval, records NO outcome, and never executes", async () => {

@@ -80,6 +80,12 @@ function nextProject(slug: string, pageSource: string): { name: string; content:
 }
 
 // GET /api/export/<artifactId>  -> downloadable .zip of a runnable Next.js project
+//
+// CAPABILITY URL — BY DESIGN: the artifact is fetched by its unguessable id with
+// NO workspace scoping or auth check, mirroring the public view route. Holding the
+// URL IS the authorization to export the deliverable (the shareable-link model).
+// RLS on cofounder_artifacts (supabase/migrations/0001_hardening.sql) is the
+// defense-in-depth layer; it does not change this intentional read path.
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
   const { id } = await params;
   const artifact = await getArtifact(id).catch(() => null);

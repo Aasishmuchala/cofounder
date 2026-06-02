@@ -2,10 +2,11 @@
 
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { departmentColor, DEPARTMENTS } from "@/lib/agent-types";
 import type { Task } from "@/lib/agent-types";
 import type { UseCofounder } from "@/lib/use-cofounder";
-import { cx, MonoLabel } from "@/components/ui/primitives";
+import { cx, MonoLabel, StatusBadge } from "@/components/ui/primitives";
 import {
   AGENTS,
   DEFAULT_SUGGESTED_NEXT,
@@ -73,7 +74,7 @@ export default function RightPanel({
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--surface-raised)]">
       {/* Tab bar */}
-      <div className="flex items-center gap-5 overflow-x-auto px-6 pt-5">
+      <div className="flex items-center justify-between gap-1 overflow-x-auto px-5 pt-5">
         {TABS.map((t) => {
           const active = t === tab && !selectedDept;
           return (
@@ -84,7 +85,7 @@ export default function RightPanel({
                 onTabChange(t);
               }}
               className={cx(
-                "relative shrink-0 pb-2 font-display text-[15px] tracking-[0.1px] transition-colors",
+                "relative shrink-0 pb-2 font-display text-[12.5px] tracking-[0.1px] transition-colors",
                 active ? "text-[var(--text)]" : "text-[var(--text-50)] hover:text-[var(--text-70)]",
               )}
             >
@@ -497,6 +498,27 @@ function TasksTab({ cf, onSelectDepartment }: { cf: UseCofounder; onSelectDepart
   }
   return (
     <div className="space-y-6">
+      {/* Full-page views — the standalone /app/tasks and /app/roadmap routes. */}
+      <div className="flex items-center gap-3">
+        <Link
+          href="/app/tasks"
+          target="_blank"
+          className="flex items-center gap-0.5 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--blue)] transition-opacity hover:opacity-70"
+          title="Open the full tasks view"
+        >
+          All tasks
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </Link>
+        <Link
+          href="/app/roadmap"
+          target="_blank"
+          className="flex items-center gap-0.5 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--text-50)] transition-opacity hover:opacity-70"
+          title="Open the company roadmap"
+        >
+          Roadmap
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </Link>
+      </div>
       {byDept.map((g) => (
         <div key={g.dept}>
           <button
@@ -550,11 +572,7 @@ function StatusTag({ status }: { status: Task["status"] }) {
     todo: { label: "To do", bg: "#efefec", color: "var(--text-50)" },
   } as const;
   const m = map[status];
-  return (
-    <span className="rounded-full px-2 py-0.5 font-mono text-[8px] uppercase tracking-[0.08em]" style={{ background: m.bg, color: m.color }}>
-      {m.label}
-    </span>
-  );
+  return <StatusBadge label={m.label} bg={m.bg} fg={m.color} />;
 }
 
 /* ──────────────────────── Library ──────────────────────── */

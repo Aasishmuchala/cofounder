@@ -9,7 +9,12 @@ import {
   type Task,
   type TaskStatus,
 } from "@/lib/agent-types";
-import { RaisedCard, BlinkDot, MonoLabel, cx } from "@/components/ui/primitives";
+import {
+  RaisedCard,
+  BlinkDot,
+  MonoLabel,
+  StatusBadge as StatusBadgeBase,
+} from "@/components/ui/primitives";
 
 const EASE = [0.23, 1, 0.32, 1] as const;
 
@@ -35,22 +40,22 @@ function StatusBadge({ status }: { status?: TaskStatus }) {
   };
   const v = styles[s] ?? styles.todo;
   return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full px-2 py-[3px] font-mono text-[9px] font-medium uppercase tracking-[0.06em]"
-      style={{ background: v.bg, color: v.fg, boxShadow: "inset 0 0 0 0.6px rgba(0,0,0,0.06)" }}
-    >
-      <span
-        className={cx("inline-block h-[5px] w-[5px] rounded-full", v.animate && "anim-badge-blink")}
-        style={{ background: v.dot }}
-      />
-      {STATUS_LABEL[s] ?? "To do"}
-    </span>
+    <StatusBadgeBase
+      label={STATUS_LABEL[s] ?? "To do"}
+      bg={v.bg}
+      fg={v.fg}
+      dot
+      dotColor={v.dot}
+      animate={v.animate}
+      size="md"
+      ring
+    />
   );
 }
 
 export default function TasksPage() {
-  const hook = useCofounder?.() ?? {};
-  const tasks: Task[] = Array.isArray(hook?.tasks) ? hook.tasks : [];
+  // Hydrates from the same localStorage workspace as /app (see useCofounder).
+  const { tasks } = useCofounder();
 
   // Group tasks by department, preserving first-seen order.
   const groups = React.useMemo(() => {

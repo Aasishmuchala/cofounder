@@ -1,5 +1,6 @@
 import { coerceText } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { produceDeliverable } from "@/lib/runner";
 
 export const runtime = "nodejs";
@@ -38,6 +39,21 @@ export async function POST(req: Request): Promise<Response> {
   // Persisting a deliverable into a workspace requires its edit key.
   if (workspaceId && !(await authorizeWrite(workspaceId, workspaceSecret))) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 403 });
+  }
+
+  // Per-workspace rate limit (PRODUCTION-ONLY) — cap how fast one workspace can
+  // drive Opus generations, BEFORE any model work. Gated so the keyless local
+  // demo is unchanged. Only applies when a workspaceId is the key (one-off runs
+  // with no workspace persist nothing and aren't keyed).
+  if (workspaceId && (process.env.NODE_ENV === "production" || process.env.VERCEL)) {
+    const rl = checkRateLimit(workspaceId);
+    if (!rl.allowed) {
+      const retryAfter = Math.ceil(rl.retryAfterMs / 1000);
+      return Response.json(
+        { ok: false, error: "rate limited" },
+        { status: 429, headers: { "Retry-After": String(retryAfter) } },
+      );
+    }
   }
 
   const { artifact, mock } = await produceDeliverable(workspaceId || undefined, task, idea);

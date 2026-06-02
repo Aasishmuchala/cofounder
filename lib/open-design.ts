@@ -105,13 +105,18 @@ const SYSTEM_KEYWORDS: [RegExp, string][] = [
 const DEFAULT_SYSTEM = "modern";
 
 /** Pick the open-design SKILL + DESIGN system best matching a request. */
-export function selectOpenDesign(req: {
-  department: string;
-  kind: ArtifactKind;
-  title: string;
-  detail?: string;
-  vibeId?: string | null;
-}): OpenDesignSelection {
+export function selectOpenDesign(
+  req: {
+    department: string;
+    kind: ArtifactKind;
+    title: string;
+    detail?: string;
+    vibeId?: string | null;
+  },
+  /** Founder override — a specific (non-"auto") style/template wins over the
+   *  keyword + brand-vibe auto-selection below. */
+  override?: { system?: string | null; template?: string | null },
+): OpenDesignSelection {
   const text = `${req.title} ${req.detail ?? ""}`.toLowerCase();
 
   const candidates =
@@ -143,6 +148,12 @@ export function selectOpenDesign(req: {
   }
   if (!system && req.vibeId && VIBE_SYSTEM[req.vibeId]) system = VIBE_SYSTEM[req.vibeId];
   if (!system) system = DEFAULT_SYSTEM;
+
+  // Founder override wins over auto-selection (only a chosen, non-"auto" id).
+  if (override) {
+    if (override.template && override.template !== "auto") template = override.template;
+    if (override.system && override.system !== "auto") system = override.system;
+  }
 
   return { template, system };
 }

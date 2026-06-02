@@ -105,6 +105,25 @@ const LISTING_CAP = 200;
 const SECRET_PATHS =
   /(?:^|\/)\.ssh(?:\/|$)|(?:^|\/)\.aws(?:\/|$)|(?:^|\/)\.gnupg(?:\/|$)|(?:^|\/)\.config\/gh(?:\/|$)|\.pem$|(?:^|\/)id_(?:rsa|ed25519|ecdsa)(?:\.pub)?$|(?:^|\/)\.env(?:\.[^/]*)?$|(?:^|\/)\.npmrc$|(?:^|\/)\.netrc$|(?:^|\/)\.git-credentials$|secret|credential|private_key/i;
 
+/** Normalize a resolved absolute path for SECRET_PATHS matching ONLY. SECRET_PATHS
+ *  is written with POSIX '/' separators, but path.resolve emits '\' on win32 — so
+ *  .ssh/id_rsa, .env, *.pem etc. would NOT match a Windows path. Fold '\' to '/'
+ *  (path.resolve has already collapsed duplicate separators) so the SAME secret
+ *  paths are blocked on every OS. This is for the regex test only; the REAL
+ *  resolved path returned to callers is never
+ *  altered. (SECRET_PATHS already carries /i, so matching is case-insensitive on
+ *  the case-insensitive Windows filesystem too — no POSIX blocking is relaxed.) */
+function toSecretMatchPath(resolved: string): string {
+  const folded = resolved.replace(/\\/g, "/");
+  // Win32 defense-in-depth: the Windows filesystem silently strips trailing dots and
+  // spaces from each path component (so ".env " opens ".env" and "id_rsa." opens
+  // "id_rsa"), which would otherwise let such a name slip past the POSIX-shaped regex.
+  // Strip trailing ' '/'.' per segment on win32 ONLY — on POSIX a trailing dot/space is
+  // a legitimately distinct filename, so this must stay a no-op there.
+  if (process.platform === "win32") return folded.replace(/[ .]+(?=\/|$)/g, "");
+  return folded;
+}
+
 export type PathResolution =
   | { ok: true; resolved: string }
   | { ok: false; reason: string };
@@ -134,7 +153,7 @@ export function resolvePath(raw: unknown): PathResolution {
   if (resolved !== root && !resolved.startsWith(root + path.sep)) {
     return { ok: false, reason: "PROHIBITED: path escapes the computer root." };
   }
-  if (SECRET_PATHS.test(resolved)) {
+  if (SECRET_PATHS.test(toSecretMatchPath(resolved))) {
     return { ok: false, reason: "PROHIBITED: secret / credential path is blocked by policy." };
   }
   return { ok: true, resolved };
@@ -179,7 +198,7 @@ async function realResolve(resolved: string): Promise<PathResolution> {
   if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
     return { ok: false, reason: "PROHIBITED: path escapes the computer root (symlink target)." };
   }
-  if (SECRET_PATHS.test(real)) {
+  if (SECRET_PATHS.test(toSecretMatchPath(real))) {
     return { ok: false, reason: "PROHIBITED: secret / credential path is blocked by policy (symlink target)." };
   }
   return { ok: true, resolved: real };
@@ -420,12 +439,29 @@ async function runShellExec(input: Record<string, unknown>): Promise<string> {
   const command = str(input, "command");
   if (command.length === 0) return errorOut("run_shell requires a non-empty command string.");
   // Content denylist — destructive / privilege-escalating commands are NEVER run,
-  // even on explicit approval. (Re-checked here at EXECUTION time too.)
+  // even on explicit approval. (Re-checked here at EXECUTION time too.) This is a
+  // pure regex check that spawns nothing, so it runs FIRST on every OS — a
+  // prohibited command stays {blocked, ACTION_BLOCKED} on Windows too, rather than
+  // being masked by the win32 "unsupported" return below.
   if (isProhibitedShell(command)) {
     return sanitizeToolOutput(
       JSON.stringify({
         status: "blocked",
         detail: `${ACTION_BLOCKED}: command matches the destructive-shell denylist and is prohibited by policy.`,
+      }),
+    );
+  }
+  // Windows: run_shell shells out to /bin/sh, which does not exist, and the
+  // SHELL_DENYLIST is Unix-shaped. Rather than port the denylist to cmd/PowerShell
+  // (a new, unvetted security surface), run_shell is DISABLED on win32 — return a
+  // clear "unsupported" sentinel and execute nothing. The POSIX path below is
+  // unchanged. (A prohibited command was already refused above, so its categorical
+  // block holds on every platform.)
+  if (process.platform === "win32") {
+    return sanitizeToolOutput(
+      JSON.stringify({
+        status: "unsupported",
+        detail: "run_shell is disabled on Windows (the POSIX /bin/sh executor and its denylist are not available on this platform).",
       }),
     );
   }
