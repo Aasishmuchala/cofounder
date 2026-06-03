@@ -28,7 +28,7 @@ import {
   type WorkspaceMeta,
 } from "@/lib/agent-types";
 import { getRoleForDepartment } from "@/lib/org";
-import { getAnthropic, MODEL } from "@/lib/anthropic";
+import { getAnthropic, MODEL, NO_THINKING } from "@/lib/anthropic";
 import { getWorkspace, updateWorkspaceMeta, insertTasks, withWorkspaceLock } from "@/lib/supabase-rest";
 
 /** Departments routed to the local Claude Code executor (Feature 2). The
@@ -285,6 +285,7 @@ export async function decomposeGoal(
     try {
       const resp = await client.messages.create({
         model: MODEL,
+        thinking: NO_THINKING,
         // 4500 (was 2400): the full objectives+tasks JSON for a rich plan can exceed
         // 2400 output tokens, and a TRUNCATED reply fails JSON.parse below — silently
         // dropping the founder to the generic heuristic even when the model tried.

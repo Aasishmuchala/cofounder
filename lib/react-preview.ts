@@ -75,9 +75,17 @@ export function buildReactHarness(rawCode: string, title = "Preview"): string {
 (function(){
   function showErr(m){var e=document.getElementById('__err');e.style.display='block';e.textContent='Preview error:\\n'+m;}
   if(!window.Babel||!window.React||!window.ReactDOM){showErr('Failed to load the preview runtime (React/Babel CDN blocked?).');return;}
+  function xf(c){return window.Babel.transform(c,{presets:[['typescript',{isTSX:true,allExtensions:true,onlyRemoveTypeImports:true}],'react'],filename:'page.tsx'}).code;}
+  // AUTO-REPAIR: if a deliverable was truncated (ran out of tokens mid-component),
+  // it won't parse. Rather than show a raw syntax error, drop any trailing partial
+  // tag, close every still-open JSX element, and balance ()/{} — so the page renders
+  // everything that WAS generated instead of nothing. Only runs after a parse fails,
+  // so a complete page is never touched.
+  function repair(src){var s=String(src);var lt=s.lastIndexOf('<');if(lt!==-1&&s.indexOf('>',lt)===-1)s=s.slice(0,lt);var V={img:1,br:1,hr:1,input:1,meta:1,link:1,area:1,base:1,col:1,embed:1,source:1,track:1,wbr:1};var re=/<\\/?([A-Za-z][A-Za-z0-9.]*)\\b[^<>]*?(\\/?)>/g,m,st=[];while((m=re.exec(s))){var nm=m[1],self=(m[2]==='/'),cl=(m[0].charAt(1)==='/');if(cl){for(var i=st.length-1;i>=0;i--){if(st[i]===nm){st.length=i;break;}}}else if(!self&&!V[nm.toLowerCase()])st.push(nm);}for(var j=st.length-1;j>=0;j--)s+='<'+'/'+st[j]+'>';function cnt(c){return s.split(c).length-1;}var p=cnt('(')-cnt(')');while(p-->0)s+=')';var b=cnt('{')-cnt('}');while(b-->0)s+='}';return s;}
   try{
     var code=${codeLiteral};
-    var out=window.Babel.transform(code,{presets:[['typescript',{isTSX:true,allExtensions:true,onlyRemoveTypeImports:true}],'react'],filename:'page.tsx'}).code;
+    var out;
+    try{out=xf(code);}catch(e1){try{out=xf(repair(code));}catch(e2){showErr((e1&&e1.message)||String(e1));return;}}
     var R=window.React;
     if(window.gsap&&window.ScrollTrigger){try{window.gsap.registerPlugin(window.ScrollTrigger);}catch(_){}}
     var make=new Function('React','useState','useEffect','useRef','useMemo','useCallback','useLayoutEffect','useReducer','useId','gsap','ScrollTrigger',

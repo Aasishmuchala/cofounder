@@ -11,7 +11,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ArtifactKind } from "@/lib/agent-types";
-import { MODEL } from "@/lib/anthropic";
+import { MODEL, NO_THINKING } from "@/lib/anthropic";
 
 export interface HouseSkill {
   name: string;
@@ -96,6 +96,7 @@ Output ONLY the SKILL.md: YAML frontmatter (name, description) then tight, imper
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 4000,
+      thinking: NO_THINKING,
       messages: [{ role: "user", content: prompt }],
     });
     const content = resp.content

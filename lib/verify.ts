@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ArtifactKind } from "@/lib/agent-types";
-import { MODEL } from "@/lib/anthropic";
+import { MODEL, NO_THINKING } from "@/lib/anthropic";
 
 /** Deliverables scoring below this (0–10) trigger one automatic regeneration. */
 export const QUALITY_BAR = 7;
@@ -88,6 +88,7 @@ export async function judgeDeliverable(
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 900,
+      thinking: NO_THINKING,
       system: [{ type: "text", text: system }],
       messages: [{ role: "user", content: user }],
     });

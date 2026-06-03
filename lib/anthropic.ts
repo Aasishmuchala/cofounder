@@ -26,16 +26,30 @@ export const MODEL =
 /**
  * Per-request timeout (ms) + retry count for the model client. The SDK defaults
  * (10-minute timeout × 2 retries) let a slow/hanging proxy block a single
- * deliverable for ~30 MINUTES before giving up. These caps make a call fail fast
- * so the runner falls back to its templated deliverable — the user always gets
- * output in bounded time. Tune via HELM_ANTHROPIC_TIMEOUT_MS / HELM_ANTHROPIC_MAX_RETRIES.
+ * deliverable for ~30 MINUTES. We bound it — but a PREMIUM deliverable (a full
+ * animated landing page, ~10k output tokens) genuinely needs several minutes on
+ * the claudeopus.pro proxy (~35 tok/s + ~18s overhead, measured). 150s was too
+ * tight: big pages timed out → fell back to the mock template (no images, no
+ * motion). 480s (8 min) per attempt fits the largest real gen with margin while
+ * still capping a hung proxy. Tune via HELM_ANTHROPIC_TIMEOUT_MS / _MAX_RETRIES.
  */
 function envInt(name: string, fallback: number, min: number): number {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
 }
-const TIMEOUT_MS = envInt("HELM_ANTHROPIC_TIMEOUT_MS", 150000, 1000);
+const TIMEOUT_MS = envInt("HELM_ANTHROPIC_TIMEOUT_MS", 480000, 1000);
 const MAX_RETRIES = envInt("HELM_ANTHROPIC_MAX_RETRIES", 1, 0);
+
+/**
+ * Default `thinking` config for our calls: DISABLED. The claudeopus.pro proxy
+ * forces extended thinking on Opus 4.8 unless told otherwise — every call then
+ * "thinks" before answering, which (a) burns output tokens (a low max_tokens can
+ * be fully consumed by thinking, starving the real answer) and (b) adds large
+ * latency, pushing premium gens past the timeout into the mock fallback. Our
+ * prompts are already prescriptive, so we opt out for predictable, faster output.
+ * Pass `thinking: NO_THINKING` on every messages.create / messages.stream call.
+ */
+export const NO_THINKING = { type: "disabled" as const };
 
 /** True when some credential is configured (proxy token or direct key). */
 export const aiConfigured = Boolean(AUTH_TOKEN || API_KEY);
