@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { UseCofounder } from "@/lib/use-cofounder";
 import { deliverableFor, type DesignChoice } from "@/lib/agent-types";
-import { DESIGN_SYSTEMS, layoutsFor, marketTemplatesFor } from "@/lib/design-catalog";
+import { DESIGN_SYSTEMS, layoutsFor, marketTemplatesFor, defaultTemplateFor } from "@/lib/design-catalog";
 import { cx } from "@/components/ui/primitives";
 
 const AUTO = "__auto__";
@@ -41,6 +41,8 @@ export default function DesignChoiceModal({ cf }: { cf: UseCofounder }) {
   // The top design SKILL.md files in the market for this kind — the PRIMARY
   // template choices. "Auto" (below) falls back to open-design.
   const templates = useMemo(() => (task ? marketTemplatesFor(kind) : []), [task, kind]);
+  // The skill "Auto" resolves to for this kind (landing → flagship; else open-design).
+  const dflt = useMemo(() => (task ? defaultTemplateFor(kind) : null), [task, kind]);
 
   if (!task || !cf.canEdit) return null;
 
@@ -109,7 +111,7 @@ export default function DesignChoiceModal({ cf }: { cf: UseCofounder }) {
         <div className="mt-4">
           <Label>Template</Label>
           <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-            <Choice active={layout === AUTO} onClick={() => setLayout(AUTO)} title="Auto" blurb="Open Design picks the best fit." tag="default" />
+            <Choice active={layout === AUTO} onClick={() => setLayout(AUTO)} title="Auto" blurb={dflt ? `Default · ${dflt.label}` : "Open Design picks the best fit."} tag={dflt ? dflt.repo.split("/")[0] : "default"} />
             {templates.map((t) => (
               <Choice key={t.id} active={layout === t.id} onClick={() => setLayout(t.id)} title={t.label} blurb={t.blurb} tag={t.repo.split("/")[0]} />
             ))}

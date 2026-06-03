@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { MARKET_TEMPLATES, marketTemplatesFor, isMarketTemplate } from "@/lib/design-catalog";
+import {
+  MARKET_TEMPLATES,
+  marketTemplatesFor,
+  isMarketTemplate,
+  defaultTemplateFor,
+  DEFAULT_MARKET_TEMPLATE,
+} from "@/lib/design-catalog";
 import { fetchMarketDesign } from "@/lib/market-design";
 
 // The top design SKILL.md files in the market, shown as the Design gate's primary
@@ -41,6 +47,22 @@ describe("market design templates", () => {
     expect(isMarketTemplate("saas-landing")).toBe(false); // an open-design layout id
     expect(isMarketTemplate("")).toBe(false);
     expect(isMarketTemplate("does-not-exist")).toBe(false);
+  });
+
+  it("landing pages default to the frontend-design flagship (beautiful-by-default); every default is a real market id", () => {
+    const d = defaultTemplateFor("landing_page");
+    expect(d).not.toBeNull();
+    expect(d!.id).toBe("frontend-design");
+    expect(d!.kind).toBe("landing_page");
+    for (const id of Object.values(DEFAULT_MARKET_TEMPLATE)) {
+      expect(isMarketTemplate(id), `default ${id} is a registry id`).toBe(true);
+    }
+  });
+
+  it("kinds with no configured default resolve to null (Auto → open-design)", () => {
+    expect(defaultTemplateFor("brand_spec")).toBeNull();
+    expect(defaultTemplateFor("email")).toBeNull();
+    expect(defaultTemplateFor("markdown")).toBeNull();
   });
 
   it("fetchMarketDesign returns null for empty/unknown ids → caller falls back to open-design", async () => {

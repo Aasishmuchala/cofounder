@@ -35,7 +35,7 @@ const CLAUDE_CODE_DEPARTMENTS = new Set(["Engineering"]);
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
 import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
 import { fetchMarketDesign } from "@/lib/market-design";
-import { isMarketTemplate } from "@/lib/design-catalog";
+import { isMarketTemplate, DEFAULT_MARKET_TEMPLATE } from "@/lib/design-catalog";
 import { compareSkills } from "@/lib/skill-select";
 import { readSkillBody, catalogSkillUrl, loadCatalog } from "@/lib/skill-catalog";
 import { houseSkill, synthesizeSkill } from "@/lib/skill-foundry";
@@ -535,8 +535,17 @@ export async function produceDeliverable(
   // market (lib/market-design fetches it live, cached + injection-sanitized). When
   // chosen, it IS this deliverable's craft + headline skill. When none is chosen
   // (Auto) — or the fetch fails — we fall back to open-design below, as intended.
-  const marketId =
-    designChoice?.template && isMarketTemplate(designChoice.template) ? designChoice.template : null;
+  // "Beautiful by default": an explicit market pick wins; an explicit open-design layout
+  // takes the open-design path (marketId null); and when the founder picks Auto (no
+  // template), landing pages DEFAULT to the flagship market skill so even un-directed
+  // pages ship award-tier UI. Open-design stays the deeper fallback (failed fetch / Auto
+  // on kinds with no default).
+  const chosenTemplate = designChoice?.template ?? null;
+  const marketId = chosenTemplate
+    ? isMarketTemplate(chosenTemplate)
+      ? chosenTemplate
+      : null
+    : (DEFAULT_MARKET_TEMPLATE[kind] ?? null);
   const market = marketId ? await fetchMarketDesign(marketId).catch(() => null) : null;
   const authored =
     dbConfigured && workspaceId ? await findAuthoredSkill(workspaceId, kind).catch(() => null) : null;

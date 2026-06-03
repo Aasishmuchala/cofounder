@@ -228,6 +228,19 @@ export function marketTemplatesFor(kind: ArtifactKind): MarketTemplate[] {
   return MARKET_TEMPLATES.filter((t) => t.kind === kind);
 }
 
+/** Flagship market template a kind DEFAULTS to when the founder picks Auto — so even
+ *  un-directed deliverables ship beautiful, distinctive UI. Omitted kinds keep
+ *  Auto → open-design. Edit a value (or remove it) to retune the default. */
+export const DEFAULT_MARKET_TEMPLATE: Partial<Record<ArtifactKind, string>> = {
+  landing_page: "frontend-design",
+};
+
+/** The resolved default MarketTemplate for a kind, or null (= Auto → open-design). */
+export function defaultTemplateFor(kind: ArtifactKind): MarketTemplate | null {
+  const id = DEFAULT_MARKET_TEMPLATE[kind];
+  return id ? (MARKET_TEMPLATES.find((t) => t.id === id) ?? null) : null;
+}
+
 /** Visual deliverables that resolve an open-design template — these are gated by
  *  the Design Direction popup. brand_spec is system-only (no template workflow)
  *  and is not gated. */
