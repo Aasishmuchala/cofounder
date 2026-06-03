@@ -2,15 +2,17 @@
 // the generate_image tool) to get a ready-to-embed image URL for heroes,
 // sections, OG cards, etc.
 //
-// Providers:
-//  - Pollinations (DEFAULT, keyless): returns an instant text-to-image URL that
-//    renders a real AI image on load — perfect for inline use during generation.
-//  - Higgsfield (PREMIUM, opt-in): when HIGGSFIELD_API_KEY is set, submit a job
-//    to platform.higgsfield.ai and poll briefly for the result; on any
-//    timeout/error it falls back to Pollinations so a deliverable never breaks.
+// Provider chain (first configured wins; always ends on a URL that LOADS):
+//  - Higgsfield (HIGGSFIELD_API_KEY): real AI brand imagery.
+//  - Unsplash (UNSPLASH_ACCESS_KEY) / Pexels (PEXELS_API_KEY): curated, relevant,
+//    up-to-4K stock photography — the recommended free keys for premium pages.
+//  - Keyless fallback: a keyword-relevant real photo (loremflickr) or a clean
+//    abstract (picsum). NOTE Pollinations is now paywalled (402) and Unsplash's
+//    keyless source.unsplash.com is retired (503) — neither works keyless anymore,
+//    which is why an AI/stock key is needed for genuinely premium imagery.
 //
-// NOTE: the Higgsfield *MCP* in the Claude session can't be reached from this
-// Next.js server — the app needs its own Higgsfield key. See .env.example.
+// The Higgsfield *MCP* in the Claude session can't be reached from this Next.js
+// server — the app needs its own keys. See .env.example.
 
 import { fetchT } from "@/lib/skills";
 
@@ -21,6 +23,9 @@ const HF_BASE = (() => {
   return /^https:\/\//i.test(u) ? u : "https://platform.higgsfield.ai";
 })();
 const HF_MODEL = process.env.HIGGSFIELD_IMAGE_MODEL || "flux-pro/kontext/max/text-to-image";
+// Curated stock providers (free keys) — relevant, high-res (up to 4K) photography.
+const UNSPLASH_KEY = process.env.UNSPLASH_ACCESS_KEY || "";
+const PEXELS_KEY = process.env.PEXELS_API_KEY || "";
 
 /** True when the premium Higgsfield provider is configured. */
 export const higgsfieldConfigured = Boolean(HF_KEY);
@@ -58,6 +63,84 @@ export function pollinationsUrl(prompt: string, aspect?: string): string {
   const { w, h } = dims(aspect);
   const p = encodeURIComponent(prompt.replace(/\s+/g, " ").trim().slice(0, 380));
   return `https://image.pollinations.ai/prompt/${p}?width=${w}&height=${h}&nologo=true&model=flux&seed=${seedOf(prompt)}`;
+}
+
+const IMG_STOP = new Set([
+  "the", "and", "for", "with", "your", "this", "that", "brand", "aesthetic", "high", "detail",
+  "professional", "cohesive", "palette", "crisp", "text", "watermark", "logo", "image", "shot",
+  "wide", "hero", "establishing", "feature", "product", "close", "clean", "studio", "soft", "light",
+  "abstract", "atmospheric", "background", "texture", "depth", "gradient", "modern", "startup",
+  "cinematic", "composition", "real", "scene", "view", "photo", "ultra", "quality",
+]);
+
+/** 2-3 salient keywords from a design prompt, for keyword-based stock search. */
+function keywords(prompt: string): string {
+  const ws = prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !IMG_STOP.has(w));
+  return [...new Set(ws)].slice(0, 3).join(",");
+}
+
+/** Curated, relevant, up-to-4K stock via Unsplash (free Access Key). */
+async function unsplashUrl(prompt: string, aspect?: string): Promise<string | null> {
+  if (!UNSPLASH_KEY) return null;
+  const { w, h } = dims(aspect);
+  const orientation = w >= h ? "landscape" : "portrait";
+  const q = keywords(prompt) || "technology";
+  try {
+    const r = await fetchT(
+      `https://api.unsplash.com/search/photos?per_page=12&orientation=${orientation}&query=${encodeURIComponent(q)}`,
+      { headers: { Authorization: `Client-ID ${UNSPLASH_KEY}` } },
+      6000,
+    );
+    if (!r.ok) return null;
+    const j = (await r.json()) as { results?: { urls?: { raw?: string; full?: string; regular?: string } }[] };
+    const results = j.results ?? [];
+    if (!results.length) return null;
+    const pick = results[seedOf(prompt) % results.length];
+    const raw = pick?.urls?.raw;
+    // raw + width = up to 4K, cropped to the slot ratio.
+    if (raw) return `${raw}&w=${Math.max(w, 1920)}&h=${Math.max(h, 1080)}&fit=crop&q=80`;
+    return pick?.urls?.full ?? pick?.urls?.regular ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Curated stock via Pexels (free API key). */
+async function pexelsUrl(prompt: string, aspect?: string): Promise<string | null> {
+  if (!PEXELS_KEY) return null;
+  const { w, h } = dims(aspect);
+  const orientation = w >= h ? "landscape" : "portrait";
+  const q = keywords(prompt) || "technology";
+  try {
+    const r = await fetchT(
+      `https://api.pexels.com/v1/search?per_page=12&orientation=${orientation}&query=${encodeURIComponent(q)}`,
+      { headers: { Authorization: PEXELS_KEY } },
+      6000,
+    );
+    if (!r.ok) return null;
+    const j = (await r.json()) as { photos?: { src?: { original?: string; large2x?: string } }[] };
+    const photos = j.photos ?? [];
+    if (!photos.length) return null;
+    const pick = photos[seedOf(prompt) % photos.length];
+    return pick?.src?.original ?? pick?.src?.large2x ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Always-loading keyless fallback: a keyword-relevant real photo (loremflickr),
+ *  deterministic per prompt; a clean abstract (picsum) when no keywords. Used only
+ *  when no AI/stock key is set — Pollinations + source.unsplash no longer work. */
+export function keylessImageUrl(prompt: string, aspect?: string): string {
+  const { w, h } = dims(aspect);
+  const seed = seedOf(prompt);
+  const kw = keywords(prompt);
+  if (kw) return `https://loremflickr.com/${w}/${h}/${encodeURIComponent(kw)}?lock=${seed}`;
+  return `https://picsum.photos/seed/${seed}/${w}/${h}`;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -135,5 +218,11 @@ export async function generateImageUrl(prompt: string, aspect?: string): Promise
     const u = await higgsfield(clean, aspect).catch(() => null);
     if (u) return u;
   }
-  return pollinationsUrl(clean, aspect);
+  // Curated relevant 4K stock when a free key is configured (recommended).
+  const stock =
+    (await unsplashUrl(clean, aspect).catch(() => null)) ??
+    (await pexelsUrl(clean, aspect).catch(() => null));
+  if (stock) return stock;
+  // Keyless last resort that actually LOADS (Pollinations is now paywalled).
+  return keylessImageUrl(clean, aspect);
 }

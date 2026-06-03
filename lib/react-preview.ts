@@ -60,8 +60,13 @@ export function buildReactHarness(rawCode: string, title = "Preview"): string {
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>${titleEsc}</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@400;600;700;800&family=Space+Grotesk:wght@400;500;700&family=Manrope:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;600;700;800&family=DM+Sans:wght@400;500;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet"/>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 <style>html,body{margin:0;padding:0}#__err{display:none;position:fixed;inset:0;margin:0;padding:24px;font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#b00020;background:#fff;white-space:pre-wrap;overflow:auto;z-index:99999}</style>
 </head><body>
@@ -74,9 +79,10 @@ export function buildReactHarness(rawCode: string, title = "Preview"): string {
     var code=${codeLiteral};
     var out=window.Babel.transform(code,{presets:[['typescript',{isTSX:true,allExtensions:true,onlyRemoveTypeImports:true}],'react'],filename:'page.tsx'}).code;
     var R=window.React;
-    var make=new Function('React','useState','useEffect','useRef','useMemo','useCallback','useLayoutEffect','useReducer','useId',
+    if(window.gsap&&window.ScrollTrigger){try{window.gsap.registerPlugin(window.ScrollTrigger);}catch(_){}}
+    var make=new Function('React','useState','useEffect','useRef','useMemo','useCallback','useLayoutEffect','useReducer','useId','gsap','ScrollTrigger',
       out+'\\nreturn (typeof Page!=="undefined")?Page:(typeof __Default!=="undefined"?__Default:null);');
-    var Page=make(R,R.useState,R.useEffect,R.useRef,R.useMemo,R.useCallback,R.useLayoutEffect,R.useReducer,R.useId);
+    var Page=make(R,R.useState,R.useEffect,R.useRef,R.useMemo,R.useCallback,R.useLayoutEffect,R.useReducer,R.useId,window.gsap,window.ScrollTrigger);
     if(!Page){showErr('No default-exported \`Page\` component was found in the deliverable.');return;}
     window.ReactDOM.createRoot(document.getElementById('root')).render(R.createElement(Page));
   }catch(e){showErr((e&&e.stack)||(e&&e.message)||String(e));}

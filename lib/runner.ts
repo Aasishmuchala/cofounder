@@ -112,24 +112,23 @@ You are a world-class product designer + senior Next.js/React engineer. BUILD a 
 OUTPUT CONTRACT (the live preview compiles this directly — follow EXACTLY):
 - Output ONLY the component code. No markdown fences, no prose, no commentary.
 - First line: "use client"; — then a default export named EXACTLY Page: export default function Page() { ... }
-- ONE self-contained file. You MAY define small helper components/consts above Page. NO external UI/animation libraries (no framer-motion, no shadcn) — React + Tailwind only.
+- ONE self-contained file. You MAY define small helper components/consts above Page. NO framer-motion / shadcn. But GSAP + ScrollTrigger ARE pre-loaded and in scope as \`gsap\` and \`ScrollTrigger\` (already registered) — USE them for premium scroll choreography. (The <lottie-player> web component is also loaded if you genuinely have a real animation URL — otherwise prefer GSAP + animated SVG.)
 - KEEP IT COMPLETE: use SIMPLE inline SVG icons (a few short stroke paths each, viewBox 0 0 24 24) — NEVER paste long brand-logo path data. Finish every tag, string, and brace. A complete, focused page beats an enormous truncated one.
 - Style EVERYTHING with Tailwind CSS utility classes (Tailwind is available). Behavior uses ONLY React hooks (useState/useEffect/useRef — already in scope).
 
-ANIMATIONS (required — make it feel alive, this is a key goal):
-- Include a local <style> tag (rendered inside the component) with @keyframes — e.g. an aurora/gradient drift, float, shimmer, and fade-up — and apply them via inline style or Tailwind arbitrary values.
-- Staggered entrance reveals on load (per-element animation-delay).
-- Scroll-triggered reveals: a useEffect with IntersectionObserver that toggles a reveal class on sections as they enter the viewport.
-- Hover micro-interactions (transition + hover:/group-hover:) on buttons and cards; an atmospheric ANIMATED background (moving gradient mesh / aurora / grain), not a flat fill.
-- Disable motion under @media (prefers-reduced-motion: reduce).
+MOTION (required — TOP priority; aim for Awwwards / award-site polish):
+- Drive scroll choreography with GSAP + ScrollTrigger inside a useEffect (guard \`if (!gsap || !ScrollTrigger) return;\`; wrap in \`const ctx = gsap.context(() => { ... }); return () => ctx.revert();\` for cleanup; call \`ScrollTrigger.refresh()\` after layout): staggered scroll-reveals as sections enter, a pinned or parallax hero/feature band, animated number counters on the stats, and a gentle parallax (yPercent) on the imagery.
+- Also include a local <style> with @keyframes for an ALWAYS-ON atmospheric background — a slow-drifting multi-stop gradient mesh / aurora (NEVER a flat fill) — plus float/shimmer accents.
+- Staggered entrance reveal on first paint; rich hover micro-interactions (transform + transition) on every button and card; an animated gradient or sliding underline on the primary CTA.
+- Respect @media (prefers-reduced-motion: reduce): gate the GSAP timeline + decorative keyframes off.
 
-IMAGERY (required — generate real images):
-- Call the generate_image tool to create the visuals this page needs (at minimum a hero image; optionally a feature/section image). Give it a vivid, art-directed prompt matching the brand, and embed the returned URL in <img className="... object-cover" /> with width/height.
-- If the tool is unavailable, embed images of the form: https://image.pollinations.ai/prompt/<URL-ENCODED vivid description>?width=1280&height=720&nologo=true&model=flux
+IMAGERY (required — use the REAL pre-generated images provided below):
+- Embed the EXACT pre-generated urls given below: HERO (16:9) in the hero, FEATURE (4:3) in a feature/showcase block, SECTION BG (16:9) as a full-bleed parallax band behind a section. Use <img className="... object-cover" loading="lazy" /> with width/height (or a CSS background-image for the band).
+- Do NOT invent other image hosts, stock URLs, or gray placeholders — only those exact urls + inline SVG.
 
 STRUCTURE: sticky translucent nav; a striking hero (headline derived from the idea, subhead, primary + secondary CTA, the generated hero image); a 3+ feature section with inline-SVG icons; a stats or how-it-works band; social proof / testimonial; a strong CTA band; a real footer. Real, specific, benefit-led copy for THIS idea — no lorem, no "revolutionary/cutting-edge". Commit to a bold, on-brand aesthetic (not generic AI slop).
 
-DESIGN QUALITY (aim for Linear / Stripe / Vercel production quality): apply the grounding's EXACT palette and typography via Tailwind arbitrary values (e.g. bg-[#0B0B10], text-[#E8E8EF], font-[Sora]); a confident type scale with a huge hero headline (text-6xl→text-8xl, tight tracking); generous vertical rhythm and section padding; consistent radii/shadows; and one memorable signature element. Every section must feel intentional and finished.
+DESIGN QUALITY (aim for Linear / Stripe / Vercel production quality): apply the grounding's EXACT palette and typography via Tailwind arbitrary values (e.g. bg-[#0B0B10], text-[#E8E8EF], font-[Sora]); a confident type scale with a huge hero headline (text-6xl→text-8xl, tight tracking); generous vertical rhythm and section padding; consistent radii/shadows; and one memorable signature element. Every section must feel intentional and finished. These display fonts are LOADED — pick from them via Tailwind font-[Name]: Sora, "Space Grotesk", Manrope, "Plus Jakarta Sans", Outfit, "DM Sans", Inter.
 
 Responsive (mobile→desktop with Tailwind), AA contrast, semantic elements. Make it look like a funded startup's real site. Output ONLY the component code, starting with: "use client";`;
   }
@@ -563,13 +562,23 @@ export async function produceDeliverable(
 
   // Landing pages skip the tool loop for speed; pre-generate a hero image so the
   // page still ships real generated imagery without a generate_image round-trip.
-  const heroUrl =
-    kind === "landing_page"
-      ? await generateImageUrl(
-          `cinematic hero image for ${idea || "a startup"}; ${vibeId ?? "modern"} brand aesthetic; high detail, professional, no text`,
-          "16:9",
-        ).catch(() => "")
-      : "";
+  // Premium landing pages ship 3 real, art-directed AI images (hero + feature +
+  // section background), generated IN PARALLEL — no external stock/CDN (Unsplash
+  // source is dead, Pollinations is paywalled, Lottie/Giphy need keys).
+  let heroUrl = "";
+  let featureUrl = "";
+  let sectionUrl = "";
+  if (kind === "landing_page") {
+    const look = `${vibeId ?? "modern"} brand aesthetic, for "${idea || "a startup"}"; high detail, professional, cohesive palette, crisp, no text, no watermark, no logo`;
+    const [h, f, s] = await Promise.all([
+      generateImageUrl(`cinematic wide hero establishing shot; ${look}`, "16:9").catch(() => ""),
+      generateImageUrl(`product / feature close-up, clean studio composition, soft light; ${look}`, "4:3").catch(() => ""),
+      generateImageUrl(`abstract atmospheric background texture with depth and gradient light; ${look}`, "16:9").catch(() => ""),
+    ]);
+    heroUrl = h;
+    featureUrl = f;
+    sectionUrl = s;
+  }
 
   // Ground the deliverable in open-design: the SKILL chosen for this request +
   // the DESIGN.md system chosen for the brand vibe. Becomes the headline skill.
@@ -609,7 +618,9 @@ export async function produceDeliverable(
     (authored ? `\n\nYour company's own authored skill — apply it:\n${authored.content}` : "") +
     // Prefer open-design grounding; fall back to the generically-discovered skill.
     (openDesign ? openDesign.content : discovered ? buildSkillBlock(discovered) : "") +
-    (heroUrl ? `\n\nPRE-GENERATED HERO IMAGE — embed this EXACT url in the hero <img src>: ${heroUrl}` : "") +
+    ([heroUrl, featureUrl, sectionUrl].some(Boolean)
+      ? `\n\nPRE-GENERATED IMAGES — embed these EXACT urls (do NOT use any other image host or placeholder):${heroUrl ? `\n- HERO (16:9): ${heroUrl}` : ""}${featureUrl ? `\n- FEATURE (4:3): ${featureUrl}` : ""}${sectionUrl ? `\n- SECTION BG (16:9): ${sectionUrl}` : ""}`
+      : "") +
     // FOUNDER DESIGN DIRECTION — last + explicitly highest priority, so it overrides
     // any conflicting guidance from the house standard or the open-design grounding.
     (designChoice?.brief?.trim()
