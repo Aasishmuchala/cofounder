@@ -73,40 +73,66 @@ const IMG_STOP = new Set([
   "cinematic", "composition", "real", "scene", "view", "photo", "ultra", "quality",
 ]);
 
-/** 2-3 salient keywords from a design prompt, for keyword-based stock search. */
-function keywords(prompt: string): string {
+/** 2-3 salient keywords from a design prompt (ordered; the brand/idea word tends to
+ *  be first, descriptive nouns after). */
+function keywordList(prompt: string): string[] {
   const ws = prompt
     .toLowerCase()
     .replace(/[^a-z0-9 ]+/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 3 && !IMG_STOP.has(w));
-  return [...new Set(ws)].slice(0, 3).join(",");
+  return [...new Set(ws)].slice(0, 3);
 }
 
-/** Curated, relevant, up-to-4K stock via Unsplash (free Access Key). */
+/** Comma-joined keywords — loremflickr's multi-tag syntax. */
+function keywords(prompt: string): string {
+  return keywordList(prompt).join(",");
+}
+
+/** Curated, relevant, up-to-4K stock via Unsplash (free Access Key).
+ *  Unsplash search is AND-like across terms, so a brand name + descriptors
+ *  ("nimbus developer platform") frequently returns ZERO results — which silently
+ *  dropped pages to the keyless loremflickr fallback. We BROADEN progressively until
+ *  a query returns photos: full keywords → drop the (likely brand) first word → the
+ *  single best descriptor → a domain-generic floor. Bounded, and stops on any real
+ *  HTTP error so we never burn the rate limit broadening against a 403/429. */
 async function unsplashUrl(prompt: string, aspect?: string): Promise<string | null> {
   if (!UNSPLASH_KEY) return null;
   const { w, h } = dims(aspect);
   const orientation = w >= h ? "landscape" : "portrait";
-  const q = keywords(prompt) || "technology";
-  try {
-    const r = await fetchT(
-      `https://api.unsplash.com/search/photos?per_page=12&orientation=${orientation}&query=${encodeURIComponent(q)}`,
-      { headers: { Authorization: `Client-ID ${UNSPLASH_KEY}` } },
-      6000,
-    );
-    if (!r.ok) return null;
-    const j = (await r.json()) as { results?: { urls?: { raw?: string; full?: string; regular?: string } }[] };
-    const results = j.results ?? [];
-    if (!results.length) return null;
-    const pick = results[seedOf(prompt) % results.length];
-    const raw = pick?.urls?.raw;
-    // raw + width = up to 4K, cropped to the slot ratio.
-    if (raw) return `${raw}&w=${Math.max(w, 1920)}&h=${Math.max(h, 1080)}&fit=crop&q=80`;
-    return pick?.urls?.full ?? pick?.urls?.regular ?? null;
-  } catch {
-    return null;
+  const kws = keywordList(prompt);
+  const candidates = [
+    kws.join(" "), // most specific
+    kws.slice(1).join(" "), // drop the likely brand/idea word
+    kws.slice(-1).join(" "), // the single strongest descriptor
+    "technology abstract", // always-has-results floor
+  ]
+    .map((q) => q.trim())
+    .filter(Boolean);
+  const tried = new Set<string>();
+  for (const q of candidates) {
+    if (tried.has(q)) continue;
+    tried.add(q);
+    try {
+      const r = await fetchT(
+        `https://api.unsplash.com/search/photos?per_page=12&orientation=${orientation}&query=${encodeURIComponent(q)}`,
+        { headers: { Authorization: `Client-ID ${UNSPLASH_KEY}` } },
+        6000,
+      );
+      if (!r.ok) return null; // auth/rate-limit/other error — stop (don't burn quota)
+      const j = (await r.json()) as { results?: { urls?: { raw?: string; full?: string; regular?: string } }[] };
+      const results = j.results ?? [];
+      if (!results.length) continue; // no match for this query → broaden
+      const pick = results[seedOf(prompt) % results.length];
+      const raw = pick?.urls?.raw;
+      // raw + width = up to 4K, cropped to the slot ratio.
+      if (raw) return `${raw}&w=${Math.max(w, 1920)}&h=${Math.max(h, 1080)}&fit=crop&q=80`;
+      return pick?.urls?.full ?? pick?.urls?.regular ?? null;
+    } catch {
+      return null;
+    }
   }
+  return null;
 }
 
 /** Curated stock via Pexels (free API key). */
