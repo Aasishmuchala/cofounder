@@ -21,7 +21,7 @@ import {
   type ConnectorDef,
 } from "@/lib/connectors";
 import type { PendingApproval } from "@/lib/agent-types";
-import { getAnthropic, MODEL } from "@/lib/anthropic";
+import { getAnthropic, MODEL, NO_THINKING } from "@/lib/anthropic";
 // Server-only Claude Code local-delegation executor (Feature 2). runner.ts is
 // already server-only, so a static import is fine here (it keeps node:child_process
 // LAZY internally). Used by the executor-routing branch in produceDeliverable.
@@ -34,6 +34,8 @@ import { claudeCodeActive, runClaudeCode } from "@/lib/claude-code";
 const CLAUDE_CODE_DEPARTMENTS = new Set(["Engineering"]);
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
 import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
+import { fetchMarketDesign } from "@/lib/market-design";
+import { isMarketTemplate } from "@/lib/design-catalog";
 import { compareSkills } from "@/lib/skill-select";
 import { readSkillBody, catalogSkillUrl, loadCatalog } from "@/lib/skill-catalog";
 import { houseSkill, synthesizeSkill } from "@/lib/skill-foundry";
@@ -386,6 +388,9 @@ async function runHop(
   const params = {
     model: MODEL,
     max_tokens: maxTokens,
+    // Opt out of the proxy's forced extended thinking (see NO_THINKING): keeps
+    // the full token budget for the deliverable and the call inside its timeout.
+    thinking: NO_THINKING,
     messages,
     // Connector tools are merged per-hop (without mutating the module-level
     // AGENT_TOOLS const) so the model can call enabled connectors.
@@ -526,6 +531,13 @@ export async function produceDeliverable(
   // default. Overrides the auto-selected open-design style/layout and injects a
   // highest-priority brief into the prompt.
   const designChoice = (meta?.designChoices?.[task.id] ?? meta?.designDefault) ?? null;
+  // The Design gate's PRIMARY pick: one of the top design SKILL.md files in the
+  // market (lib/market-design fetches it live, cached + injection-sanitized). When
+  // chosen, it IS this deliverable's craft + headline skill. When none is chosen
+  // (Auto) — or the fetch fails — we fall back to open-design below, as intended.
+  const marketId =
+    designChoice?.template && isMarketTemplate(designChoice.template) ? designChoice.template : null;
+  const market = marketId ? await fetchMarketDesign(marketId).catch(() => null) : null;
   const authored =
     dbConfigured && workspaceId ? await findAuthoredSkill(workspaceId, kind).catch(() => null) : null;
 
@@ -582,18 +594,25 @@ export async function produceDeliverable(
 
   // Ground the deliverable in open-design: the SKILL chosen for this request +
   // the DESIGN.md system chosen for the brand vibe. Becomes the headline skill.
-  const openDesign = await fetchOpenDesign(
-    selectOpenDesign(
-      {
-        department: task.department,
-        kind,
-        title: task.title,
-        detail: task.detail,
-        vibeId,
-      },
-      designChoice ? { system: designChoice.style, template: designChoice.template } : undefined,
-    ),
-  ).catch(() => null);
+  // Open-design is the FALLBACK — only fetched when no market skill resolved. A chosen
+  // market template id is NOT a valid open-design layout, so it's never passed as one
+  // (only the style carries over for the design system).
+  const openDesign = market
+    ? null
+    : await fetchOpenDesign(
+        selectOpenDesign(
+          {
+            department: task.department,
+            kind,
+            title: task.title,
+            detail: task.detail,
+            vibeId,
+          },
+          designChoice
+            ? { system: designChoice.style, template: marketId ? null : designChoice.template }
+            : undefined,
+        ),
+      ).catch(() => null);
 
   const catalogRef: SkillRef | null = catalog
     ? { name: catalog.name, source: catalog.source, url: catalogSkillUrl(catalog.source, catalog.name), metric: "curated" }
@@ -603,8 +622,10 @@ export async function produceDeliverable(
   // the final floor. Landing pages badge the open-design SYSTEM (its design grounding
   // is the headline craft); every other deliverable badges its equipped curated skill.
   const lastResort: SkillRef = discovered ? toSkillRef(discovered) : { name: house.name, source: "house", url: "" };
-  let headline: SkillRef =
-    kind === "landing_page"
+  // A founder-chosen top-market design skill is the headline badge (highest priority).
+  let headline: SkillRef = market
+    ? market.skill
+    : kind === "landing_page"
       ? (openDesign?.skill ?? catalogRef ?? authoredRef ?? lastResort)
       : (catalogRef ?? openDesign?.skill ?? authoredRef ?? lastResort);
 
@@ -612,12 +633,15 @@ export async function produceDeliverable(
     genPrompt(kind, noun, task, idea) +
     brief +
     `\n\nApply this house standard — your team's craft bar:\n${house.content}` +
-    (catalog?.body
+    // Auto-equipped catalog skill — SKIPPED when the founder explicitly chose a market
+    // design skill (below), so the two never give conflicting craft.
+    (catalog?.body && !market
       ? `\n\n=== EQUIPPED SKILL: "${catalog.name}" (your playbook for THIS deliverable) ===\nApply this skill's craft, structure, patterns, section ordering, and quality bar throughout — it is how an expert does this exact task, not optional reference. Match its standard:\n${catalog.body}`
       : "") +
     (authored ? `\n\nYour company's own authored skill — apply it:\n${authored.content}` : "") +
-    // Prefer open-design grounding; fall back to the generically-discovered skill.
-    (openDesign ? openDesign.content : discovered ? buildSkillBlock(discovered) : "") +
+    // Founder-chosen market design skill wins; else open-design grounding; else the
+    // generically-discovered skill.
+    (market ? market.content : openDesign ? openDesign.content : discovered ? buildSkillBlock(discovered) : "") +
     ([heroUrl, featureUrl, sectionUrl].some(Boolean)
       ? `\n\nPRE-GENERATED IMAGES — embed these EXACT urls (do NOT use any other image host or placeholder):${heroUrl ? `\n- HERO (16:9): ${heroUrl}` : ""}${featureUrl ? `\n- FEATURE (4:3): ${featureUrl}` : ""}${sectionUrl ? `\n- SECTION BG (16:9): ${sectionUrl}` : ""}`
       : "") +
@@ -695,11 +719,13 @@ export async function produceDeliverable(
         idea,
         hooks,
         kind !== "landing_page",
-        // A full React page (JSX + inline SVG + Tailwind) needs more headroom than
-        // text deliverables, or it truncates mid-component and won't compile — but
-        // 16k tokens is a LOT to stream through a slow proxy (a big chunk of the
-        // per-deliverable wall-clock). 12k still fits a complete page with margin.
-        kind === "landing_page" ? 12000 : 8000,
+        // A full React page (JSX + inline SVG + Tailwind) needs real headroom or it
+        // truncates mid-component and won't compile. With thinking DISABLED the whole
+        // budget goes to the page (no thinking tax), and a complete premium page runs
+        // ~13–14k tokens — 12k truncated real pages at the footer. 16k fits a full
+        // page with margin and, at the measured ~66 tok/s, still streams in ~4–5 min,
+        // well inside the 480s client timeout.
+        kind === "landing_page" ? 16000 : 8000,
         connectorRegistry,
         connectorTools,
       );
@@ -799,6 +825,7 @@ export async function produceDeliverable(
         const resp2 = await client.messages.create({
           model: MODEL,
           max_tokens: 8000,
+          thinking: NO_THINKING,
           messages: [{ role: "user", content: retryPrompt }],
         });
         const content2 = cleanText(resp2);

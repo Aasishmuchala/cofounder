@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { UseCofounder } from "@/lib/use-cofounder";
 import { deliverableFor, type DesignChoice } from "@/lib/agent-types";
-import { DESIGN_SYSTEMS, layoutsFor } from "@/lib/design-catalog";
+import { DESIGN_SYSTEMS, layoutsFor, marketTemplatesFor } from "@/lib/design-catalog";
 import { cx } from "@/components/ui/primitives";
 
 const AUTO = "__auto__";
@@ -38,6 +38,9 @@ export default function DesignChoiceModal({ cf }: { cf: UseCofounder }) {
     () => (task ? layoutsFor(kind, task.department) : []),
     [task, kind],
   );
+  // The top design SKILL.md files in the market for this kind — the PRIMARY
+  // template choices. "Auto" (below) falls back to open-design.
+  const templates = useMemo(() => (task ? marketTemplatesFor(kind) : []), [task, kind]);
 
   if (!task || !cf.canEdit) return null;
 
@@ -100,7 +103,23 @@ export default function DesignChoiceModal({ cf }: { cf: UseCofounder }) {
           </button>
         </div>
 
-        {/* STYLE */}
+        {/* TEMPLATE — the top design SKILL.md files in the market come FIRST (the
+            founder's primary pick). "Auto" falls back to open-design. The open-design
+            layout sub-choices (saas-landing / pricing / …) follow, tagged. */}
+        <div className="mt-4">
+          <Label>Template</Label>
+          <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+            <Choice active={layout === AUTO} onClick={() => setLayout(AUTO)} title="Auto" blurb="Open Design picks the best fit." tag="default" />
+            {templates.map((t) => (
+              <Choice key={t.id} active={layout === t.id} onClick={() => setLayout(t.id)} title={t.label} blurb={t.blurb} tag={t.repo.split("/")[0]} />
+            ))}
+            {layouts.map((l) => (
+              <Choice key={l.id} active={layout === l.id} onClick={() => setLayout(l.id)} title={l.label} blurb={l.blurb} tag="open design" />
+            ))}
+          </div>
+        </div>
+
+        {/* STYLE (visual system — refines the look on top of the chosen template) */}
         <div className="mt-4">
           <Label>Style</Label>
           <div className="mt-1.5 grid grid-cols-3 gap-1.5">
@@ -110,19 +129,6 @@ export default function DesignChoiceModal({ cf }: { cf: UseCofounder }) {
             ))}
           </div>
         </div>
-
-        {/* LAYOUT (only when the kind has template options) */}
-        {layouts.length > 0 && (
-          <div className="mt-4">
-            <Label>Layout</Label>
-            <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-              <Choice active={layout === AUTO} onClick={() => setLayout(AUTO)} title="Auto" blurb="Best layout for the request." />
-              {layouts.map((l) => (
-                <Choice key={l.id} active={layout === l.id} onClick={() => setLayout(l.id)} title={l.label} blurb={l.blurb} />
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* BRIEF */}
         <div className="mt-4">
@@ -170,16 +176,18 @@ function Choice({
   onClick,
   title,
   blurb,
+  tag,
 }: {
   active: boolean;
   onClick: () => void;
   title: string;
   blurb: string;
+  tag?: string;
 }) {
   return (
     <button
       onClick={onClick}
-      title={blurb}
+      title={tag ? `${blurb} — ${tag}` : blurb}
       className={cx(
         "rounded-[9px] border p-2 text-left transition-colors",
         active
@@ -187,7 +195,14 @@ function Choice({
           : "border-[var(--text-20)] bg-white hover:border-[var(--text-40)]",
       )}
     >
-      <div className="font-display text-[12px] font-medium leading-tight text-[var(--text-80)]">{title}</div>
+      <div className="flex items-center justify-between gap-1">
+        <div className="truncate font-display text-[12px] font-medium leading-tight text-[var(--text-80)]">{title}</div>
+        {tag ? (
+          <span className="shrink-0 rounded-[4px] bg-[var(--surface-raised)] px-1 py-px font-mono text-[8px] uppercase tracking-[0.03em] text-[var(--text-40)]">
+            {tag}
+          </span>
+        ) : null}
+      </div>
       <div className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-[var(--text-50)]">{blurb}</div>
     </button>
   );

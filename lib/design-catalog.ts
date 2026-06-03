@@ -88,6 +88,146 @@ const TEMPLATE_IDS = new Set<string>([
 ]);
 export const isValidTemplate = (id: string): boolean => TEMPLATE_IDS.has(id);
 
+/* ───────────────────────────────────────────────────────────────────────────
+   MARKET DESIGN TEMPLATES — the top design SKILL.md files in the wild (GitHub),
+   shown as the PRIMARY template choices in the Design gate. The founder picks one
+   and the runner fetches that exact SKILL.md live (lib/market-design.ts — cached +
+   injection-sanitized) and uses it as the deliverable's craft. "Auto" (offered in
+   the UI as null) FALLS BACK to open-design (lib/open-design.ts) — the design's
+   default until a chosen market skill wins. Every `raw` is verified to 200.
+   ───────────────────────────────────────────────────────────────────────────── */
+export interface MarketTemplate {
+  id: string; // stable slug; also the persisted DesignChoice.template value
+  label: string;
+  blurb: string;
+  kind: ArtifactKind;
+  repo: string; // owner/repo — provenance + the clickable skill badge
+  raw: string; // raw.githubusercontent SKILL.md URL the server fetches
+}
+
+// Curated from a GitHub-wide sweep of the top design skills (star counts noted),
+// every `raw` re-verified to HTTP 200 + valid frontmatter. Mapped to the kinds this
+// app actually ships (no deck/poster kind exists yet — those skills are omitted).
+export const MARKET_TEMPLATES: MarketTemplate[] = [
+  // ── Landing pages / web (the flagship use) ───────────────────────────────
+  {
+    id: "frontend-design",
+    label: "Frontend Design",
+    blurb: "Anthropic's anti-AI-slop skill — distinctive production web UI.",
+    kind: "landing_page",
+    repo: "anthropics/skills",
+    raw: "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md",
+  },
+  {
+    id: "ui-ux-pro-max",
+    label: "UI/UX Pro Max",
+    blurb: "Design DB — 161 palettes · 57 font pairs · 50+ styles (86k★).",
+    kind: "landing_page",
+    repo: "nextlevelbuilder/ui-ux-pro-max-skill",
+    raw: "https://raw.githubusercontent.com/nextlevelbuilder/ui-ux-pro-max-skill/main/.claude/skills/ui-ux-pro-max/SKILL.md",
+  },
+  {
+    id: "taste-skill",
+    label: "Taste",
+    blurb: "The most-starred anti-slop frontend taste system (32k★).",
+    kind: "landing_page",
+    repo: "Leonxlnx/taste-skill",
+    raw: "https://raw.githubusercontent.com/Leonxlnx/taste-skill/main/skills/taste-skill/SKILL.md",
+  },
+  {
+    id: "taste-soft",
+    label: "Taste · Soft",
+    blurb: "Awwwards 'expensive' agency look — shadow, motion, spacing.",
+    kind: "landing_page",
+    repo: "Leonxlnx/taste-skill",
+    raw: "https://raw.githubusercontent.com/Leonxlnx/taste-skill/main/skills/soft-skill/SKILL.md",
+  },
+  {
+    id: "taste-minimalist",
+    label: "Taste · Minimal",
+    blurb: "Editorial monochrome — type contrast, flat bento grids.",
+    kind: "landing_page",
+    repo: "Leonxlnx/taste-skill",
+    raw: "https://raw.githubusercontent.com/Leonxlnx/taste-skill/main/skills/minimalist-skill/SKILL.md",
+  },
+  {
+    id: "taste-brutalist",
+    label: "Taste · Brutal",
+    blurb: "Raw Swiss-print + terminal aesthetic, bold editorial.",
+    kind: "landing_page",
+    repo: "Leonxlnx/taste-skill",
+    raw: "https://raw.githubusercontent.com/Leonxlnx/taste-skill/main/skills/brutalist-skill/SKILL.md",
+  },
+  {
+    id: "web-artifacts",
+    label: "Web Artifacts",
+    blurb: "Elaborate multi-component React + Tailwind + shadcn pages.",
+    kind: "landing_page",
+    repo: "anthropics/skills",
+    raw: "https://raw.githubusercontent.com/anthropics/skills/main/skills/web-artifacts-builder/SKILL.md",
+  },
+  {
+    id: "theme-factory",
+    label: "Theme Factory",
+    blurb: "Cohesive theme tokens — color, type, spacing, dark mode.",
+    kind: "landing_page",
+    repo: "anthropics/skills",
+    raw: "https://raw.githubusercontent.com/anthropics/skills/main/skills/theme-factory/SKILL.md",
+  },
+  // ── Email ────────────────────────────────────────────────────────────────
+  {
+    id: "email-html-mjml",
+    label: "MJML Email",
+    blurb: "Cross-client responsive HTML email; Outlook/Gmail-safe.",
+    kind: "email",
+    repo: "framix-team/skill-email-html-mjml",
+    raw: "https://raw.githubusercontent.com/framix-team/skill-email-html-mjml/master/email-html-mjml/SKILL.md",
+  },
+  // ── Formatted docs (markdown) ────────────────────────────────────────────
+  {
+    id: "doc-coauthoring",
+    label: "Doc Co-Authoring",
+    blurb: "Structured proposals, specs & decision docs.",
+    kind: "markdown",
+    repo: "anthropics/skills",
+    raw: "https://raw.githubusercontent.com/anthropics/skills/main/skills/doc-coauthoring/SKILL.md",
+  },
+  {
+    id: "internal-comms",
+    label: "Internal Comms",
+    blurb: "Status reports, newsletters, FAQs, incident reports.",
+    kind: "markdown",
+    repo: "anthropics/skills",
+    raw: "https://raw.githubusercontent.com/anthropics/skills/main/skills/internal-comms/SKILL.md",
+  },
+  // ── Brand ────────────────────────────────────────────────────────────────
+  {
+    id: "brand-guidelines",
+    label: "Brand Guidelines",
+    blurb: "Disciplined brand color + typography system.",
+    kind: "brand_spec",
+    repo: "anthropics/skills",
+    raw: "https://raw.githubusercontent.com/anthropics/skills/main/skills/brand-guidelines/SKILL.md",
+  },
+  {
+    id: "taste-brandkit",
+    label: "Brand Kit",
+    blurb: "Premium brand boards, logo systems & identity (32k★).",
+    kind: "brand_spec",
+    repo: "Leonxlnx/taste-skill",
+    raw: "https://raw.githubusercontent.com/Leonxlnx/taste-skill/main/skills/brandkit/SKILL.md",
+  },
+];
+
+const MARKET_IDS = new Set(MARKET_TEMPLATES.map((t) => t.id));
+export const isMarketTemplate = (id: string): boolean => MARKET_IDS.has(id);
+
+/** The top market design SKILL.md "templates" offered for a deliverable kind.
+ *  Shown first in the Design gate; "Auto" falls back to open-design. */
+export function marketTemplatesFor(kind: ArtifactKind): MarketTemplate[] {
+  return MARKET_TEMPLATES.filter((t) => t.kind === kind);
+}
+
 /** Visual deliverables that resolve an open-design template — these are gated by
  *  the Design Direction popup. brand_spec is system-only (no template workflow)
  *  and is not gated. */

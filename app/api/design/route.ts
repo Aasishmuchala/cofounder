@@ -1,7 +1,7 @@
 import { coerceText, type DesignChoice, type WorkspaceMeta } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { dbConfigured, getWorkspace, updateWorkspaceMeta } from "@/lib/supabase-rest";
-import { isValidSystem, isValidTemplate } from "@/lib/design-catalog";
+import { isValidSystem, isValidTemplate, isMarketTemplate } from "@/lib/design-catalog";
 
 export const runtime = "nodejs";
 
@@ -22,7 +22,12 @@ export const runtime = "nodejs";
 function normalizeChoice(raw: unknown): DesignChoice {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const style = typeof o.style === "string" && isValidSystem(o.style) ? o.style : null;
-  const template = typeof o.template === "string" && isValidTemplate(o.template) ? o.template : null;
+  // A chosen TOP-MARKET design skill (isMarketTemplate) OR an open-design layout id
+  // (isValidTemplate) is accepted; anything else drops to null (= Auto → open-design).
+  const template =
+    typeof o.template === "string" && (isMarketTemplate(o.template) || isValidTemplate(o.template))
+      ? o.template
+      : null;
   return { style, template, brief: coerceText(o.brief, 2000) };
 }
 
