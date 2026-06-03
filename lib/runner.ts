@@ -35,7 +35,7 @@ const CLAUDE_CODE_DEPARTMENTS = new Set(["Engineering"]);
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
 import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
 import { compareSkills } from "@/lib/skill-select";
-import { readSkillBody, catalogSkillUrl } from "@/lib/skill-catalog";
+import { readSkillBody, catalogSkillUrl, loadCatalog } from "@/lib/skill-catalog";
 import { houseSkill, synthesizeSkill } from "@/lib/skill-foundry";
 import { generateImageUrl } from "@/lib/images";
 import { runChecks, judgeDeliverable, heuristicScore, QUALITY_BAR } from "@/lib/verify";
@@ -508,15 +508,20 @@ export async function produceDeliverable(
   const { kind, noun } = deliverableFor(task.department);
 
   const house = houseSkill(kind);
-  // Discover a generic craft skill + read the company's meta (brand + plan) in parallel.
-  const [discovered, meta] = await Promise.all([
-    discoverSkill({ department: task.department, title: task.title, idea, kind }),
+  // Read the company's meta (brand + plan). Skill craft now comes from the LOCAL
+  // curated catalog (compareSkills below) — reliable + relevant. Flaky live GitHub
+  // discovery is a LAST RESORT only when the catalog is empty (a deploy with no
+  // skills/ dir), so we never substitute a random trending repo for a real match.
+  const meta =
     dbConfigured && workspaceId
-      ? getWorkspace(workspaceId)
+      ? await getWorkspace(workspaceId)
           .then((w) => w?.meta ?? null)
           .catch(() => null)
-      : Promise.resolve(null),
-  ]);
+      : null;
+  const discovered =
+    loadCatalog().length === 0
+      ? await discoverSkill({ department: task.department, title: task.title, idea, kind }).catch(() => null)
+      : null;
   const vibeId = meta?.vibeId ?? null;
   // Founder design direction for this task: a per-task choice, else the workspace
   // default. Overrides the auto-selected open-design style/layout and injects a
@@ -531,20 +536,17 @@ export async function produceDeliverable(
   const connectorRegistry = getConnectorRegistry(meta?.connectors);
   const connectorTools = buildConnectorToolDescriptors(connectorRegistry);
 
-  // The best preloaded catalog skill for this task (the comparison the Skills tab
-  // shows). For text deliverables it becomes the agent's equipped skill — its
-  // SKILL.md craft is injected. Landing pages keep open-design as the primary
-  // (its grounding is verified), so we don't disturb them here.
+  // The best curated catalog skill for this task — now the PRIMARY craft source for
+  // EVERY deliverable (text AND landing pages), drawn from the 1400+ local SKILL.md
+  // library. Equip whenever there's a genuine match: score >= 12 clears either a
+  // same-department skill (+12) or a real keyword/kind hit, and compareSkills already
+  // drops off-topic cross-department skills. Its full craft is injected (below) so
+  // the output actually reflects the skill instead of a generic house style.
   let catalog: { name: string; source: string; body: string } | null = null;
   try {
     const cmp = compareSkills({ department: task.department, kind, title: task.title, detail: task.detail });
-    // Equip only a GENUINELY relevant skill — department fit alone isn't enough.
-    // Threshold 16 = department fit (12) PLUS a real content signal (a keyword/kind
-    // hit), so a generic same-department skill with no topical overlap isn't equipped.
-    // (Tracks the raised department-fit weight in compareSkills — was 10 when dept
-    // fit was +6; now +12.)
-    if (cmp.chosen && cmp.chosen.score >= 16 && kind !== "landing_page") {
-      catalog = { name: cmp.chosen.name, source: cmp.chosen.source || "skill", body: readSkillBody(cmp.chosen.dir, 2800) };
+    if (cmp.chosen && cmp.chosen.score >= 12) {
+      catalog = { name: cmp.chosen.name, source: cmp.chosen.source || "skill", body: readSkillBody(cmp.chosen.dir, 4500) };
     }
   } catch {
     catalog = null;
@@ -584,22 +586,25 @@ export async function produceDeliverable(
     ),
   ).catch(() => null);
 
-  let headline: SkillRef = catalog
+  const catalogRef: SkillRef | null = catalog
     ? { name: catalog.name, source: catalog.source, url: catalogSkillUrl(catalog.source, catalog.name), metric: "curated" }
-    : openDesign
-      ? openDesign.skill
-      : authored
-        ? { name: authored.name, source: "authored", url: "" }
-        : discovered
-          ? toSkillRef(discovered)
-          : { name: house.name, source: "house", url: "" };
+    : null;
+  const authoredRef: SkillRef | null = authored ? { name: authored.name, source: "authored", url: "" } : null;
+  // Discovery only badges when the catalog was empty (it's null otherwise); house is
+  // the final floor. Landing pages badge the open-design SYSTEM (its design grounding
+  // is the headline craft); every other deliverable badges its equipped curated skill.
+  const lastResort: SkillRef = discovered ? toSkillRef(discovered) : { name: house.name, source: "house", url: "" };
+  let headline: SkillRef =
+    kind === "landing_page"
+      ? (openDesign?.skill ?? catalogRef ?? authoredRef ?? lastResort)
+      : (catalogRef ?? openDesign?.skill ?? authoredRef ?? lastResort);
 
   const basePrompt =
     genPrompt(kind, noun, task, idea) +
     brief +
     `\n\nApply this house standard — your team's craft bar:\n${house.content}` +
     (catalog?.body
-      ? `\n\nYou are equipped with the "${catalog.name}" skill (chosen as the best match for this task). Apply its craft, structure, and best practices:\n${catalog.body}`
+      ? `\n\n=== EQUIPPED SKILL: "${catalog.name}" (your playbook for THIS deliverable) ===\nApply this skill's craft, structure, patterns, section ordering, and quality bar throughout — it is how an expert does this exact task, not optional reference. Match its standard:\n${catalog.body}`
       : "") +
     (authored ? `\n\nYour company's own authored skill — apply it:\n${authored.content}` : "") +
     // Prefer open-design grounding; fall back to the generically-discovered skill.
