@@ -243,3 +243,34 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   transitions.dev — shared motion (github.com/Jakubantalik/transitions.dev)
+   Reused on the app's OWN UI: the DesignChoiceModal (modal scale-up) and the
+   ArtifactPanel (right-edge drawer slide + cross-blur). The surfaces unmount on
+   close, so these are one-shot ENTRANCE @keyframes using transitions.dev's tuned
+   durations / easings / scale / blur. The global reduced-motion guard above
+   already neutralizes them.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --modal-open-dur: 250ms;
+  --modal-scale: 0.96;
+  --modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --panel-open-dur: 400ms;
+  --panel-travel: 36px;
+  --panel-blur: 2px;
+  --panel-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fade-dur: 220ms;
+}
+@keyframes t-modal-in {
+  from { transform: scale(var(--modal-scale)); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+@keyframes t-drawer-in {
+  from { transform: translateX(var(--panel-travel)); opacity: 0; filter: blur(var(--panel-blur)); }
+  to   { transform: translateX(0); opacity: 1; filter: blur(0); }
+}
+@keyframes t-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.t-modal-in  { animation: t-modal-in  var(--modal-open-dur) var(--modal-ease) both; transform-origin: center; will-change: transform, opacity; }
+.t-drawer-in { animation: t-drawer-in var(--panel-open-dur) var(--panel-ease) both; will-change: transform, opacity, filter; }
+.t-fade-in   { animation: t-fade-in   var(--t-fade-dur) ease both; }

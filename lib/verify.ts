@@ -16,6 +16,7 @@ const DIMENSIONS: Record<string, string[]> = {
   brand_spec: ["Distinctiveness", "Internal coherence", "Actionability"],
   email: ["Clarity & concision", "Personalization & specificity", "Compelling CTA", "Professional tone"],
   markdown: ["Specificity (no fluff)", "Completeness", "Actionability"],
+  pitch_deck: ["Narrative arc & clarity", "Visual design & polish", "Specific, credible content", "Investor persuasiveness"],
 };
 
 export interface JudgeResult {
@@ -43,6 +44,17 @@ export function runChecks(kind: ArtifactKind, content: string): { name: string; 
         name: "Generated imagery",
         pass: /<img[\s>]|image\.pollinations\.ai|https?:\/\/\S+\.(png|jpe?g|webp|avif)/i.test(content),
       },
+      { name: "Substantial build (>1.5KB)", pass: len > 1500 },
+      { name: "No template noise", pass: noNoise },
+    ];
+  }
+  if (kind === "pitch_deck") {
+    const slides = (content.match(/<section[\s>]/gi) || []).length || (content.match(/class="[^"]*\bslide\b/gi) || []).length;
+    return [
+      { name: "Self-contained HTML document", pass: /^\s*(?:﻿)?<!doctype html/i.test(content) && /<\/html>/i.test(content) },
+      { name: "Styled (inline <style>)", pass: /<style[\s>]/i.test(content) },
+      { name: "Multiple slides (>=4)", pass: slides >= 4 },
+      { name: "Sandbox-safe (no <script>)", pass: !/<script[\s>]/i.test(content) },
       { name: "Substantial build (>1.5KB)", pass: len > 1500 },
       { name: "No template noise", pass: noNoise },
     ];
@@ -75,13 +87,15 @@ export async function judgeDeliverable(
   args: { kind: ArtifactKind; idea: string; task: string; content: string },
 ): Promise<JudgeResult | null> {
   const dims = DIMENSIONS[args.kind] ?? DIMENSIONS.markdown;
-  // Landing pages are big React components — give the judge the WHOLE thing
-  // (grading a truncated quarter was unfairly tanking scores).
-  const cap = args.kind === "landing_page" ? 18000 : 7000;
+  // Landing pages + pitch decks are big HTML deliverables — give the judge the
+  // WHOLE thing (grading a truncated quarter was unfairly tanking scores).
+  const cap = args.kind === "landing_page" || args.kind === "pitch_deck" ? 18000 : 7000;
   const kindNote =
     args.kind === "landing_page"
       ? `\n\nNOTE: This deliverable is a React/Next.js page component (Tailwind classes + inline <style> animations). Judge the DESIGN it describes — color/typography/spacing choices in the classes, animation richness (@keyframes / IntersectionObserver / transitions), section completeness (hero, features, social proof, CTA, footer), copy specificity, responsiveness, and use of real generated <img> imagery. Do NOT penalize it for being code or for not being raw HTML. A complete, on-brand, animated page with specific copy is 7–9.`
-      : "";
+      : args.kind === "pitch_deck"
+        ? `\n\nNOTE: This deliverable is a self-contained HTML pitch deck — full-viewport scroll-snap <section> slides styled with one inline <style> (pure CSS, no script). Judge the NARRATIVE arc (problem→solution→market→model→ask), the visual design (palette/typography/hierarchy/spacing in the CSS), slide completeness (~8–10 focused slides), and copy specificity. Do NOT penalize it for being one HTML file or for using CSS instead of a slide library. A complete, on-brand deck with a clear story and specific copy is 7–9.`
+        : "";
   const system = `You are a ruthless senior reviewer grading a startup's deliverable before it ships. Be demanding and specific — reserve 9–10 only for genuinely excellent, distinctive, on-brand work; generic or templated output should score 5 or below. Grade each rubric dimension 0–10 and give an overall 0–10.${kindNote}\nReturn ONLY a single fenced json block:\n\`\`\`json\n{"score":0-10,"rubric":[{"label":"<dimension>","score":0-10}],"notes":"1-2 concrete sentences on the most important things to improve"}\n\`\`\``;
   const user = `Deliverable type: ${args.kind}\nCompany idea: ${args.idea || "a startup"}\nTask: ${args.task}\nRubric dimensions: ${dims.join("; ")}\n\nDeliverable to grade:\n<<<\n${args.content.slice(0, cap)}\n>>>`;
   try {

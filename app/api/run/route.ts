@@ -95,7 +95,7 @@ export async function POST(req: Request): Promise<Response> {
       !withArtifact.has(t.id) &&
       !(t.objectiveId && blockedObjs.has(t.objectiveId)) &&
       isTaskReady(t, doneIds) &&
-      (!needsDesignDirection(deliverableFor(t.department).kind) ||
+      (!needsDesignDirection(deliverableFor(t.department, t.title, t.detail).kind) ||
         hasDesignDefault ||
         Boolean(designChoices[t.id])),
   );

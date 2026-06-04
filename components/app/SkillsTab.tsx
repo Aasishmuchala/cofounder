@@ -41,7 +41,7 @@ export default function SkillsTab({ cf }: { cf: UseCofounder }) {
   async function compareTask(t: { id: string; title: string; department: string; detail?: string }) {
     setCmpTaskId(t.id);
     setCmp(null);
-    const { kind } = deliverableFor(t.department);
+    const { kind } = deliverableFor(t.department, t.title, t.detail);
     const p = new URLSearchParams({ compare: "1", department: t.department, kind, title: t.title, detail: t.detail ?? "" });
     const d = await fetch(`/api/skills?${p}`).then((r) => r.json()).catch(() => null);
     setCmp(d);

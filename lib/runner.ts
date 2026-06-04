@@ -34,6 +34,7 @@ import { claudeCodeActive, runClaudeCode } from "@/lib/claude-code";
 const CLAUDE_CODE_DEPARTMENTS = new Set(["Engineering"]);
 import { discoverSkill, buildSkillBlock, toSkillRef } from "@/lib/skills";
 import { selectOpenDesign, fetchOpenDesign } from "@/lib/open-design";
+import { transitionsBlock } from "@/lib/transitions";
 import { fetchMarketDesign } from "@/lib/market-design";
 import { isMarketTemplate, DEFAULT_MARKET_TEMPLATE } from "@/lib/design-catalog";
 import { compareSkills } from "@/lib/skill-select";
@@ -143,6 +144,35 @@ You are the Design agent. Produce a real brand spec in Markdown: a one-line bran
     return `${ctx}
 
 You are the Sales agent. Write a real, ready-to-send cold outbound email (subject line + body, <140 words, warm and specific, one clear CTA). Output ONLY Markdown with the subject on the first line as **Subject:** ...`;
+  }
+  if (kind === "pitch_deck") {
+    return `${ctx}
+
+You are a world-class startup storyteller + presentation designer. BUILD a complete investor PITCH DECK for this company as a single, self-contained HTML document.
+
+OUTPUT CONTRACT (the live preview renders this HTML directly — follow EXACTLY):
+- Output ONLY the HTML. No markdown fences, no prose, no commentary.
+- The FIRST line must be <!DOCTYPE html>, and emit ONE complete <html>…</html> document.
+- ALL styling in a single inline <style> tag. You MAY <link> Google Fonts. NO <script> and NO external JS (it renders in a script-sandboxed iframe) — every bit of motion/layout is pure CSS.
+- Finish every tag and rule. A complete, focused 8–10 slide deck beats a truncated longer one.
+
+DECK STRUCTURE — one <section class="slide"> per slide, ~8–10 slides, one idea each:
+1. Title — company name + a one-line positioning + a subtle brand mark.
+2. Problem — the painful status quo, made concrete.
+3. Solution — what you do in one crisp sentence + 3 supporting points.
+4. How it works — the product in 3 steps (ideally with a visual).
+5. Market — a credible TAM/SAM/SOM or sizing.
+6. Business model — how you make money.
+7. Why now / traction — the timing insight or momentum.
+8. Competition — a simple comparison or 2×2.
+9. Team — the roles this company needs.
+10. The ask — the raise + use of funds + a contact CTA.
+
+SLIDE SYSTEM (pure CSS): a full-viewport vertical deck with scroll-snap — html{scroll-snap-type:y mandatory} and each .slide{min-height:100vh;scroll-snap-align:start;display:flex;…} as a full-bleed composition. A persistent slide-number/progress affordance, a generous fluid type scale (clamp), and a huge title slide.
+
+IMAGERY (optional, encouraged): call the generate_image tool for a cover/section visual matching the brand and embed the returned URL in <img>. If unavailable, you MAY embed https://image.pollinations.ai/prompt/<URL-ENCODED vivid description>?width=1280&height=720&nologo=true&model=flux
+
+DESIGN QUALITY: commit to a bold, on-brand aesthetic using the grounding's palette + typography. Real, specific, benefit-led copy for THIS idea — no lorem, no "revolutionary/cutting-edge" filler. Make it look like a deck a funded startup would actually present. Responsive, AA contrast, semantic <section> slides. Output ONLY the HTML document, starting with <!DOCTYPE html>.`;
   }
   return `${ctx}
 
@@ -255,6 +285,80 @@ Worth a 15-min look? I can spin up a live demo on your exact use case.
 — {{sender}}`,
     };
   }
+  if (kind === "pitch_deck") {
+    const safeName = escapeHtml(name);
+    const safeIdea = escapeHtml(idea) || "a bold new company";
+    return {
+      title: `${name} — pitch deck`,
+      content: `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${safeName} — pitch deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0a12;--ink:#f4f4f7;--mut:rgba(244,244,247,.66);--line:rgba(255,255,255,.1);--grad:linear-gradient(105deg,#6d6bff,#b06bff 60%,#ff7ab0)}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-snap-type:y mandatory;scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+h1,h2,.brand,.stat{font-family:Sora,sans-serif;letter-spacing:-.03em;line-height:1.05}
+.slide{position:relative;min-height:100vh;scroll-snap-align:start;display:flex;flex-direction:column;justify-content:center;padding:clamp(40px,7vw,110px);border-bottom:1px solid var(--line);overflow:hidden}
+.kicker{font-family:Sora;font-size:13px;text-transform:uppercase;letter-spacing:.18em;color:#b06bff;margin-bottom:18px;font-weight:600}
+.num{position:absolute;top:28px;right:34px;font-family:Sora;font-size:13px;color:var(--mut)}
+.dot{width:30px;height:30px;border-radius:9px;background:var(--grad);display:inline-block;vertical-align:middle;margin-right:12px}
+h1{font-size:clamp(40px,8vw,92px)}
+h1 .g{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+h2{font-size:clamp(30px,5vw,56px);margin-bottom:22px;max-width:20ch}
+.lead{font-size:clamp(18px,2.4vw,25px);color:var(--mut);max-width:48ch}
+.grid{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin-top:42px}
+.card{border:1px solid var(--line);border-radius:16px;padding:26px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01))}
+.card h3{font-family:Sora;font-size:18px;margin-bottom:8px}.card p{color:var(--mut);font-size:15px}
+.stat{font-size:clamp(34px,5vw,56px);background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.aurora{position:absolute;inset:-30% -10% auto;height:60vh;z-index:0;filter:blur(100px);opacity:.5;background:radial-gradient(40% 50% at 30% 30%,#6d6bff66,transparent),radial-gradient(40% 50% at 70% 40%,#b06bff55,transparent)}
+.slide>*{position:relative;z-index:1}
+.cta{display:inline-flex;margin-top:30px;padding:14px 26px;border-radius:12px;background:var(--grad);color:#0a0a12;font-family:Sora;font-weight:700;text-decoration:none}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style></head><body>
+<section class="slide"><div class="aurora"></div><span class="num">01 / 08</span>
+<div class="kicker"><span class="dot"></span>Pitch deck</div>
+<h1>${safeName},<br><span class="g">${safeIdea}</span></h1>
+<p class="lead" style="margin-top:26px">The company that turns an idea into a running business — built, launched, and grown by autonomous agents, with a founder at the helm.</p></section>
+<section class="slide"><span class="num">02 / 08</span><div class="kicker">Problem</div>
+<h2>Starting a company is too slow and too fragmented.</h2>
+<p class="lead">Founders lose months stitching together tools, hiring, and busywork before they ever reach a customer. Most ideas die in setup — not in the market.</p></section>
+<section class="slide"><span class="num">03 / 08</span><div class="kicker">Solution</div>
+<h2>${safeName} runs the whole company with agents.</h2>
+<div class="grid">
+<div class="card"><h3>Every department</h3><p>Engineering, design, sales, marketing, ops — specialized agents working in parallel.</p></div>
+<div class="card"><h3>Real deliverables</h3><p>Not chat — shipped landing pages, brand specs, campaigns, and decks.</p></div>
+<div class="card"><h3>Human in the loop</h3><p>You approve anything risky. The founder always stays at the helm.</p></div></div></section>
+<section class="slide"><span class="num">04 / 08</span><div class="kicker">How it works</div>
+<h2>Idea → company in three steps.</h2>
+<div class="grid">
+<div class="card"><h3>1 · Describe</h3><p>Tell ${safeName} what you're building.</p></div>
+<div class="card"><h3>2 · Spin up</h3><p>The C-suite plans and spawns exactly the agents you need.</p></div>
+<div class="card"><h3>3 · Ship</h3><p>Agents produce real work, you approve, it goes live.</p></div></div></section>
+<section class="slide"><span class="num">05 / 08</span><div class="kicker">Market</div>
+<h2>A massive, urgent opportunity.</h2>
+<div class="grid">
+<div class="card"><div class="stat">$300B+</div><p>spent yearly on the work agents can now do.</p></div>
+<div class="card"><div class="stat">70M+</div><p>new businesses started worldwide each year.</p></div>
+<div class="card"><div class="stat">Now</div><p>frontier models finally make autonomous work real.</p></div></div></section>
+<section class="slide"><span class="num">06 / 08</span><div class="kicker">Business model</div>
+<h2>Simple revenue that expands with usage.</h2>
+<div class="grid">
+<div class="card"><h3>Subscription</h3><p>Monthly seats per active company.</p></div>
+<div class="card"><h3>Usage</h3><p>Metered agent runs beyond the included tier.</p></div>
+<div class="card"><h3>Marketplace</h3><p>Premium skills + connectors revenue share.</p></div></div></section>
+<section class="slide"><span class="num">07 / 08</span><div class="kicker">Why now</div>
+<h2>Momentum is on our side.</h2>
+<p class="lead">Agent capability is compounding monthly, the tooling ecosystem is exploding, and founders are ready to delegate. ${safeName} sits at exactly this inflection point.</p></section>
+<section class="slide"><div class="aurora"></div><span class="num">08 / 08</span><div class="kicker">The ask</div>
+<h2>Join us at the helm.</h2>
+<p class="lead">We're raising to expand the agent platform and reach the next 10,000 founders. Let's talk.</p>
+<a class="cta" href="#">Request the full deck →</a></section>
+</body></html>`,
+    };
+  }
   return {
     title: `${name} — ${noun}`,
     content: `# ${task.title}
@@ -297,7 +401,7 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
       properties: {
         kind: {
           type: "string",
-          enum: ["landing_page", "brand_spec", "markdown", "email"],
+          enum: ["landing_page", "brand_spec", "markdown", "email", "pitch_deck"],
           description: "Which deliverable type to read.",
         },
       },
@@ -509,7 +613,7 @@ export async function produceDeliverable(
   idea: string,
   hooks?: StreamHooks,
 ): Promise<{ artifact: Artifact; mock: boolean }> {
-  const { kind, noun } = deliverableFor(task.department);
+  const { kind, noun } = deliverableFor(task.department, task.title, task.detail);
 
   const house = houseSkill(kind);
   // Read the company's meta (brand + plan). Skill craft now comes from the LOCAL
@@ -654,6 +758,10 @@ export async function produceDeliverable(
     ([heroUrl, featureUrl, sectionUrl].some(Boolean)
       ? `\n\nPRE-GENERATED IMAGES — embed these EXACT urls (do NOT use any other image host or placeholder):${heroUrl ? `\n- HERO (16:9): ${heroUrl}` : ""}${featureUrl ? `\n- FEATURE (4:3): ${featureUrl}` : ""}${sectionUrl ? `\n- SECTION BG (16:9): ${sectionUrl}` : ""}`
       : "") +
+    // MOTION SYSTEM — make animated deliverables (landing pages + pitch decks) use the
+    // transitions.dev vocabulary (t-* classes, semantic tokens, reduced-motion guards).
+    // Returns "" for non-HTML kinds, so text deliverables are untouched.
+    transitionsBlock(kind) +
     // FOUNDER DESIGN DIRECTION — last + explicitly highest priority, so it overrides
     // any conflicting guidance from the house standard or the open-design grounding.
     (designChoice?.brief?.trim()
@@ -728,13 +836,13 @@ export async function produceDeliverable(
         idea,
         hooks,
         kind !== "landing_page",
-        // A full React page (JSX + inline SVG + Tailwind) needs real headroom or it
-        // truncates mid-component and won't compile. With thinking DISABLED the whole
-        // budget goes to the page (no thinking tax), and a complete premium page runs
-        // ~13–14k tokens — 12k truncated real pages at the footer. 16k fits a full
-        // page with margin and, at the measured ~66 tok/s, still streams in ~4–5 min,
-        // well inside the 480s client timeout.
-        kind === "landing_page" ? 16000 : 8000,
+        // A full React page or a multi-slide HTML pitch deck needs real headroom or
+        // it truncates mid-document. With thinking DISABLED the whole budget goes to
+        // output (no thinking tax); a complete premium page/deck runs ~13–14k tokens
+        // — 12k truncated real pages at the footer. 16k fits a full page/deck with
+        // margin and, at the measured ~66 tok/s, still streams in ~4–5 min, well
+        // inside the 480s client timeout.
+        kind === "landing_page" || kind === "pitch_deck" ? 16000 : 8000,
         connectorRegistry,
         connectorTools,
       );
@@ -828,7 +936,7 @@ export async function produceDeliverable(
     // A Claude Code deliverable is NEVER regenerated via the model — its content is
     // a real run summary + git diff; replacing it with a fresh model generation
     // would discard the actual code change. It is judged once (informational only).
-    if (judged && judged.score < QUALITY_BAR && kind !== "landing_page" && !claudeCodeHandled) {
+    if (judged && judged.score < QUALITY_BAR && kind !== "landing_page" && kind !== "pitch_deck" && !claudeCodeHandled) {
       try {
         const retryPrompt = `${basePrompt}\n\nA strict reviewer scored your previous attempt ${judged.score}/10. The most important things to FIX: ${judged.notes}\nProduce a clearly better version that fully addresses this feedback. Use the exact same output format as before.`;
         const resp2 = await client.messages.create({

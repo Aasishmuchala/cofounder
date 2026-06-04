@@ -33,7 +33,7 @@ export default function DesignChoiceModal({ cf }: { cf: UseCofounder }) {
     setDismissed(false);
   }, [task?.id]);
 
-  const kind = task ? deliverableFor(task.department).kind : "markdown";
+  const kind = task ? deliverableFor(task.department, task.title, task.detail).kind : "markdown";
   const layouts = useMemo(
     () => (task ? layoutsFor(kind, task.department) : []),
     [task, kind],
@@ -76,11 +76,11 @@ export default function DesignChoiceModal({ cf }: { cf: UseCofounder }) {
 
   return (
     <div
-      className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4 backdrop-blur-sm"
+      className="t-fade-in fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4 backdrop-blur-sm"
       onClick={() => setDismissed(true)}
     >
       <div
-        className="max-h-[88vh] w-full max-w-[560px] overflow-auto rounded-[16px] bg-white p-5 shadow-deep"
+        className="t-modal-in max-h-[88vh] w-full max-w-[560px] overflow-auto rounded-[16px] bg-white p-5 shadow-deep"
         onClick={(e) => e.stopPropagation()}
       >
         {/* header */}
@@ -93,7 +93,7 @@ export default function DesignChoiceModal({ cf }: { cf: UseCofounder }) {
               {task.title}
             </div>
             <div className="mt-1 font-mono text-[11px] text-[var(--text-50)]">
-              {task.department} · {deliverableFor(task.department).noun}
+              {task.department} · {deliverableFor(task.department, task.title, task.detail).noun}
             </div>
           </div>
           <button

@@ -1,5 +1,6 @@
 import { getArtifact } from "@/lib/supabase-rest";
 import { buildIsolatedReactPage } from "@/lib/react-preview";
+import { isHtmlDeliverable } from "@/lib/agent-types";
 
 export const runtime = "nodejs";
 
@@ -34,9 +35,9 @@ export async function GET(
     );
   }
 
-  if (artifact.kind === "landing_page") {
-    // The deliverable is a React/Next page component — render it live inside a
-    // sandboxed, null-origin iframe (its JS can't touch this origin).
+  if (isHtmlDeliverable(artifact.kind)) {
+    // A self-contained HTML deliverable (landing page or pitch deck) — render it
+    // live inside a sandboxed, null-origin iframe (its JS can't touch this origin).
     return new Response(buildIsolatedReactPage(artifact.content, artifact.title), { headers: HTML });
   }
 
