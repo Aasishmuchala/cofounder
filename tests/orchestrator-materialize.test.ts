@@ -10,7 +10,7 @@ vi.mock("@/lib/supabase-rest", () => ({
   // Transparent passthrough — materializePlan now runs under a per-workspace lock.
   withWorkspaceLock: (_id: string, fn: () => unknown) => fn(),
 }));
-vi.mock("@/lib/anthropic", () => ({ getAnthropic: () => null, MODEL: "test-model" }));
+vi.mock("@/lib/anthropic", () => ({ getAnthropic: () => null, MODEL: "test-model", NO_THINKING: { type: "disabled" } }));
 
 import { materializePlan } from "@/lib/orchestrator";
 import { ORCH_MAX_OBJECTIVES } from "@/lib/agent-types";

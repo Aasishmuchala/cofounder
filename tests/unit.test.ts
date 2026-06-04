@@ -60,10 +60,14 @@ describe("images", () => {
     expect(a).not.toContain(" "); // encoded
     expect(pollinationsUrl("a coffee shop, warm", "1:1")).toBe(a); // deterministic
   });
-  it("generateImageUrl falls back to keyless when no Higgsfield key", async () => {
-    const u = await generateImageUrl("hero image", "16:9");
-    expect(u).toContain("image.pollinations.ai");
-    expect(u).toContain("width=1280");
+  it("generateImageUrl falls back to a keyless provider when no Higgsfield/stock key", async () => {
+    // No HF/Unsplash/Pexels keys in the test env → keyless fallback. Pollinations is
+    // now paywalled, so the keyless URL is loremflickr (keyworded) / picsum, with the
+    // 16:9 dimensions baked into the path (1280/720).
+    const u = await generateImageUrl("a sleek fintech dashboard", "16:9");
+    expect(u).toMatch(/^https:\/\/(loremflickr\.com|picsum\.photos)\//);
+    expect(u).toContain("/1280/");
+    expect(u).not.toContain("pollinations");
   });
 });
 

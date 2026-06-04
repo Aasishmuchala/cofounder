@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const getAnthropicMock = vi.fn();
 const getWorkspaceMock = vi.fn();
-vi.mock("@/lib/anthropic", () => ({ getAnthropic: () => getAnthropicMock(), MODEL: "test-model" }));
+vi.mock("@/lib/anthropic", () => ({ getAnthropic: () => getAnthropicMock(), MODEL: "test-model", NO_THINKING: { type: "disabled" } }));
 vi.mock("@/lib/supabase-rest", () => ({
   getWorkspace: (...a: unknown[]) => getWorkspaceMock(...a),
   updateWorkspaceMeta: vi.fn(), insertTasks: vi.fn(),
