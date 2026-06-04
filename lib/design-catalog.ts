@@ -245,5 +245,5 @@ export function defaultTemplateFor(kind: ArtifactKind): MarketTemplate | null {
  *  the Design Direction popup. brand_spec is system-only (no template workflow)
  *  and is not gated. */
 export function needsDesignDirection(kind: ArtifactKind): boolean {
-  return kind === "landing_page" || kind === "email" || kind === "markdown";
+  return kind === "landing_page" || kind === "email" || kind === "markdown" || kind === "pitch_deck";
 }

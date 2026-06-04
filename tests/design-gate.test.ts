@@ -56,6 +56,7 @@ describe("design catalog", () => {
     expect(needsDesignDirection("landing_page")).toBe(true);
     expect(needsDesignDirection("email")).toBe(true);
     expect(needsDesignDirection("markdown")).toBe(true);
+    expect(needsDesignDirection("pitch_deck")).toBe(true);
     expect(needsDesignDirection("brand_spec")).toBe(false);
     expect(layoutsFor("landing_page", "Engineering").map((l) => l.id)).toContain("saas-landing");
     expect(layoutsFor("brand_spec", "Design")).toEqual([]);

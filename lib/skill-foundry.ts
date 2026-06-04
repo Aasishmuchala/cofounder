@@ -57,11 +57,32 @@ One email, <=120 words. First line on the recipient, not on us. A specific, cred
 const GENERIC_SKILL = `# Skill: Actionable founder deliverable
 Concise, structured Markdown a founder can act on today: a one-line objective, 3-6 concrete steps each with an owner/ETA, the top risk + mitigation, and a clear "done =" definition. Specific to the idea. No fluff, no restating the prompt.`;
 
+const PITCH_DECK_SKILL = `# Skill: Investor-grade pitch deck (self-contained HTML)
+
+Build ONE complete HTML5 document — a full-screen, scroll-snap SLIDE DECK. Inline <style> only; you MAY <link> Google Fonts; NO <script> (it renders in a script-sandboxed iframe, so all motion/layout is pure CSS). It must look like a deck a funded startup would actually present — never a generic template.
+
+## Narrative (the real lever)
+Tell a tight, inevitable story across ~8–10 slides, one idea per slide: Title → Problem → Solution → How it works → Market → Business model → Why now / traction → Competition → Team → The ask. Every slide earns its place; cut filler.
+
+## Slide system (pure CSS)
+- A vertical, full-viewport deck: html{scroll-snap-type:y mandatory}; each .slide{min-height:100vh;scroll-snap-align:start;display:flex;…} as a full-bleed composition.
+- A persistent slide-number / progress affordance. Generous fluid type scale (clamp), a huge title slide, strong hierarchy, consistent grid + spacing.
+
+## Visual craft
+- Commit to a BOLD, on-brand aesthetic from the company's idea and the grounding's palette + typography. Distinctive display + clean body fonts (NEVER system/Inter/Arial as the display face). Backgrounds with depth (gradient mesh / grain / layered transparency), not flat fills. One memorable signature element.
+
+## Copy
+- Specific, credible, benefit-led for THIS company. Real numbers where plausible. No lorem, no "revolutionary/cutting-edge" filler.
+
+## Bar
+Responsive (clamp + grid), AA contrast, semantic <section> slides. Output ONLY the HTML document, first line <!DOCTYPE html>. Finish every tag — a complete 8-slide deck beats a truncated 14-slide one.`;
+
 const HOUSE: Record<ArtifactKind, HouseSkill> = {
   landing_page: { name: "house/best-in-class-landing-page", content: LANDING_PAGE_SKILL },
   brand_spec: { name: "house/founder-brand-spec", content: BRAND_SPEC_SKILL },
   email: { name: "house/high-reply-cold-email", content: EMAIL_SKILL },
   markdown: { name: "house/actionable-deliverable", content: GENERIC_SKILL },
+  pitch_deck: { name: "house/investor-pitch-deck", content: PITCH_DECK_SKILL },
 };
 
 /** The agent's built-in, best-in-market skill for a deliverable kind. */

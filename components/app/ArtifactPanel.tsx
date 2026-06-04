@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Artifact } from "@/lib/agent-types";
+import { isHtmlDeliverable, type Artifact } from "@/lib/agent-types";
 import type { UseCofounder } from "@/lib/use-cofounder";
 import { buildReactHarness } from "@/lib/react-preview";
 
@@ -10,6 +10,7 @@ const KIND_LABEL: Record<string, string> = {
   brand_spec: "Brand spec",
   markdown: "Document",
   email: "Email",
+  pitch_deck: "Pitch deck",
 };
 
 function scoreStyle(score: number): { background: string; color: string } {
@@ -59,6 +60,11 @@ export default function ArtifactPanel({
   const [draft, setDraft] = useState(artifact.content);
   const [busy, setBusy] = useState(false);
 
+  // Self-contained HTML deliverables (landing page / pitch deck) render live in
+  // the sandboxed iframe AND get a full-screen "Open ↗". isSite stays landing-
+  // page-only — it gates the Next.js project "Export ↓", which a deck has no
+  // equivalent for.
+  const rendersAsHtml = isHtmlDeliverable(artifact.kind);
   const isSite = artifact.kind === "landing_page";
   const canEdit = cf.canEdit;
   // Versions = all artifacts for this task (cf.artifacts is newest-first).
@@ -81,8 +87,8 @@ export default function ArtifactPanel({
 
   return (
     <div className="absolute inset-0 z-40 flex justify-end">
-      <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px]" onClick={onClose} />
-      <div className="relative flex h-full w-[min(620px,94%)] flex-col bg-[var(--background)] shadow-deep">
+      <div className="t-fade-in absolute inset-0 bg-black/20 backdrop-blur-[1px]" onClick={onClose} />
+      <div className="t-drawer-in relative flex h-full w-[min(620px,94%)] flex-col bg-[var(--background)] shadow-deep">
         {/* header */}
         <div className="flex items-center justify-between gap-2 border-b border-black/5 px-5 py-3.5">
           <div className="min-w-0">
@@ -107,7 +113,7 @@ export default function ArtifactPanel({
             {isSite && !editing && (
               <a href={`/api/export/${artifact.id}`} className={actBtn} title="Download as a runnable Next.js project">Export ↓</a>
             )}
-            {isSite && !editing && (
+            {rendersAsHtml && !editing && (
               <a href={`/app/preview/${artifact.id}`} target="_blank" rel="noreferrer" className={actBtn}>Open ↗</a>
             )}
             {canEdit && !editing && task && (
@@ -193,7 +199,7 @@ export default function ArtifactPanel({
               spellCheck={false}
               className="h-full w-full resize-none border-0 bg-[#0c0c12] p-4 font-mono text-[12px] leading-relaxed text-[#e6e6ef] outline-none"
             />
-          ) : isSite ? (
+          ) : rendersAsHtml ? (
             <iframe
               title={artifact.title}
               srcDoc={buildReactHarness(artifact.content, artifact.title)}

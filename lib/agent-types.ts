@@ -27,7 +27,7 @@ export interface ChatMessage {
   content: string;
 }
 
-export type ArtifactKind = "landing_page" | "markdown" | "brand_spec" | "email";
+export type ArtifactKind = "landing_page" | "markdown" | "brand_spec" | "email" | "pitch_deck";
 
 /** Client-safe reference to the skill an agent equipped to produce a deliverable. */
 export interface SkillRef {
@@ -79,13 +79,50 @@ export const DEPARTMENT_DELIVERABLE: Record<
   Security: { kind: "markdown", noun: "security checklist" },
 };
 
-export function deliverableFor(department: string): {
+/**
+ * Detect a deliverable kind from the TASK ITSELF (title + detail), independent of
+ * department — so e.g. an "investor pitch deck" task produces a deck whichever
+ * department owns it, without remapping a whole department (which would over-
+ * produce decks for every task in it). Returns null when no specific intent is
+ * detected; the caller then falls back to the department default. Matching is
+ * deliberately CONSERVATIVE — a bare "deck" never qualifies, only a clear
+ * pitch/investor/fundraising/slide deck — so existing tasks keep their kind.
+ */
+const PITCH_DECK_INTENT =
+  /\b(pitch|investor|fund\s?rais\w*|seed|series\s+[a-d]|demo[\s-]?day|slide)\s*deck\b|\bpitch\s+(deck|presentation)\b/i;
+
+export function detectDeliverableIntent(
+  title: string,
+  detail = "",
+): { kind: ArtifactKind; noun: string } | null {
+  const text = `${title} ${detail}`;
+  if (PITCH_DECK_INTENT.test(text)) return { kind: "pitch_deck", noun: "pitch deck" };
+  return null;
+}
+
+export function deliverableFor(
+  department: string,
+  title = "",
+  detail = "",
+): {
   kind: ArtifactKind;
   noun: string;
 } {
   return (
+    detectDeliverableIntent(title, detail) ??
     DEPARTMENT_DELIVERABLE[department] ?? { kind: "markdown", noun: "brief" }
   );
+}
+
+/**
+ * True when a deliverable's `content` is a complete, self-contained HTML document
+ * (landing page or pitch deck) — rendered live in a script-sandboxed, null-origin
+ * iframe via buildReactHarness rather than as markdown/plain text. The single
+ * predicate every render surface shares (the in-canvas panel, the full-screen
+ * preview, and the public /p share route) so they never drift apart.
+ */
+export function isHtmlDeliverable(kind: ArtifactKind): boolean {
+  return kind === "landing_page" || kind === "pitch_deck";
 }
 
 /**

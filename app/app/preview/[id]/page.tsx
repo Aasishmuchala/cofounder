@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getArtifact } from "@/lib/supabase-rest";
 import { buildReactHarness } from "@/lib/react-preview";
+import { isHtmlDeliverable } from "@/lib/agent-types";
 
 export const runtime = "nodejs";
 
@@ -47,7 +48,7 @@ export default async function PreviewPage({
         </div>
       </div>
       <div className="min-h-0 flex-1">
-        {artifact.kind === "landing_page" ? (
+        {isHtmlDeliverable(artifact.kind) ? (
           <iframe
             title={artifact.title}
             srcDoc={buildReactHarness(artifact.content, artifact.title)}

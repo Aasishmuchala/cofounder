@@ -49,6 +49,10 @@ const TEMPLATES_BY_KIND: Record<ArtifactKind, Cand[]> = {
   // brand_spec is driven by the DESIGN.md system itself — no template workflow.
   brand_spec: [],
   markdown: [],
+  // pitch_deck is system-only too: the founder's chosen DESIGN.md (palette +
+  // typography) grounds the deck's visual style, and the house pitch-deck skill
+  // supplies the slide structure — there's no per-template SKILL workflow.
+  pitch_deck: [],
 };
 
 // markdown is department-specific (Marketing announcement vs Finance report …).

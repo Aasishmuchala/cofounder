@@ -890,7 +890,7 @@ export function useCofounder(): UseCofounder {
         !doneIds.has(t.id) &&
         !(t.objectiveId && blocked.has(t.objectiveId)) &&
         isTaskReady(t, doneIds) &&
-        needsDesignDirection(deliverableFor(t.department).kind) &&
+        needsDesignDirection(deliverableFor(t.department, t.title, t.detail).kind) &&
         !choices[t.id],
     );
   }, [tasks, artifacts, meta.designChoices, meta.designDefault, meta.objectives, canEdit]);
