@@ -114,10 +114,21 @@ when their server env flag is set, unless you *also* set their explicit
       latter two when a `workspaceId` is present) — apply a per-workspace request cap
       that returns HTTP `429` when exceeded. Tune it with **`HELM_RATELIMIT_PER_MIN`**
       (default **20** requests/minute per workspace).
-- [ ] **Residual: pre-workspace model calls aren't keyed.** `/api/onboarding` and the
-      very first planning turn (no `workspaceId` yet) call the model without a
-      per-workspace key, so the in-app limiter can't bound them. Front the deployment
-      with an edge/WAF rate limiter to cover anonymous model-spend loops.
+- [x] **Anonymous (pre-workspace) model calls are per-IP rate limited.** The unkeyed
+      paid entry points — `/api/onboarding`, and the first turn of `/api/agent` /
+      `/api/plan` / `/api/execute` (no `workspaceId` yet) — are capped **per client IP**
+      (from `x-forwarded-for`) so an anonymous loop can't drive unbounded model spend or
+      unbounded workspace creation. Tune with **`HELM_ANON_RATELIMIT_PER_MIN`** (default
+      **10**/min/IP). Gated to production, like the keyed limiter. NOTE: the IP is taken
+      from the proxy header, so a fronting edge/WAF that sets a trustworthy
+      `x-forwarded-for` is still recommended — it's the authority on client identity and
+      the cheapest place to shed a flood.
+- [x] **Concurrency ceiling on generations.** A per-instance semaphore caps how many
+      model-backed requests run at once (**`HELM_MAX_CONCURRENT_GENERATIONS`**, default
+      **6**) with a bounded wait queue (**`HELM_MAX_GENERATION_QUEUE`**, default **12**);
+      past that the route sheds load with **HTTP 503 + Retry-After** instead of fanning
+      out into N simultaneous Opus calls or exhausting the event loop. Set these to match
+      your provider rate limits and instance size.
 - [ ] **Two-layer enforcement.** Layer 1 is per-instance/in-memory (free, always on).
       Layer 2 — after migration `0002` — is the shared `cofounder_rate_limit` Postgres
       window, atomic across every instance, so the cap no longer multiplies with the
@@ -125,6 +136,14 @@ when their server env flag is set, unless you *also* set their explicit
       is absent or erroring, so the limiter can never take generation down with it. An
       edge/WAF limiter in front is still recommended for hostile traffic (it's cheaper
       than reaching the app at all).
+- [ ] **Set a hard spend cap + billing alert on the Anthropic key.** The in-app limits
+      are the first line; a provider-side monthly cap is the backstop that bounds the
+      worst case regardless of any app bug. Do this before exposing a real key publicly.
+- [ ] **Front with a load balancer / edge for raw connection floods.** The app-level
+      guards return clean `429`/`503`, but a burst of hundreds of *simultaneous* TCP
+      connections to a single Node process can still exceed the OS accept backlog (raw
+      `ECONNRESET`) before any handler runs. A fronting LB/CDN (Vercel provides this)
+      absorbs that; a bare self-hosted `next start` should sit behind nginx/Caddy.
 
 ---
 
@@ -171,5 +190,10 @@ when their server env flag is set, unless you *also* set their explicit
 | `COMPUTER_USE` / `CLAUDE_CODE` | **No — keep unset** | disabled (good) |
 | Private uploads bucket + signed URLs | Recommended | public bucket |
 | `HELM_RATELIMIT_PER_MIN` | Optional | 20 / min / workspace (per instance) |
+| `HELM_ANON_RATELIMIT_PER_MIN` | Optional | 10 / min / IP on unkeyed model routes |
+| `HELM_MAX_CONCURRENT_GENERATIONS` | Optional | 6 concurrent (503 past queue) |
+| `HELM_MAX_GENERATION_QUEUE` | Optional | 12 waiting |
+| Anthropic key spend cap + alert | **Recommended** | none (uncapped bill) |
+| Fronting LB/edge (or nginx/Caddy) | **Recommended** | raw socket floods reach Node |
 | `HELM_ALLOW_OPEN_WRITES` | **Discouraged** | unset (writes stay protected) |
 | Replace `public/` artwork & stale copy | **Yes** | copyrighted / overstated |

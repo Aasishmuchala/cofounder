@@ -1,6 +1,8 @@
 import { coerceText } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { enforceRateLimit } from "@/lib/rate-limit-db";
+import { enforceAnonRateLimit } from "@/lib/request-guard";
+import { withGenerationSlot, Saturated } from "@/lib/concurrency";
 import { produceDeliverable } from "@/lib/runner";
 
 export const runtime = "nodejs";
@@ -41,21 +43,37 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 403 });
   }
 
-  // Per-workspace rate limit (PRODUCTION-ONLY) — cap how fast one workspace can
-  // drive Opus generations, BEFORE any model work. Gated so the keyless local
-  // demo is unchanged. Only applies when a workspaceId is the key (one-off runs
-  // with no workspace persist nothing and aren't keyed).
-  if (workspaceId && (process.env.NODE_ENV === "production" || process.env.VERCEL)) {
-    const rl = await enforceRateLimit(workspaceId);
-    if (!rl.allowed) {
-      const retryAfter = Math.ceil(rl.retryAfterMs / 1000);
-      return Response.json(
-        { ok: false, error: "rate limited" },
-        { status: 429, headers: { "Retry-After": String(retryAfter) } },
-      );
+  // Rate limit Opus generations BEFORE any model work. Per-workspace when keyed;
+  // per-IP when there's no workspace (a one-off run still triggers a paid call, so
+  // it's part of the unkeyed cost-DoS surface). Both PRODUCTION-ONLY.
+  if (workspaceId) {
+    if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+      const rl = await enforceRateLimit(workspaceId);
+      if (!rl.allowed) {
+        const retryAfter = Math.ceil(rl.retryAfterMs / 1000);
+        return Response.json(
+          { ok: false, error: "rate limited" },
+          { status: 429, headers: { "Retry-After": String(retryAfter) } },
+        );
+      }
     }
+  } else {
+    const limited = enforceAnonRateLimit(req, "execute");
+    if (limited) return limited;
   }
 
-  const { artifact, mock } = await produceDeliverable(workspaceId || undefined, task, idea);
-  return Response.json({ ok: true, mock, artifact });
+  try {
+    const { artifact, mock } = await withGenerationSlot(() =>
+      produceDeliverable(workspaceId || undefined, task, idea),
+    );
+    return Response.json({ ok: true, mock, artifact });
+  } catch (e) {
+    if (e instanceof Saturated) {
+      return Response.json(
+        { ok: false, error: "busy, retry shortly" },
+        { status: 503, headers: { "Retry-After": String(e.retryAfterSec) } },
+      );
+    }
+    throw e;
+  }
 }

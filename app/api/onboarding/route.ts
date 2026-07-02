@@ -1,6 +1,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { coerceText } from "@/lib/agent-types";
 import { tooLarge } from "@/lib/auth";
+import { enforceAnonRateLimit } from "@/lib/request-guard";
+import { withGenerationSlot, Saturated } from "@/lib/concurrency";
 import { getAnthropic, aiConfigured, MODEL } from "@/lib/anthropic";
 import {
   mockQuestions,
@@ -45,24 +47,34 @@ async function callClaude(system: string, userText: string): Promise<string | nu
   const client = getAnthropic();
   if (!aiConfigured || !client) return null;
   try {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 2500,
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: userText }] as Anthropic.MessageParam[],
-    });
+    // Hold a concurrency slot for the paid call so a burst can't fan out into N
+    // simultaneous Opus calls (cost + provider 429s + socket exhaustion). Saturated
+    // propagates so the route returns 503 rather than degrading to a mock silently.
+    const response = await withGenerationSlot(() =>
+      client.messages.create({
+        model: MODEL,
+        max_tokens: 2500,
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: userText }] as Anthropic.MessageParam[],
+      }),
+    );
     return response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map((b) => b.text)
       .join("\n")
       .trim();
-  } catch {
+  } catch (e) {
+    if (e instanceof Saturated) throw e; // let the route map it to 503
     return null;
   }
 }
 
 export async function POST(req: Request): Promise<Response> {
   if (tooLarge(req)) return Response.json({ error: "payload too large" }, { status: 413 });
+  // UNKEYED paid route (no workspace) — the per-workspace limiter can't cover it.
+  // Cap anonymous callers per-IP (prod only) so a loop can't drive unbounded spend.
+  const limited = enforceAnonRateLimit(req, "onboarding");
+  if (limited) return limited;
   let body: Body = {};
   try {
     const parsed = await req.json();
@@ -74,31 +86,41 @@ export async function POST(req: Request): Promise<Response> {
   const action = coerceText(body.action, 20);
   const idea = coerceText(body.idea, 600);
 
-  if (action === "questions") {
-    const text = await callClaude(QUESTIONS_SYSTEM, `Company idea: ${idea || "a new startup"}`);
-    const questions = text ? parseQuestions(text) : null;
-    return Response.json({
-      questions: questions ?? mockQuestions(),
-      mock: !questions,
-    });
-  }
+  try {
+    if (action === "questions") {
+      const text = await callClaude(QUESTIONS_SYSTEM, `Company idea: ${idea || "a new startup"}`);
+      const questions = text ? parseQuestions(text) : null;
+      return Response.json({
+        questions: questions ?? mockQuestions(),
+        mock: !questions,
+      });
+    }
 
-  if (action === "plan") {
-    const answers: AnsweredQuestion[] = Array.isArray(body.answers)
-      ? body.answers
-          .map((a) => ({ prompt: coerceText(a?.prompt, 240), answer: coerceText(a?.answer, 240) }))
-          .filter((a) => a.prompt && a.answer)
-      : [];
-    const qa = answers.map((a) => `Q: ${a.prompt}\nA: ${a.answer}`).join("\n\n");
-    const text = await callClaude(
-      PLAN_SYSTEM,
-      `Company idea: ${idea || "a new startup"}\n\nOnboarding answers:\n${qa || "(none)"}`,
-    );
-    const plan = text ? parsePlan(text) : null;
-    return Response.json({
-      plan: plan ?? mockPlan(idea, answers),
-      mock: !plan,
-    });
+    if (action === "plan") {
+      const answers: AnsweredQuestion[] = Array.isArray(body.answers)
+        ? body.answers
+            .map((a) => ({ prompt: coerceText(a?.prompt, 240), answer: coerceText(a?.answer, 240) }))
+            .filter((a) => a.prompt && a.answer)
+        : [];
+      const qa = answers.map((a) => `Q: ${a.prompt}\nA: ${a.answer}`).join("\n\n");
+      const text = await callClaude(
+        PLAN_SYSTEM,
+        `Company idea: ${idea || "a new startup"}\n\nOnboarding answers:\n${qa || "(none)"}`,
+      );
+      const plan = text ? parsePlan(text) : null;
+      return Response.json({
+        plan: plan ?? mockPlan(idea, answers),
+        mock: !plan,
+      });
+    }
+  } catch (e) {
+    if (e instanceof Saturated) {
+      return Response.json(
+        { error: "busy, retry shortly" },
+        { status: 503, headers: { "Retry-After": String(e.retryAfterSec) } },
+      );
+    }
+    throw e;
   }
 
   return Response.json({ error: "unknown action" }, { status: 400 });

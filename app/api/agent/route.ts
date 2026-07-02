@@ -9,6 +9,8 @@ import {
 import { getAnthropic, aiConfigured, MODEL } from "@/lib/anthropic";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { enforceRateLimit } from "@/lib/rate-limit-db";
+import { enforceAnonRateLimit } from "@/lib/request-guard";
+import { withGenerationSlot, Saturated } from "@/lib/concurrency";
 
 export const runtime = "nodejs";
 
@@ -249,18 +251,23 @@ export async function POST(req: Request): Promise<Response> {
     });
   }
 
-  // Per-workspace rate limit (PRODUCTION-ONLY) — a real (paid) planner model call
-  // follows, so cap how fast one workspace can drive it. Keyed by workspaceId, so it
-  // only applies once a workspace exists (the first turn has none). Dev/keyless demo
-  // is unchanged.
-  if (workspaceId && (process.env.NODE_ENV === "production" || process.env.VERCEL)) {
-    const rl = await enforceRateLimit(workspaceId);
-    if (!rl.allowed) {
-      return Response.json(
-        { error: "rate limited" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
-      );
+  // Rate limit the paid planner call. A workspace-keyed limiter covers later
+  // turns; the FIRST turn has no workspaceId, so it's covered by a per-IP anon
+  // limiter instead (the unkeyed cost-DoS surface). Both are PRODUCTION-ONLY so
+  // the keyless local demo is unchanged.
+  if (workspaceId) {
+    if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+      const rl = await enforceRateLimit(workspaceId);
+      if (!rl.allowed) {
+        return Response.json(
+          { error: "rate limited" },
+          { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+        );
+      }
     }
+  } else {
+    const limited = enforceAnonRateLimit(req, "agent");
+    if (limited) return limited;
   }
 
   try {
@@ -283,21 +290,23 @@ export async function POST(req: Request): Promise<Response> {
       apiMessages.push({ role: "user", content: lastUser || "Get started." });
     }
 
-    const response = await client.messages.create({
-      model: MODEL,
-      // Generous cap: the model does extended thinking, which shares this budget
-      // with the output — too low truncates the trailing JSON block.
-      max_tokens: 5000,
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT + contextSuffix,
-          // Prompt caching on the (large, stable) system prompt.
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: apiMessages,
-    });
+    const response = await withGenerationSlot(() =>
+      client.messages.create({
+        model: MODEL,
+        // Generous cap: the model does extended thinking, which shares this budget
+        // with the output — too low truncates the trailing JSON block.
+        max_tokens: 5000,
+        system: [
+          {
+            type: "text",
+            text: SYSTEM_PROMPT + contextSuffix,
+            // Prompt caching on the (large, stable) system prompt.
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+        messages: apiMessages,
+      }),
+    );
 
     const text = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === "text")
@@ -319,8 +328,16 @@ export async function POST(req: Request): Promise<Response> {
       { reply: parsed.reply, tasks: ensureApproval(parsed.tasks) },
       { mock: false, workspaceId, idea: lastUser, meta },
     );
-  } catch {
-    // Any API/network failure -> mock, never throw to the client.
+  } catch (e) {
+    // Instance saturated -> shed load with 503 instead of silently serving a mock
+    // (a mock on overload would mask the problem and still cost the DB writes).
+    if (e instanceof Saturated) {
+      return Response.json(
+        { error: "busy, retry shortly" },
+        { status: 503, headers: { "Retry-After": String(e.retryAfterSec) } },
+      );
+    }
+    // Any other API/network failure -> mock, never throw to the client.
     return finalize(mockResult(lastUser), {
       mock: true,
       workspaceId,

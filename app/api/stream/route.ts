@@ -2,6 +2,7 @@ import { coerceText, isTaskReady, blockedObjectiveIds, deliverableFor, type Plan
 import { needsDesignDirection } from "@/lib/design-catalog";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { enforceRateLimit } from "@/lib/rate-limit-db";
+import { withGenerationSlot, Saturated } from "@/lib/concurrency";
 import { dbConfigured, listTasks, listArtifacts, claimTask, patchTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
@@ -121,24 +122,26 @@ export async function POST(req: Request): Promise<Response> {
       };
       try {
         send("status", { phase: "writing", department: claimed.department, title: claimed.title });
-        const { artifact } = await produceDeliverable(
-          workspaceId,
-          {
-            id: claimed.id,
-            title: claimed.title,
-            department: claimed.department,
-            detail: claimed.detail,
-            deps: claimed.dependsOn,
-            objectiveId: claimed.objectiveId,
-            executor: claimed.executor,
-          },
-          idea,
-          {
-            onHop: () => send("reset", {}),
-            onText: (t) => send("delta", { t }),
-            onTool: (names) => send("tool", { names }),
-            onPhase: (phase) => send("status", { phase }),
-          },
+        const { artifact } = await withGenerationSlot(() =>
+          produceDeliverable(
+            workspaceId,
+            {
+              id: claimed.id,
+              title: claimed.title,
+              department: claimed.department,
+              detail: claimed.detail,
+              deps: claimed.dependsOn,
+              objectiveId: claimed.objectiveId,
+              executor: claimed.executor,
+            },
+            idea,
+            {
+              onHop: () => send("reset", {}),
+              onText: (t) => send("delta", { t }),
+              onTool: (names) => send("tool", { names }),
+              onPhase: (phase) => send("status", { phase }),
+            },
+          ),
         );
         send("done", {
           artifactId: artifact.id,
@@ -146,9 +149,16 @@ export async function POST(req: Request): Promise<Response> {
           kind: artifact.kind,
           title: artifact.title,
         });
-      } catch {
-        await patchTask(claimed.id, { status: "needs_action" }, workspaceId).catch(() => {});
-        send("error", { message: "run failed" });
+      } catch (e) {
+        if (e instanceof Saturated) {
+          // Overloaded, not failed — re-queue (clears the lease) and tell the
+          // client to retry rather than marking the task needs_action.
+          await patchTask(claimed.id, { status: "todo" }, workspaceId).catch(() => {});
+          send("error", { message: "busy, retry shortly", retryable: true });
+        } else {
+          await patchTask(claimed.id, { status: "needs_action" }, workspaceId).catch(() => {});
+          send("error", { message: "run failed" });
+        }
       } finally {
         closed = true;
         controller.close();

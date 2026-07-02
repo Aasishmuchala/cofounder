@@ -1,6 +1,8 @@
 import { coerceText } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { enforceRateLimit } from "@/lib/rate-limit-db";
+import { enforceAnonRateLimit } from "@/lib/request-guard";
+import { withGenerationSlot, Saturated } from "@/lib/concurrency";
 import { dbConfigured, getWorkspace } from "@/lib/supabase-rest";
 import { decomposeGoal, materializePlan } from "@/lib/orchestrator";
 
@@ -36,17 +38,21 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ ok: false, error: "no goal" }, { status: 400 });
   }
 
-  // Per-workspace rate limit (PRODUCTION-ONLY) — POST decomposes the goal via a paid
-  // model call. Keyed by workspaceId when present (an anonymous decompose with no
-  // workspace can't be per-workspace keyed). Dev/keyless demo is unchanged.
-  if (workspaceId && (process.env.NODE_ENV === "production" || process.env.VERCEL)) {
-    const rl = await enforceRateLimit(workspaceId);
-    if (!rl.allowed) {
-      return Response.json(
-        { ok: false, error: "rate limited" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
-      );
+  // Rate limit the paid decompose call: per-workspace when keyed, per-IP when
+  // anonymous (no workspace). Both PRODUCTION-ONLY; dev/keyless demo is unchanged.
+  if (workspaceId) {
+    if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+      const rl = await enforceRateLimit(workspaceId);
+      if (!rl.allowed) {
+        return Response.json(
+          { ok: false, error: "rate limited" },
+          { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } },
+        );
+      }
     }
+  } else {
+    const limited = enforceAnonRateLimit(req, "plan");
+    if (limited) return limited;
   }
 
   // Read the workspace meta to ground the decomposition (brand + plan). The
@@ -54,11 +60,17 @@ export async function POST(req: Request): Promise<Response> {
   const meta = workspaceId && dbConfigured ? (await getWorkspace(workspaceId).then((w) => w?.meta ?? null).catch(() => null)) : null;
 
   try {
-    const plan = await decomposeGoal(workspaceId, goal, meta);
+    const plan = await withGenerationSlot(() => decomposeGoal(workspaceId, goal, meta));
     // Surface the heuristic-fallback flag at the top level too (mirrors plan.fallback)
     // so the UI can warn the founder the plan is a generic template, not bespoke.
     return Response.json({ ok: true, plan, fallback: plan.fallback === true });
-  } catch {
+  } catch (e) {
+    if (e instanceof Saturated) {
+      return Response.json(
+        { ok: false, error: "busy, retry shortly" },
+        { status: 503, headers: { "Retry-After": String(e.retryAfterSec) } },
+      );
+    }
     return Response.json({ ok: false, error: "decomposition failed" }, { status: 500 });
   }
 }

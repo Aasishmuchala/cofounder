@@ -1,10 +1,13 @@
 import { coerceText } from "@/lib/agent-types";
-import { authorizeWrite } from "@/lib/auth";
+import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { uploadToStorage, dbConfigured } from "@/lib/supabase-rest";
 
 export const runtime = "nodejs";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+// Allow a little multipart overhead (boundaries, headers) over the raw file cap
+// when rejecting by Content-Length pre-buffer.
+const MAX_UPLOAD_BODY = MAX_BYTES + 64 * 1024;
 
 // Allowlist of content-types accepted for upload. Deliberately EXCLUDES
 // image/svg+xml and text/html — both can carry inline scripts and would execute
@@ -37,6 +40,14 @@ export function isAllowedContentType(contentType: string | null | undefined): bo
 // POST /api/upload  (multipart: file, workspaceId, workspaceSecret)
 //   -> uploads to the Library bucket, returns { file: { name, url } }.
 export async function POST(req: Request): Promise<Response> {
+  // Reject an oversized body by its declared Content-Length BEFORE req.formData()
+  // buffers the whole multipart payload into memory. Without this, a large (or
+  // unauthenticated) upload is fully read before the size/auth checks below —
+  // an OOM/DoS vector. The per-file MAX_BYTES check still runs post-parse for the
+  // exact size and for chunked bodies that omit Content-Length.
+  if (tooLarge(req, MAX_UPLOAD_BODY)) {
+    return Response.json({ ok: false, error: "too large (max 10MB)" }, { status: 413 });
+  }
   const form = await req.formData().catch(() => null);
   if (!form) return Response.json({ ok: false, error: "bad form" }, { status: 400 });
 

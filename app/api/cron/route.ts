@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import {
   dbConfigured,
   listActiveWorkspaceIds,
@@ -9,6 +10,22 @@ import {
 } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 import { isTaskReady, blockedObjectiveIds, type Task, type PlanObjective } from "@/lib/agent-types";
+
+/** Constant-time compare of the incoming Bearer token against CRON_SECRET, so the
+ *  check can't be probed byte-by-byte via response timing. Length-mismatch is
+ *  short-circuited (timingSafeEqual throws on unequal lengths) — acceptable since
+ *  it only reveals the secret's length, not its bytes. */
+function bearerMatches(header: string, secret: string): boolean {
+  const expected = `Bearer ${secret}`;
+  const a = Buffer.from(header);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  try {
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -39,7 +56,7 @@ async function handle(req: Request): Promise<Response> {
     }
   } else {
     const auth = req.headers.get("authorization") || "";
-    if (auth !== `Bearer ${secret}`) {
+    if (!bearerMatches(auth, secret)) {
       return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
     }
   }

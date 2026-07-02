@@ -1,5 +1,13 @@
 // Adversarial stress harness for the cofounder clone.
 // Assumes a server already running on BASE (default :3300) in mock mode.
+//
+// NOTE: this harness fires many rapid ANONYMOUS calls to the paid model routes.
+// Against a PRODUCTION server those are per-IP rate limited (HELM_ANON_RATELIMIT_
+// PER_MIN, default 10/min) and concurrency-gated (503 past the queue), so run it
+// against a dev server, or start the target with generous limits, e.g.:
+//   HELM_ANON_RATELIMIT_PER_MIN=100000 HELM_MAX_CONCURRENT_GENERATIONS=64 \
+//   HELM_MAX_GENERATION_QUEUE=512 PORT=3300 npm run start
+// Otherwise 429/503 from the (correctly working) limiters read as false failures.
 const BASE = process.env.BASE || "http://localhost:3300";
 
 let pass = 0, fail = 0;

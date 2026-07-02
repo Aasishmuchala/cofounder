@@ -775,17 +775,33 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
     });
   }
 
-  // Total meta size guard: the workspace row's jsonb must stay reasonable. If we
-  // blew the budget, drop the LOWEST-priority field (the audit log) — it's a
-  // convenience record, not load-bearing state. If STILL too large, trim the
-  // spend ledger to its newest 100 entries (the primary growth vector once a
-  // workspace processes many spend proposals); the budget config is tiny.
+  // Total meta size guard: the workspace row's jsonb must stay reasonable. Trim
+  // low-priority records before dropping anything wholesale, so an owner who fills
+  // other fields can't silently evict their ENTIRE audit trail — the RECENT audit
+  // entries (the ones that matter for an investigation) are preserved as long as
+  // possible. Order: trim auditLog to newest 50 -> trim spend ledger to newest 100
+  // -> only then drop auditLog entirely -> final array-halving backstop.
   try {
-    if (JSON.stringify(out).length > 200_000 && out.auditLog) {
-      delete out.auditLog;
+    if (JSON.stringify(out).length > 200_000 && out.auditLog && out.auditLog.length > 50) {
+      out.auditLog = out.auditLog.slice(-50);
     }
     if (JSON.stringify(out).length > 200_000 && out.spendRecords && out.spendRecords.length > 100) {
       out.spendRecords = out.spendRecords.slice(-100);
+    }
+    // designChoices is the largest single growth vector (up to 200 entries × a
+    // 2000-char brief ≈ 400KB) and it's a MAP, not one of the arrays the backstop
+    // halves — so trim it explicitly before the array backstop, or the ceiling
+    // could be blown by design briefs alone.
+    if (JSON.stringify(out).length > 200_000 && out.designChoices) {
+      const keys = Object.keys(out.designChoices);
+      if (keys.length > 20) {
+        const kept: Record<string, DesignChoice> = {};
+        for (const k of keys.slice(-20)) kept[k] = out.designChoices[k];
+        out.designChoices = kept;
+      }
+    }
+    if (JSON.stringify(out).length > 200_000 && out.auditLog) {
+      delete out.auditLog;
     }
     // Final hard backstop: whatever array field is driving the bloat (objectives /
     // pendingApprovals / files / customAgents / …), halve the largest until under
@@ -802,6 +818,11 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
       if (!biggest || biggestLen === 0) break;
       const arr = out[biggest] as unknown[];
       (out as Record<string, unknown>)[biggest] = arr.slice(0, Math.max(1, Math.floor(arr.length / 2)));
+    }
+    // designChoices could STILL dominate if every array is already minimal — drop
+    // it wholesale as the last resort so we never return an over-budget object.
+    if (JSON.stringify(out).length > 200_000 && out.designChoices) {
+      delete out.designChoices;
     }
   } catch {
     delete out.auditLog;

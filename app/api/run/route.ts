@@ -2,6 +2,7 @@ import { coerceText, isTaskReady, blockedObjectiveIds, deliverableFor, type Plan
 import { needsDesignDirection } from "@/lib/design-catalog";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { enforceRateLimit } from "@/lib/rate-limit-db";
+import { withGenerationSlot, Saturated } from "@/lib/concurrency";
 import { dbConfigured, listTasks, listArtifacts, patchTask, claimTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
@@ -124,21 +125,33 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    await produceDeliverable(
-      workspaceId,
-      {
-        id: claimed.id,
-        title: claimed.title,
-        department: claimed.department,
-        detail: claimed.detail,
-        deps: claimed.dependsOn,
-        objectiveId: claimed.objectiveId,
-        executor: claimed.executor,
-      },
-      idea,
+    await withGenerationSlot(() =>
+      produceDeliverable(
+        workspaceId,
+        {
+          id: claimed.id,
+          title: claimed.title,
+          department: claimed.department,
+          detail: claimed.detail,
+          deps: claimed.dependsOn,
+          objectiveId: claimed.objectiveId,
+          executor: claimed.executor,
+        },
+        idea,
+      ),
     );
     return Response.json({ ran: claimed.id, remaining: Math.max(0, actionable.length - 1) });
-  } catch {
+  } catch (e) {
+    if (e instanceof Saturated) {
+      // Transient overload, NOT a task failure — re-queue the claim (back to todo,
+      // clearing the lease) so it runs on the next tick instead of waiting out the
+      // stale-lease window, and shed load with a 503.
+      await patchTask(claimed.id, { status: "todo" }, workspaceId).catch(() => {});
+      return Response.json(
+        { ran: null, remaining: actionable.length, error: "busy, retry shortly" },
+        { status: 503, headers: { "Retry-After": String(e.retryAfterSec) } },
+      );
+    }
     // Failed -> needs human attention; surface it rather than silently looping.
     await patchTask(claimed.id, { status: "needs_action" }, workspaceId).catch(() => {});
     return Response.json({

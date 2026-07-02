@@ -202,11 +202,10 @@ describe("sanitizeWorkspaceMeta — budget config", () => {
 /* ──────────────────────────── secondary size guard ──────────────────────────── */
 
 describe("sanitizeWorkspaceMeta — secondary size guard trims the ledger", () => {
-  it("drops auditLog first, then trims spendRecords to newest 100 when the surviving meta is still oversized", () => {
+  it("trims low-priority records (audit log, then spend ledger) to keep meta under budget", () => {
     // Per-field caps (label<=120, args<=2KB, etc.) make spendRecords alone unable
     // to breach 200KB, so the secondary guard fires only in COMBINATION. Build a
-    // meta whose surviving fields (pendingApprovals + files + spendRecords) clear
-    // 200KB AFTER auditLog is dropped, forcing the ledger trim.
+    // meta whose fields together clear 200KB, forcing the eviction cascade.
     const m = sanitizeWorkspaceMeta({
       pendingApprovals: Array.from({ length: 50 }, (_, i) => ({
         id: `p${i}`, taskId: `t${i}`, connectorId: "computer", toolName: "run_shell",
@@ -216,13 +215,17 @@ describe("sanitizeWorkspaceMeta — secondary size guard trims the ledger", () =
       auditLog: Array.from({ length: 200 }, (_, i) => ({ approvalId: `a${i}`, action: "approve", ts: i, outcome: "y".repeat(900) })),
       spendRecords: Array.from({ length: 500 }, (_, i) => ({ id: `sp${i}`, department: "Finance", amountUsd: i, label: "x".repeat(120), ts: i })),
     });
-    // auditLog is dropped first (lowest priority).
-    expect(m.auditLog).toBeUndefined();
-    // spendRecords trimmed to the newest 100 (keeps the highest-numbered ids).
-    expect(m.spendRecords!.length).toBe(100);
-    expect(m.spendRecords![m.spendRecords!.length - 1].id).toBe("sp499");
-    // The final blob is under the budget.
+    // Invariant: the final blob is ALWAYS under the budget.
     expect(JSON.stringify(m).length).toBeLessThanOrEqual(200_000);
+    // Audit log is trimmed to its recent tail (<=50) or dropped — never left full.
+    expect(m.auditLog === undefined || m.auditLog.length <= 50).toBe(true);
+    if (m.auditLog && m.auditLog.length) {
+      // Whatever survives is the NEWEST tail (highest ts).
+      expect(m.auditLog[m.auditLog.length - 1].ts).toBe(199);
+    }
+    // Spend ledger trimmed toward its newest entries (<=100 under the guard).
+    expect(m.spendRecords!.length).toBeLessThanOrEqual(100);
+    expect(m.spendRecords![m.spendRecords!.length - 1].id).toBe("sp499");
   });
 
   it("keeps the full ledger when the meta is comfortably within budget", () => {
