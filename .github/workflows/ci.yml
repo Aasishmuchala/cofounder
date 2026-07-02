@@ -1,0 +1,44 @@
+# CI: every push/PR runs lint → typecheck-via-build → the full vitest suite.
+# The app is keyless-mock-safe by design, so no secrets are needed here; the
+# suite and build must stay green with zero env. SKILLS_HOME points at an
+# empty dir so a runner's home directory can never leak skills into catalog
+# assertions.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SKILLS_HOME: /tmp/no-home-skills
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build

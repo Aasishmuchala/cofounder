@@ -61,8 +61,11 @@ tenant isolation. See **[`LAUNCH.md`](LAUNCH.md)** for the full launch checklist
 
 The generation routes (`/api/run`, `/api/execute`, `/api/stream`, plus the planner
 `/api/agent` and `/api/plan` when a workspace is known) are rate-limited per workspace,
-returning `429` past `HELM_RATELIMIT_PER_MIN` requests/minute (default 20; the counter
-is per-instance/in-memory). Pre-workspace model calls (`/api/onboarding`, the very first
+returning `429` past `HELM_RATELIMIT_PER_MIN` requests/minute (default 20). The limiter
+is two-layer: an in-memory sliding window per instance, PLUS — once migration
+`0002_occ_rate_limit.sql` is applied — a shared atomic Postgres window
+(`cofounder_rate_limit` RPC) that holds the cap across every serverless instance
+(feature-detected; fails open to the local layer). Pre-workspace model calls (`/api/onboarding`, the very first
 planning turn) aren't workspace-keyed — front them with an edge/WAF limiter. Uploads to
 `/api/upload` are bounded by a 10 MB size cap **and a
 content-type allowlist** (plus filename sanitization), so an unexpected MIME type is
@@ -82,8 +85,10 @@ npm run dev                  # http://localhost:3000
 ```
 
 Deploying to production? Follow **[`LAUNCH.md`](LAUNCH.md)** — it covers the env that
-becomes mandatory (`APP_SECRET`, `CRON_SECRET`), the RLS migration, and the dangerous
-capabilities that must stay off.
+becomes mandatory (`APP_SECRET`, `CRON_SECRET`), the two migrations (RLS hardening +
+multi-instance safety), and the dangerous capabilities that must stay off. CI
+(`.github/workflows/ci.yml`) runs lint + the full vitest suite + a production build on
+every push and PR.
 
 ## Design system
 Tokens and reusable surfaces live in `app/globals.css`; primitives (`RaisedCard`, `LightButton`,
@@ -98,3 +103,8 @@ Tokens and reusable surfaces live in `app/globals.css`; primitives (`RaisedCard`
   for Helm and department-tagged (`department:` frontmatter) across all 12 org departments —
   no imported third-party skill content, so there are no upstream license/attribution strings
   attached. The Skills-tab search placeholder shows the live catalog count from `/api/skills`.
+
+## License
+MIT (see [`LICENSE`](LICENSE)) for the code and the first-party skill catalog (`skills/`,
+authored for this repo). The pixel-art / icon PNGs under `public/` are excluded — they were
+mirrored from a third-party site and must be replaced before any public deployment.

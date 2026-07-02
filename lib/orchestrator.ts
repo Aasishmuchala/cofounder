@@ -15,6 +15,7 @@
 // app/api/plan route. The pure helpers (sanitizePlan) carry no model call and are
 // unit-tested directly.
 
+import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   coerceText,
@@ -367,14 +368,34 @@ export async function materializePlan(
   const plan = sanitizePlan(rawPlan);
   if (plan.objectives.length === 0) return { objectives: [], taskCount: 0 };
 
+  // Content hash of the sanitized plan — the PRIMARY idempotency key. Covers
+  // structure (departments, deps, task wiring), so a re-approved identical plan
+  // is a no-op while a DIFFERENT plan that happens to reuse objective titles
+  // still materializes. Stable: computed over the sanitizer's canonical output.
+  const planHash = createHash("sha256")
+    .update(
+      JSON.stringify({
+        goal: plan.goal,
+        objectives: plan.objectives.map((o) => [o.title, o.department, o.dependsOn]),
+        tasks: plan.tasks.map((t) => [t.title, t.department, t.objectiveId, t.dependsOn]),
+      }),
+    )
+    .digest("hex");
+
   // Serialize per workspace so a double-click / two-tab approve can't clobber
   // objectives or duplicate tasks (updateWorkspaceMeta is a non-atomic RMW).
   return withWorkspaceLock(workspaceId, async () => {
-    // Idempotency: if this exact plan (matched by objective titles) is already
-    // materialized, return it unchanged rather than inserting a second copy.
-    const already = (await getWorkspace(workspaceId)
-      .then((w) => (w?.meta?.objectives ?? []) as PlanObjective[])
-      .catch(() => [])) as PlanObjective[];
+    // Idempotency, two layers: (1) the plan hash (exact re-submit of an already-
+    // materialized plan — the double-click/replay case); (2) the legacy title-set
+    // check for workspaces materialized before hashes were recorded.
+    const priorMeta = await getWorkspace(workspaceId)
+      .then((w) => w?.meta ?? null)
+      .catch(() => null);
+    const already = (priorMeta?.objectives ?? []) as PlanObjective[];
+    const priorHashes = Array.isArray(priorMeta?.planHashes) ? priorMeta.planHashes : [];
+    if (priorHashes.includes(planHash)) {
+      return { objectives: already, taskCount: 0 };
+    }
     const alreadyTitles = new Set(already.map((o) => o.title));
     if (plan.objectives.every((o) => alreadyTitles.has(o.title))) {
       return { objectives: already, taskCount: 0 };
@@ -444,6 +465,11 @@ export async function materializePlan(
   const existingActive = Array.isArray(existingMeta?.activeDepartments) ? existingMeta.activeDepartments : [];
   // The spawned org accumulates across plans (the company grows over time).
   const activeDepartments = Array.from(new Set<string>([...existingActive, ...plan.departments]));
+  // Record this plan's hash (ring, last 8) so an exact re-approve is a no-op.
+  const planHashes = [
+    ...(Array.isArray(existingMeta?.planHashes) ? existingMeta.planHashes : []),
+    planHash,
+  ].slice(-8);
   // Concurrency guard: updateWorkspaceMeta is a non-atomic read-modify-write, so
   // two near-simultaneous approvals (double-click / two tabs) could both read the
   // same base and clobber each other — silently evicting one materialization's
@@ -458,7 +484,7 @@ export async function materializePlan(
   }
   // Newest objectives last; cap at the objective limit (sanitizer re-caps too).
   const merged = [...existing, ...materializedObjectives].slice(-ORCH_MAX_OBJECTIVES);
-  await updateWorkspaceMeta(workspaceId, { objectives: merged, activeDepartments }).catch(() => {});
+  await updateWorkspaceMeta(workspaceId, { objectives: merged, activeDepartments, planHashes }).catch(() => {});
 
   return { objectives: materializedObjectives, taskCount: realIdByPlanId.size };
   });

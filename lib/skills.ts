@@ -62,13 +62,38 @@ const DESIGN_KINDS = new Set<ArtifactKind>(["landing_page", "brand_spec"]);
 // `exfiltrat` alternative has NO trailing \b: a \b after "exfiltrat" never matches
 // because the next char ("e"/"i" in exfiltrate/exfiltration) is a word char, so
 // the boundary would let those phrasings slip through.
+//
+// Pattern families (kept deliberately narrow — the false-positive cost is a
+// clobbered legit skill/tool result, so every addition is a phrasing with no
+// common benign use in craft/reference text):
+//   - instruction override: ignore/disregard/forget/override + previous/prior/…
+//   - identity hijack:      you are now…, pretend to be / pretend you are
+//   - prompt exfiltration:  reveal/print/show/repeat the system prompt/instructions
+//   - covert-channel asks:  do not tell the user, without telling the user
+//   - jailbreak vocabulary: jailbreak, DAN mode, developer mode
+//   - data theft:           exfiltrat…
 export const INJECTION =
-  /\b(ignore (all |the )?(previous|above)|disregard (the )?(previous|above)|system prompt|you are now|new instructions?|reveal (your )?(system|prompt|instructions)|begin (system|prompt))\b|exfiltrat/i;
+  /\b(ignore (all |the |any |your )?(previous|above|prior|earlier|preceding)|disregard (all |the |any |your )?(previous|above|prior|earlier)|forget (all |the |any |your )?(previous|above|prior|earlier)|override (all |the |any |your )?(instructions?|rules|guidelines|safety)|system prompt|you are now|pretend (to be|you are)|new instructions?|(reveal|print|show|repeat|output) (your |the )?(system|hidden|original) (prompt|instructions?)|reveal (your )?(system|prompt|instructions)|begin (system|prompt)|do not (tell|inform|alert|notify) the user|without (telling|asking|informing|alerting) the user|jailbreak|dan mode|developer mode)\b|exfiltrat/i;
 
-/** Cap + scan untrusted skill text. Returns null if it looks like an injection. */
+/**
+ * Strip invisible/bidi control characters an attacker can thread through a
+ * marker phrase ("i​gnore p​revious…") to slip past the INJECTION
+ * regex, or use to visually reorder text (RTL overrides). These have no
+ * legitimate role in skill/tool text fed to a model, so removal is lossless:
+ * U+200B–200F (zero-widths, LRM/RLM), U+202A–202E (bidi embeds/overrides),
+ * U+2060–2064 (word joiner + invisible operators), U+FEFF (BOM/ZWNBSP).
+ */
+export function stripInvisibles(s: string): string {
+  return s.replace(/[​-‏‪-‮⁠-⁤﻿]/g, "");
+}
+
+/** Cap + scan untrusted skill text. Returns null if it looks like an injection.
+ *  Invisibles are stripped FIRST so a zero-width-split phrase can't slip the
+ *  scan — and the returned text is the stripped form, so what was scanned is
+ *  exactly what gets grounded into the prompt. */
 export function sanitizeSkill(raw: string | undefined): string | null {
   if (!raw) return null;
-  const head = raw.slice(0, 9000);
+  const head = stripInvisibles(raw.slice(0, 12000)).slice(0, 9000);
   if (INJECTION.test(head)) return null;
   const text = head.slice(0, 6000).trim();
   return text.length > 120 ? text : null;

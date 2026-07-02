@@ -1,7 +1,7 @@
 import { coerceText, isTaskReady, blockedObjectiveIds, deliverableFor, type PlanObjective } from "@/lib/agent-types";
 import { needsDesignDirection } from "@/lib/design-catalog";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { enforceRateLimit } from "@/lib/rate-limit-db";
 import { dbConfigured, listTasks, listArtifacts, claimTask, patchTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
@@ -48,7 +48,7 @@ export async function POST(req: Request): Promise<Response> {
   // work (and before the DB load/claim below). Gated so the keyless local demo is
   // unchanged; workspaceId is guaranteed non-empty above.
   if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
-    const rl = checkRateLimit(workspaceId);
+    const rl = await enforceRateLimit(workspaceId);
     if (!rl.allowed) {
       return Response.json(
         { error: "rate limited" },

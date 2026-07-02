@@ -8,7 +8,7 @@ import {
 } from "@/lib/supabase-rest";
 import { getAnthropic, aiConfigured, MODEL } from "@/lib/anthropic";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { enforceRateLimit } from "@/lib/rate-limit-db";
 
 export const runtime = "nodejs";
 
@@ -254,7 +254,7 @@ export async function POST(req: Request): Promise<Response> {
   // only applies once a workspace exists (the first turn has none). Dev/keyless demo
   // is unchanged.
   if (workspaceId && (process.env.NODE_ENV === "production" || process.env.VERCEL)) {
-    const rl = checkRateLimit(workspaceId);
+    const rl = await enforceRateLimit(workspaceId);
     if (!rl.allowed) {
       return Response.json(
         { error: "rate limited" },

@@ -52,6 +52,13 @@ Set every one of these before serving public traffic.
 
 - [ ] **Apply `supabase/migrations/0001_hardening.sql` before going live.** It enables
       row-level security as **defense in depth**.
+- [ ] **Apply `supabase/migrations/0002_occ_rate_limit.sql`.** It adds (a) the
+      `meta_version` column powering optimistic-concurrency on workspace `meta`
+      (compare-and-swap PATCH + retry — concurrent writers on different instances can no
+      longer silently drop each other's updates), and (b) the `cofounder_rate_limit`
+      RPC — a shared, atomic per-workspace rate window enforced across all instances.
+      Both are feature-detected: a pre-migration database keeps the exact legacy
+      single-instance behavior.
 - [ ] Understand the trust model: the app talks to Postgres with the **Supabase
       service key, server-side only** (via PostgREST `fetch`; the browser never holds a
       key and only ever calls `/api/*`). The **primary tenant boundary is the
@@ -111,25 +118,27 @@ when their server env flag is set, unless you *also* set their explicit
       very first planning turn (no `workspaceId` yet) call the model without a
       per-workspace key, so the in-app limiter can't bound them. Front the deployment
       with an edge/WAF rate limiter to cover anonymous model-spend loops.
-- [ ] **Caveat: it is per-instance / in-memory.** The counter lives in process memory,
-      so the effective limit is `HELM_RATELIMIT_PER_MIN × instances`, and it resets on
-      redeploy/restart. It blunts a single-instance abuse loop; it is **not** a global
-      quota. Put a real edge/WAF rate limiter in front for hostile traffic, and prefer a
-      single instance (see scale caveat) where the in-memory limit is exact.
+- [ ] **Two-layer enforcement.** Layer 1 is per-instance/in-memory (free, always on).
+      Layer 2 — after migration `0002` — is the shared `cofounder_rate_limit` Postgres
+      window, atomic across every instance, so the cap no longer multiplies with the
+      instance count. The DB layer **fails open** (local layer still applies) if the RPC
+      is absent or erroring, so the limiter can never take generation down with it. An
+      edge/WAF limiter in front is still recommended for hostile traffic (it's cheaper
+      than reaching the app at all).
 
 ---
 
-## Known scale caveat — single instance recommended
+## Scale posture — multi-instance safe after migration 0002
 
-- [ ] **Workspace `meta` is updated with a non-atomic read-modify-write, serialized by
-      an in-process mutex only** (`withWorkspaceLock` in `lib/supabase-rest.ts`). The
-      `meta` jsonb holds objectives, connector config, pending approvals, and the audit
-      log; PostgREST can't do a server-side partial jsonb update, so the app reads,
-      merges, and writes back under a per-workspace lock that exists **only within one
-      Node process**. Across two instances, concurrent writers to the same workspace can
-      lose an update (last-write-wins).
-- [ ] **Run a single instance until a shared lock or optimistic-concurrency (OCC) /
-      DB-side jsonb merge is added.** This also makes the in-memory rate limit exact.
+- [x] **Workspace `meta` writes are optimistic-concurrency protected.** With
+      `meta_version` present (migration `0002`), `updateWorkspaceMeta` is a
+      compare-and-swap: the PATCH is filtered on the version it read and bumps it;
+      a lost race matches 0 rows and the app re-reads + retries (up to 4×). The
+      in-process `withWorkspaceLock` remains as the cheap first line within one
+      instance. On a pre-migration database the legacy last-write-wins behavior is
+      kept (single-instance semantics) — apply the migration before scaling out.
+- [x] **The per-workspace rate limit holds across instances** via the shared
+      `cofounder_rate_limit` window (same migration; fails open to the local layer).
 
 ---
 
@@ -158,6 +167,7 @@ when their server env flag is set, unless you *also* set their explicit
 | `SUPABASE_URL` + `SUPABASE_KEY` | **Yes** (for persistence) | no persistence |
 | `CRON_SECRET` | **Yes** (if cron used) | `/api/cron` disabled (401) |
 | `0001_hardening.sql` migration | **Yes** | RLS off (app filter only) |
+| `0002_occ_rate_limit.sql` migration | **Yes (before scaling out)** | legacy single-instance semantics |
 | `COMPUTER_USE` / `CLAUDE_CODE` | **No — keep unset** | disabled (good) |
 | Private uploads bucket + signed URLs | Recommended | public bucket |
 | `HELM_RATELIMIT_PER_MIN` | Optional | 20 / min / workspace (per instance) |

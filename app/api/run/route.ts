@@ -1,7 +1,7 @@
 import { coerceText, isTaskReady, blockedObjectiveIds, deliverableFor, type PlanObjective } from "@/lib/agent-types";
 import { needsDesignDirection } from "@/lib/design-catalog";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { enforceRateLimit } from "@/lib/rate-limit-db";
 import { dbConfigured, listTasks, listArtifacts, patchTask, claimTask, getWorkspace } from "@/lib/supabase-rest";
 import { produceDeliverable } from "@/lib/runner";
 
@@ -49,7 +49,7 @@ export async function POST(req: Request): Promise<Response> {
   // drive Opus generations, BEFORE any DB load or model work. Gated so the
   // keyless local demo (and the test/dev loop the client drives) is unchanged.
   if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
-    const rl = checkRateLimit(workspaceId);
+    const rl = await enforceRateLimit(workspaceId);
     if (!rl.allowed) {
       const retryAfter = Math.ceil(rl.retryAfterMs / 1000);
       return Response.json(

@@ -109,7 +109,7 @@ export function loadCatalog(): CatalogSkill[] {
     for (const e of entries) {
       if (!e.isDirectory()) continue;
       const file = path.join(root, e.name, "SKILL.md");
-      let fm: { name?: string; description?: string; source?: string };
+      let fm: { name?: string; description?: string; source?: string; department?: string };
       try {
         fm = frontmatter(readHead(file));
       } catch {

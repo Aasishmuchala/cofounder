@@ -1,6 +1,6 @@
 import { coerceText } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { enforceRateLimit } from "@/lib/rate-limit-db";
 import { produceDeliverable } from "@/lib/runner";
 
 export const runtime = "nodejs";
@@ -46,7 +46,7 @@ export async function POST(req: Request): Promise<Response> {
   // demo is unchanged. Only applies when a workspaceId is the key (one-off runs
   // with no workspace persist nothing and aren't keyed).
   if (workspaceId && (process.env.NODE_ENV === "production" || process.env.VERCEL)) {
-    const rl = checkRateLimit(workspaceId);
+    const rl = await enforceRateLimit(workspaceId);
     if (!rl.allowed) {
       const retryAfter = Math.ceil(rl.retryAfterMs / 1000);
       return Response.json(

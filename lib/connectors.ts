@@ -22,7 +22,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ConnectorConfig } from "@/lib/agent-types";
-import { INJECTION } from "@/lib/skills";
+import { INJECTION, stripInvisibles } from "@/lib/skills";
 // Server-only executor for the "computer" connector. connectors.ts is itself
 // server-only (no "use client"; reached only from runner.ts + route handlers),
 // so importing it here keeps node:child_process / node:fs / playwright off the
@@ -660,7 +660,10 @@ const BLOCKED_SENTINEL = "[Tool output was blocked: injection pattern detected]"
  * NEVER misreported as "blocked", which would corrupt the audit log.
  */
 export function sanitizeToolOutput(raw: string): string {
-  const text = (raw || "").slice(0, OUTPUT_CAP).trim();
+  // Strip zero-width/bidi invisibles BEFORE capping + scanning, so a marker
+  // phrase split by U+200B can't slip the scan (and the model receives the
+  // same stripped text that was scanned).
+  const text = stripInvisibles(raw || "").slice(0, OUTPUT_CAP).trim();
   // Scan the head (mirrors sanitizeSkill's 9000-char scan window, but we've
   // already capped to OUTPUT_CAP, so the whole string is in scope).
   if (INJECTION.test(text)) return BLOCKED_SENTINEL;

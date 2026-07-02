@@ -451,6 +451,10 @@ export interface WorkspaceMeta {
   designChoices?: Record<string, DesignChoice>;
   /** Default design direction applied to design tasks with no per-task choice. */
   designDefault?: DesignChoice | null;
+  /** Content hashes of already-materialized plans (ring, last 8) — the
+   *  idempotency key for approve double-submits (stronger than title matching:
+   *  two different plans can share titles; the hash covers structure too). */
+  planHashes?: string[];
 }
 
 /** Env-var-NAME shape: uppercase, digits, underscore — never an actual secret

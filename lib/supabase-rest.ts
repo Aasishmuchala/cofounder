@@ -296,35 +296,105 @@ export function withWorkspaceLock<T>(id: string, fn: () => Promise<T>): Promise<
   return run;
 }
 
+/* ──────────────── optimistic concurrency (multi-instance safety) ──────────────── *
+ * withWorkspaceLock serializes meta RMWs WITHIN one process; across instances two
+ * writers could still interleave read→write and silently drop one update. When the
+ * 0002 migration's `meta_version` column exists, updateWorkspaceMeta upgrades to a
+ * compare-and-swap: PATCH filtered on the version we read, bumping it by 1 — a
+ * conflicting writer matches 0 rows and we re-read + retry. Feature-detected so a
+ * pre-migration database (or the keyless demo) keeps the exact legacy behavior.
+ * ------------------------------------------------------------------------------- */
+
+/** null = not yet probed; true/false once known. Module-scoped so the probe (a
+ *  400 on selecting the column) runs at most once per process. */
+let occSupported: boolean | null = null;
+
+/** Test-only: reset the OCC feature-detection probe between cases. */
+export function _resetOccSupport(): void {
+  occSupported = null;
+}
+
+const OCC_RETRIES = 4;
+
+/** Read meta + meta_version in one select. Returns:
+ *  - { found: false }                     — no such workspace
+ *  - { found: true, meta, version }       — version is null when the column is
+ *    absent (pre-migration DB) → caller uses the legacy unversioned PATCH. */
+async function getMetaVersioned(
+  id: string,
+): Promise<{ found: boolean; meta: WorkspaceMeta; version: number | null }> {
+  if (occSupported !== false) {
+    const res = await rest(
+      `cofounder_workspaces?id=eq.${encodeURIComponent(id)}&select=meta,meta_version&limit=1`,
+      { method: "GET", headers: headers() },
+    );
+    if (res.ok) {
+      occSupported = true;
+      const rows = (await res.json().catch(() => [])) as { meta: WorkspaceMeta | null; meta_version: number | null }[];
+      const r = rows[0];
+      if (!r) return { found: false, meta: {}, version: null };
+      return { found: true, meta: r.meta ?? {}, version: typeof r.meta_version === "number" ? r.meta_version : 0 };
+    }
+    // 400 = unknown column (42703) -> the 0002 migration isn't applied; remember
+    // and fall through to the legacy read. Other statuses fall through too (the
+    // legacy read then surfaces the real failure mode as before).
+    if (res.status === 400) occSupported = false;
+  }
+  const w = await getWorkspace(id);
+  if (!w) return { found: false, meta: {}, version: null };
+  return { found: true, meta: w.meta, version: null };
+}
+
 /**
  * Shallow-merge a patch into a workspace's meta and persist it. Read-modify-write
  * (PostgREST can't do a partial jsonb merge in one PATCH); the patch wins on
  * conflicting top-level keys (e.g. the full customAgents array is replaced).
  *
+ * CONCURRENCY: when the database has `meta_version` (migration 0002), the write is
+ * a compare-and-swap — PATCH filtered on the version read, incrementing it — retried
+ * up to OCC_RETRIES times on conflict, so concurrent writers on DIFFERENT instances
+ * can no longer silently drop each other's updates. Without the column, behavior is
+ * exactly the legacy last-write-wins (single-instance semantics, in-process lock).
+ *
  * Returns the merged meta when a row matched, or `null` when NO row matched (the
  * workspace id is valid-shaped but doesn't exist). We ask PostgREST for
  * `return=representation` and inspect the returned row array: an empty array means
- * 0 rows were affected, so a caller can report persisted:false / 404 instead of a
- * falsely-successful result. Throws only on a transport/HTTP error.
+ * 0 rows were affected. Throws on a transport/HTTP error, or when every OCC retry
+ * lost its race (so callers' existing .catch paths treat it like any write failure).
  */
 export async function updateWorkspaceMeta(
   id: string,
   patch: WorkspaceMeta,
 ): Promise<WorkspaceMeta | null> {
-  const current = (await getWorkspace(id))?.meta ?? {};
-  const next: WorkspaceMeta = { ...current, ...patch };
-  const res = await rest(`cofounder_workspaces?id=eq.${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    // return=representation makes PostgREST echo the updated row(s), so we can detect
-    // a no-op PATCH against a non-existent workspace (empty array = 0 rows matched).
-    headers: headers({ Prefer: "return=representation" }),
-    body: JSON.stringify({ meta: next }),
-  });
-  if (!res.ok) throw new Error(`updateWorkspaceMeta failed (${res.status})`);
-  // PATCH ... return=representation responds with an ARRAY of the affected rows.
-  const rows = (await res.json().catch(() => [])) as unknown;
-  if (!Array.isArray(rows) || rows.length === 0) return null; // no such workspace
-  return next;
+  for (let attempt = 0; attempt < OCC_RETRIES; attempt++) {
+    const { found, meta: current, version } = await getMetaVersioned(id);
+    if (!found) return null; // no such workspace
+    const next: WorkspaceMeta = { ...current, ...patch };
+
+    const filter =
+      version === null
+        ? `cofounder_workspaces?id=eq.${encodeURIComponent(id)}`
+        : `cofounder_workspaces?id=eq.${encodeURIComponent(id)}&meta_version=eq.${version}`;
+    const body: Record<string, unknown> =
+      version === null ? { meta: next } : { meta: next, meta_version: version + 1 };
+
+    const res = await rest(filter, {
+      method: "PATCH",
+      // return=representation makes PostgREST echo the updated row(s), so we can detect
+      // a no-op PATCH (0 rows matched = missing workspace, or a lost OCC race).
+      headers: headers({ Prefer: "return=representation" }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`updateWorkspaceMeta failed (${res.status})`);
+    // PATCH ... return=representation responds with an ARRAY of the affected rows.
+    const rows = (await res.json().catch(() => [])) as unknown;
+    if (Array.isArray(rows) && rows.length > 0) return next;
+    // 0 rows on the legacy path = no such workspace. On the OCC path it can ALSO
+    // mean a concurrent writer bumped the version between our read and write —
+    // loop to re-read (the existence check at the top distinguishes the two).
+    if (version === null) return null;
+  }
+  throw new Error("updateWorkspaceMeta failed (OCC conflict after retries)");
 }
 
 /** Insert task agents for a workspace. Returns the persisted rows as Task[]. */

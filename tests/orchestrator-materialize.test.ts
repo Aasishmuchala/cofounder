@@ -140,3 +140,59 @@ describe("materializePlan — insert ordering + id remapping", () => {
     expect(updateWorkspaceMetaMock).not.toHaveBeenCalled(); // no clobbering write
   });
 });
+
+/* ─────────────── plan-hash idempotency (primary key over title matching) ─────────────── */
+
+describe("materializePlan — plan-hash idempotency", () => {
+  const plan = {
+    objectives: [{ id: "o1", title: "Build", description: "", department: "Engineering" }],
+    tasks: [{ id: "t1", title: "A", department: "Engineering", detail: "", objectiveId: "o1", dependsOn: [] }],
+  };
+
+  it("records the plan hash on first materialization", async () => {
+    await materializePlan("ws1", plan);
+    const metaPatch = updateWorkspaceMetaMock.mock.calls[0][1] as { planHashes?: string[] };
+    expect(Array.isArray(metaPatch.planHashes)).toBe(true);
+    expect(metaPatch.planHashes!.length).toBe(1);
+    expect(metaPatch.planHashes![0]).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("an exact re-submit of a recorded plan is a no-op (no inserts, no meta write)", async () => {
+    // First run to learn the recorded hash.
+    await materializePlan("ws1", plan);
+    const hash = (updateWorkspaceMetaMock.mock.calls[0][1] as { planHashes: string[] }).planHashes[0];
+    insertTasksMock.mockClear();
+    updateWorkspaceMetaMock.mockClear();
+
+    getWorkspaceMock.mockResolvedValue({
+      meta: { objectives: [{ id: "o1", title: "Build", taskIds: ["real-1"] }], planHashes: [hash] },
+    });
+    const res = await materializePlan("ws1", plan);
+    expect(res.taskCount).toBe(0);
+    expect(insertTasksMock).not.toHaveBeenCalled();
+    expect(updateWorkspaceMetaMock).not.toHaveBeenCalled();
+  });
+
+  it("a DIFFERENT plan reusing the same objective titles is NOT skipped by the hash layer", async () => {
+    await materializePlan("ws1", plan);
+    const hash = (updateWorkspaceMetaMock.mock.calls[0][1] as { planHashes: string[] }).planHashes[0];
+    insertTasksMock.mockClear();
+    updateWorkspaceMetaMock.mockClear();
+
+    // Same objective title, but the prior objectives list is EMPTY-titled-different
+    // so the legacy title check can't short-circuit; new task set = new hash.
+    getWorkspaceMock.mockResolvedValue({ meta: { objectives: [], planHashes: [hash] } });
+    const different = {
+      objectives: [{ id: "o1", title: "Build", description: "", department: "Engineering" }],
+      tasks: [
+        { id: "t1", title: "A", department: "Engineering", detail: "", objectiveId: "o1", dependsOn: [] },
+        { id: "t2", title: "B", department: "Engineering", detail: "", objectiveId: "o1", dependsOn: ["t1"] },
+      ],
+    };
+    const res = await materializePlan("ws1", different);
+    expect(res.taskCount).toBe(2);
+    const newHashes = (updateWorkspaceMetaMock.mock.calls[0][1] as { planHashes: string[] }).planHashes;
+    expect(newHashes).toContain(hash); // ring keeps the old one
+    expect(newHashes.length).toBe(2); // and records the new one
+  });
+});
