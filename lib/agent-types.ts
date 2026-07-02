@@ -45,6 +45,10 @@ export interface DeliverableEval {
   notes: string;
   iterations: number; // generations it took to clear the bar
   judged: boolean; // true = LLM-judged, false = heuristic checks only
+  /** True when the AI judge's score met the required quality bar (HELM_QUALITY_BAR).
+   *  false = below bar after all regeneration attempts -> the task is REJECTED
+   *  (left needs_action, not marked done). Undefined for legacy/mock evals. */
+  meetsBar?: boolean;
 }
 
 export interface Artifact {

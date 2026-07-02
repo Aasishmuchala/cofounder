@@ -2,8 +2,28 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { ArtifactKind } from "@/lib/agent-types";
 import { MODEL, NO_THINKING } from "@/lib/anthropic";
 
-/** Deliverables scoring below this (0–10) trigger one automatic regeneration. */
-export const QUALITY_BAR = 7;
+/** Required quality bar (0–10). A deliverable scoring below this is regenerated
+ *  (up to maxQualityAttempts) and, if it still can't reach the bar, REJECTED — the
+ *  task is left needs_action, not marked done. Default 9 ("only ship excellent
+ *  work" — a literal 10 from an honest judge is near-unattainable and rejects even
+ *  work it calls exceptional); tune with HELM_QUALITY_BAR (10 = purist, rejects
+ *  almost everything). Read at call time so it tracks the live env + is test-controllable. */
+export function qualityBar(): number {
+  return envIntClamped("HELM_QUALITY_BAR", 9, 1, 10);
+}
+
+/** How many total generation attempts a deliverable gets to reach the bar (1 =
+ *  no retry). Bounds cost/latency of the regenerate loop. Default 3; override with
+ *  HELM_MAX_QUALITY_ATTEMPTS. Landing pages/decks are slow, so keep this modest. */
+export function maxQualityAttempts(): number {
+  return envIntClamped("HELM_MAX_QUALITY_ATTEMPTS", 3, 1, 6);
+}
+
+function envIntClamped(name: string, def: number, min: number, max: number): number {
+  const n = Number(process.env[name]);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
 
 /** Rubric dimensions the judge grades, per deliverable kind. */
 const DIMENSIONS: Record<string, string[]> = {
@@ -92,11 +112,11 @@ export async function judgeDeliverable(
   const cap = args.kind === "landing_page" || args.kind === "pitch_deck" ? 18000 : 7000;
   const kindNote =
     args.kind === "landing_page"
-      ? `\n\nNOTE: This deliverable is a React/Next.js page component (Tailwind classes + inline <style> animations). Judge the DESIGN it describes — color/typography/spacing choices in the classes, animation richness (@keyframes / IntersectionObserver / transitions), section completeness (hero, features, social proof, CTA, footer), copy specificity, responsiveness, and use of real generated <img> imagery. Do NOT penalize it for being code or for not being raw HTML. A complete, on-brand, animated page with specific copy is 7–9.`
+      ? `\n\nNOTE: This deliverable is a React/Next.js page component (Tailwind classes + inline <style> animations). Judge the DESIGN it describes — color/typography/spacing choices in the classes, animation richness (@keyframes / IntersectionObserver / transitions), section completeness (hero, features, social proof, CTA, footer), copy specificity, responsiveness, and use of real generated <img> imagery. Do NOT penalize it for being code or for not being raw HTML. A complete, on-brand, animated page with specific copy and real imagery is excellent — reach 9–10.`
       : args.kind === "pitch_deck"
-        ? `\n\nNOTE: This deliverable is a self-contained HTML pitch deck — full-viewport scroll-snap <section> slides styled with one inline <style> (pure CSS, no script). Judge the NARRATIVE arc (problem→solution→market→model→ask), the visual design (palette/typography/hierarchy/spacing in the CSS), slide completeness (~8–10 focused slides), and copy specificity. Do NOT penalize it for being one HTML file or for using CSS instead of a slide library. A complete, on-brand deck with a clear story and specific copy is 7–9.`
+        ? `\n\nNOTE: This deliverable is a self-contained HTML pitch deck — full-viewport scroll-snap <section> slides styled with one inline <style> (pure CSS, no script). Judge the NARRATIVE arc (problem→solution→market→model→ask), the visual design (palette/typography/hierarchy/spacing in the CSS), slide completeness (~8–10 focused slides), and copy specificity. Do NOT penalize it for being one HTML file or for using CSS instead of a slide library. A complete, on-brand deck with a clear story and specific copy is excellent — reach 9–10.`
         : "";
-  const system = `You are a ruthless senior reviewer grading a startup's deliverable before it ships. Be demanding and specific — reserve 9–10 only for genuinely excellent, distinctive, on-brand work; generic or templated output should score 5 or below. Grade each rubric dimension 0–10 and give an overall 0–10.${kindNote}\nReturn ONLY a single fenced json block:\n\`\`\`json\n{"score":0-10,"rubric":[{"label":"<dimension>","score":0-10}],"notes":"1-2 concrete sentences on the most important things to improve"}\n\`\`\``;
+  const system = `You are a demanding senior reviewer grading a startup's deliverable before it ships. Award 10 ONLY for flawless, ship-ready, genuinely excellent, distinctive, on-brand work with no material weakness; award 9 for excellent work with a single minor nit; 7–8 for solid work with real gaps; generic or templated output scores 5 or below. Do NOT withhold a deserved 10, and do NOT inflate. Grade each rubric dimension 0–10 and give an overall 0–10.${kindNote}\nReturn ONLY a single fenced json block:\n\`\`\`json\n{"score":0-10,"rubric":[{"label":"<dimension>","score":0-10}],"notes":"1-2 concrete sentences on the most important things to improve (or, if already a 10, why it clears the bar)"}\n\`\`\``;
   const user = `Deliverable type: ${args.kind}\nCompany idea: ${args.idea || "a startup"}\nTask: ${args.task}\nRubric dimensions: ${dims.join("; ")}\n\nDeliverable to grade:\n<<<\n${args.content.slice(0, cap)}\n>>>`;
   try {
     const resp = await client.messages.create({

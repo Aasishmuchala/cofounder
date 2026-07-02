@@ -41,7 +41,7 @@ import { compareSkills } from "@/lib/skill-select";
 import { readSkillBody, catalogSkillUrl, loadCatalog } from "@/lib/skill-catalog";
 import { houseSkill, synthesizeSkill } from "@/lib/skill-foundry";
 import { generateImageUrl } from "@/lib/images";
-import { runChecks, judgeDeliverable, heuristicScore, QUALITY_BAR } from "@/lib/verify";
+import { runChecks, judgeDeliverable, heuristicScore, qualityBar, maxQualityAttempts } from "@/lib/verify";
 
 export interface RunnerTask {
   id: string;
@@ -937,41 +937,45 @@ export async function produceDeliverable(
   hooks?.onPhase?.("reviewing");
   let evaluation: DeliverableEval;
   if (!mock && client) {
-    let judged = await judgeDeliverable(client, { kind: effectiveKind, idea, task: task.title, content });
+    // STRICT QUALITY GATE: judge, then regenerate (keeping the best attempt) until
+    // the score reaches the required bar (HELM_QUALITY_BAR, default 10) or the
+    // attempt budget (HELM_MAX_QUALITY_ATTEMPTS) is spent. Anything that never
+    // reaches the bar is REJECTED downstream (meetsBar=false -> task left
+    // needs_action, not done): "only ship top-tier work." A Claude Code deliverable
+    // is NEVER regenerated (its content is a real run summary + git diff) — it is
+    // judged once, informational only, and not subject to the reject gate.
+    const bar = qualityBar();
+    const maxAttempts = Math.max(1, maxQualityAttempts());
+    let bestContent = content;
+    let best = await judgeDeliverable(client, { kind: effectiveKind, idea, task: task.title, content });
     let iterations = 1;
-    // Regenerating a full React page (after tool-use + image gen) is too slow to
-    // fit serverless limits, so landing pages are judged once with no auto-retry.
-    // Cheaper text deliverables still get the regenerate-once-below-bar pass.
-    // A Claude Code deliverable is NEVER regenerated via the model — its content is
-    // a real run summary + git diff; replacing it with a fresh model generation
-    // would discard the actual code change. It is judged once (informational only).
-    if (judged && judged.score < QUALITY_BAR && kind !== "landing_page" && kind !== "pitch_deck" && !claudeCodeHandled) {
+    while (best !== null && best.score < bar && iterations < maxAttempts && !claudeCodeHandled) {
+      let content2 = "";
       try {
-        const retryPrompt = `${basePrompt}\n\nA strict reviewer scored your previous attempt ${judged.score}/10. The most important things to FIX: ${judged.notes}\nProduce a clearly better version that fully addresses this feedback. Use the exact same output format as before.`;
-        const resp2 = await client.messages.create({
-          model: MODEL,
-          max_tokens: 8000,
-          thinking: NO_THINKING,
-          messages: [{ role: "user", content: retryPrompt }],
-        });
-        const content2 = cleanText(resp2);
-        if (content2.length > 0) {
-          const judged2 = await judgeDeliverable(client, { kind: effectiveKind, idea, task: task.title, content: content2 });
-          iterations = 2;
-          if (judged2 && judged2.score >= judged.score) {
-            // Strip control chars here too — the regenerated content bypasses the
-            // earlier strip and would otherwise fail to persist.
-            content = content2.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
-            judged = judged2;
-          }
-        }
+        const retryPrompt = `${basePrompt}\n\nA strict reviewer scored your previous attempt ${best.score}/10 — BELOW the required ${bar}/10 bar. What to fix: ${best.notes}\nProduce a clearly better version that FULLY addresses this and would earn ${bar}/10. Use the EXACT same output format as before.`;
+        const big = effectiveKind === "landing_page" || effectiveKind === "pitch_deck";
+        // Stream (proxy-safe for large gens); basePrompt still carries the grounding
+        // (house standard, equipped skill, pre-generated image urls, design brief).
+        const resp2 = await client.messages
+          .stream({ model: MODEL, max_tokens: big ? 16000 : 8000, thinking: NO_THINKING, messages: [{ role: "user", content: retryPrompt }] })
+          .finalMessage();
+        content2 = cleanText(resp2).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
       } catch {
-        /* keep the first attempt */
+        break; // a failed regen attempt -> keep the best so far
+      }
+      iterations++;
+      if (!content2) continue;
+      const judged2 = await judgeDeliverable(client, { kind: effectiveKind, idea, task: task.title, content: content2 });
+      // Keep the strictly-better attempt (so we never regress on a retry).
+      if (judged2 && judged2.score > best.score) {
+        best = judged2;
+        bestContent = content2;
       }
     }
+    content = bestContent;
     const finalChecks = runChecks(effectiveKind, content);
-    evaluation = judged
-      ? { score: judged.score, rubric: judged.rubric, checks: finalChecks, notes: judged.notes, iterations, judged: true }
+    evaluation = best
+      ? { score: best.score, rubric: best.rubric, checks: finalChecks, notes: best.notes, iterations, judged: true, meetsBar: best.score >= bar }
       : {
           score: heuristicScore(finalChecks),
           rubric: [],
@@ -979,6 +983,8 @@ export async function produceDeliverable(
           notes: "Automated checks only — the AI judge was unavailable.",
           iterations,
           judged: false,
+          // Judge unavailable -> can't reject what we couldn't grade; don't block.
+          meetsBar: true,
         };
   } else {
     const checks = runChecks(effectiveKind, content);
@@ -1004,7 +1010,10 @@ export async function produceDeliverable(
         eval: evaluation,
       });
       artifactId = art?.id ?? null;
-      await patchTask(task.id, { status: "done" }, workspaceId);
+      // Strict gate: only mark done when the deliverable met the quality bar. A
+      // below-bar deliverable is persisted (so the human can see the best attempt
+      // + the judge's reasons) but the task is left needs_action — "rejected".
+      await patchTask(task.id, { status: evaluation.meetsBar === false ? "needs_action" : "done" }, workspaceId);
     } catch {
       /* fall through — still return the artifact */
     }
