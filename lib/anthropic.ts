@@ -3,8 +3,9 @@ import Anthropic from "@anthropic-ai/sdk";
 /**
  * Centralized Anthropic client. Works with:
  *  - the official API (ANTHROPIC_API_KEY, x-api-key auth), or
- *  - an Anthropic-compatible proxy like claudeopus.pro
- *    (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN, Bearer auth, sk-ant-co-... keys).
+ *  - an Anthropic-compatible proxy like the omega gateway
+ *    (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN, Bearer auth, oc_... tokens;
+ *    e.g. https://omega.kesarcloud.in/v1 serving claude-opus-4-8).
  *
  * HELM_-prefixed vars take precedence. This matters because Next.js does NOT let
  * `.env.local` override an env var already present in the OS/shell — and many
@@ -21,14 +22,14 @@ const API_KEY =
 
 /** Default model — overridable via HELM_ANTHROPIC_MODEL / ANTHROPIC_MODEL. */
 export const MODEL =
-  process.env.HELM_ANTHROPIC_MODEL || process.env.ANTHROPIC_MODEL || "claude-opus-4-7";
+  process.env.HELM_ANTHROPIC_MODEL || process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
 
 /**
  * Per-request timeout (ms) + retry count for the model client. The SDK defaults
  * (10-minute timeout × 2 retries) let a slow/hanging proxy block a single
  * deliverable for ~30 MINUTES. We bound it — but a PREMIUM deliverable (a full
  * animated landing page, ~10k output tokens) genuinely needs several minutes on
- * the claudeopus.pro proxy (~35 tok/s + ~18s overhead, measured). 150s was too
+ * the omega proxy (~35 tok/s + ~18s overhead, measured). 150s was too
  * tight: big pages timed out → fell back to the mock template (no images, no
  * motion). 480s (8 min) per attempt fits the largest real gen with margin while
  * still capping a hung proxy. Tune via HELM_ANTHROPIC_TIMEOUT_MS / _MAX_RETRIES.
@@ -41,7 +42,7 @@ const TIMEOUT_MS = envInt("HELM_ANTHROPIC_TIMEOUT_MS", 480000, 1000);
 const MAX_RETRIES = envInt("HELM_ANTHROPIC_MAX_RETRIES", 1, 0);
 
 /**
- * Default `thinking` config for our calls: DISABLED. The claudeopus.pro proxy
+ * Default `thinking` config for our calls: DISABLED. The omega proxy
  * forces extended thinking on Opus 4.8 unless told otherwise — every call then
  * "thinks" before answering, which (a) burns output tokens (a low max_tokens can
  * be fully consumed by thinking, starving the real answer) and (b) adds large
@@ -58,7 +59,7 @@ export function getAnthropic(): Anthropic | null {
   if (!aiConfigured) return null;
   // Bound every call so a slow proxy can't hang a deliverable (see TIMEOUT_MS).
   const common = { baseURL: BASE_URL, timeout: TIMEOUT_MS, maxRetries: MAX_RETRIES };
-  // Proxy via Bearer auth token (claudeopus.pro convention).
+  // Proxy via Bearer auth token (omega gateway convention).
   if (AUTH_TOKEN) {
     return new Anthropic({ ...common, authToken: AUTH_TOKEN });
   }

@@ -29,7 +29,8 @@ Set every one of these before serving public traffic.
       below. It is discouraged and defeats tenant isolation.
 
 - [ ] **`ANTHROPIC_API_KEY`** (official API) **or** a proxy base URL + token. For an
-      Anthropic-compatible proxy (e.g. claudeopus.pro) set `ANTHROPIC_BASE_URL` +
+      Anthropic-compatible proxy (e.g. the omega gateway, `https://omega.kesarcloud.in/v1`,
+      default model `claude-opus-4-8`) set `ANTHROPIC_BASE_URL` +
       `ANTHROPIC_AUTH_TOKEN`. If the host shell already exports those (common with the
       Claude Code CLI), use the `HELM_ANTHROPIC_*` variants instead — they take
       precedence over the `.env`-vs-shell collision. Without any key the app still
