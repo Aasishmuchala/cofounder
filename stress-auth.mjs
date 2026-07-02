@@ -18,7 +18,7 @@ const tokenFor = (wsId) =>
 
 let pass = 0, fail = 0;
 const rec = (ok, name, detail) => {
-  ok ? pass++ : fail++;
+  if (ok) pass++; else fail++;
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? "  — " + detail : ""}`);
 };
 async function post(path, body) {

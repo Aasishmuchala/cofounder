@@ -21,7 +21,6 @@ const write = (rel, svg) => {
 
 // ---- shared building blocks ------------------------------------------------
 
-const PAPER = "#f6f1e7";
 const INK = "#1a1712";
 
 /** A reusable grain + soft-shadow defs block, id-namespaced so multiple inline

@@ -15,7 +15,7 @@ const tokenFor = (ws) => (APP_SECRET ? createHmac("sha256", APP_SECRET).update(S
 
 let pass = 0, fail = 0;
 const findings = [];
-const rec = (ok, n, d) => { ok ? pass++ : fail++; if (!ok) findings.push(`${n} :: ${d}`); console.log(`${ok ? "ok  " : "FAIL"} ${n}${d ? "  — " + d : ""}`); };
+const rec = (ok, n, d) => { if (ok) pass++; else fail++; if (!ok) findings.push(`${n} :: ${d}`); console.log(`${ok ? "ok  " : "FAIL"} ${n}${d ? "  — " + d : ""}`); };
 async function req(method, path, body) {
   const init = { method, headers: { "content-type": "application/json" } };
   if (body !== undefined) init.body = typeof body === "string" ? body : JSON.stringify(body);

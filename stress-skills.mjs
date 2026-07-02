@@ -5,7 +5,7 @@ const BASE = process.env.BASE || "http://localhost:3000";
 const APP_SECRET = process.env.APP_SECRET || "";
 const tokenFor = (ws) => (APP_SECRET ? createHmac("sha256", APP_SECRET).update(String(ws)).digest("hex") : "");
 let pass = 0, fail = 0;
-const rec = (ok, n, d) => { ok ? pass++ : fail++; console.log(`${ok ? "ok  " : "FAIL"} ${n}${d ? "  — " + d : ""}`); };
+const rec = (ok, n, d) => { if (ok) pass++; else fail++; console.log(`${ok ? "ok  " : "FAIL"} ${n}${d ? "  — " + d : ""}`); };
 const post = (p, b) => fetch(BASE + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
 const J = async (r) => { try { return JSON.parse(await r.text()); } catch { return {}; } };
 
@@ -41,7 +41,12 @@ if (ws && task) {
   const persisted = list.artifacts?.find((x) => x.id === e.artifact?.id);
   rec(!!persisted?.skill?.name, "equipped skill PERSISTED + rehydrates", persisted?.skill ? `${persisted.skill.name}` : "missing");
   console.log("CLEANUP_WORKSPACE_ID=" + ws);
-} else rec(false, "persisted flow setup", "no workspace");
+} else if (a.persisted === false) {
+  // No DB configured (mock/no-DB run): /api/agent returns no workspaceId, so the
+  // persistence round-trip is not applicable here — skip it rather than reporting a
+  // false FAIL. Persistence is covered end-to-end by stress-db.mjs (real Supabase).
+  console.log("skip persisted-skill flow — no database configured (mock/no-DB mode)");
+} else rec(false, "persisted flow setup", "no workspace despite persisted response");
 
 console.log(`\n=== SKILLS: ${pass} pass / ${fail} fail ===`);
 process.exit(fail ? 1 : 0);

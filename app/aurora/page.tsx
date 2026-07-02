@@ -86,7 +86,6 @@ const plans = [
 
 export default function Page() {
   const [isNavScrolled, setIsNavScrolled] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const pageRef = useRef(null);
 
   useEffect(() => {
@@ -383,7 +382,8 @@ export default function Page() {
           
           <div className="hero-image relative hero-parallax">
             <div className="relative rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
-              <img 
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
                 src="https://images.unsplash.com/photo-1488415032361-b7e238421f1b?ixid=M3w5NjgxMjV8MHwxfHNlYXJjaHwxMnx8YXVyb3JhJTJDbmF0aXZlJTJDYnVzaW5lc3N8ZW58MHwwfHx8MTc4MDQ3MjYyM3ww&ixlib=rb-4.1.0&w=1920&h=1080&fit=crop&q=80"
                 alt="Aurora banking dashboard"
                 className="w-full aspect-video object-cover"
@@ -455,7 +455,8 @@ export default function Page() {
       {/* Showcase Section with Parallax BG */}
       <section className="bg-section relative py-32 overflow-hidden">
         <div className="absolute inset-0 z-0">
-          <img 
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src="https://images.unsplash.com/photo-1537136102161-ea2262437412?ixid=M3w5NjgxMjV8MHwxfHNlYXJjaHw5fHxhdXJvcmElMkNuYXRpdmUlMkNidXNpbmVzc3xlbnwwfDB8fHwxNzgwNDcyNjIzfDA&ixlib=rb-4.1.0&w=1920&h=1080&fit=crop&q=80"
             alt=""
             className="w-full h-full object-cover opacity-20 bg-parallax"
@@ -492,7 +493,8 @@ export default function Page() {
             </div>
             
             <div className="card-hover rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
-              <img 
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
                 src="https://images.unsplash.com/photo-1568607689150-17e625c1586e?ixid=M3w5NjgxMjV8MHwxfHNlYXJjaHwyfHxhdXJvcmElMkNuYXRpdmUlMkNidXNpbmVzc3xlbnwwfDB8fHwxNzgwNDcyNjIzfDA&ixlib=rb-4.1.0&w=1920&h=1080&fit=crop&q=80"
                 alt="Aurora product interface"
                 className="w-full aspect-[4/3] object-cover"
