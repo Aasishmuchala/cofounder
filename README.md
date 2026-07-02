@@ -9,7 +9,9 @@ their own skills, produce real deliverables, and keep you **at the helm** with a
 - **Next.js 16** (App Router, Turbopack) · **React 19** · **TypeScript**
 - **Tailwind CSS v4** (CSS-first `@theme`, custom design tokens in `app/globals.css`)
 - **Framer Motion** for scroll/entrance animation
-- **@anthropic-ai/sdk** — the Helm agent backend (Claude)
+- **@anthropic-ai/sdk** — the Helm agent backend, defaulting to **Claude Opus 4.8**
+  (official API or an Anthropic-compatible proxy; deliverables stream server-side so
+  large generations don't trip intermediary read-timeouts)
 
 ## What's included
 
@@ -43,7 +45,9 @@ falls back to a deterministic mock otherwise — **the UI always works with no k
   (`View output`) or full-screen at `/app/preview/<id>`. Works with the Claude key, or a
   genuinely-usable templated fallback without one.
 
-> Env: set `SUPABASE_URL` + `SUPABASE_KEY` (publishable) in `.env.local` to enable persistence.
+> Env: set `SUPABASE_URL` + `SUPABASE_KEY` (**service-role**, server-only) in `.env.local`
+> to enable persistence. The service key is required — it bypasses RLS, which (after the
+> `0003` migration) denies the anon key at the database.
 
 ### Write authorization
 Workspaces are anonymous (no login), so writes are protected by a per-workspace
@@ -65,16 +69,23 @@ returning `429` past `HELM_RATELIMIT_PER_MIN` requests/minute (default 20). The 
 is two-layer: an in-memory sliding window per instance, PLUS — once migration
 `0002_occ_rate_limit.sql` is applied — a shared atomic Postgres window
 (`cofounder_rate_limit` RPC) that holds the cap across every serverless instance
-(feature-detected; fails open to the local layer). Pre-workspace model calls (`/api/onboarding`, the very first
-planning turn) aren't workspace-keyed — front them with an edge/WAF limiter. Uploads to
-`/api/upload` are bounded by a 10 MB size cap **and a
-content-type allowlist** (plus filename sanitization), so an unexpected MIME type is
-rejected. All untrusted request fields are coerced + length-capped before reaching the
-model or the database, and user input is HTML-escaped in generated artifacts (which are
-additionally rendered in a script-less `<iframe sandbox>`). Conservative security
-headers (CSP `frame-ancestors`/`base-uri`/`object-src`/`form-action`, `nosniff`,
-`X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`) ship on every
-response. A self-contained adversarial harness lives in `stress.mjs` (+ `stress-auth.mjs`).
+(feature-detected; fails open to the local layer). The unkeyed pre-workspace model
+calls (`/api/onboarding` and the first turn of `/api/agent`/`/api/plan`/`/api/execute`)
+are **per-IP** rate-limited (`HELM_ANON_RATELIMIT_PER_MIN`), and every model-backed
+request passes a **global concurrency ceiling** (`HELM_MAX_CONCURRENT_GENERATIONS`,
+503 + `Retry-After` past the queue) and a fail-closed **hourly spend cap**
+(`HELM_MAX_GENERATIONS_PER_HOUR`) — so an anonymous loop or a runaway can't drive
+unbounded model spend. Uploads to `/api/upload` go to a **private bucket** (10 MB cap,
+content-type allowlist, filename sanitization, Content-Length pre-check before
+buffering); files are read back through short-lived **signed URLs** (`/api/files`,
+edit-key-gated), never a public URL. All untrusted request fields are coerced +
+length-capped before reaching the model or the database, and user input is HTML-escaped
+in generated artifacts (additionally rendered in a script-less, null-origin
+`<iframe sandbox>`). Conservative security headers (CSP `frame-ancestors`/`base-uri`/
+`object-src`/`form-action`, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`,
+`Permissions-Policy`) ship on every response. Row-level security (migrations
+`0001`/`0003`) denies a leaked anon key at the database. Self-contained adversarial
+harnesses live in `stress.mjs` (+ `stress-auth.mjs`).
 
 ## Run
 
