@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { recordCompany } from "@/lib/companies-store";
 import { useCofounder } from "@/lib/use-cofounder";
 import { useOnboarding } from "@/lib/use-onboarding";
 import { useCustomAgents } from "@/lib/use-custom-agents";
@@ -16,6 +18,25 @@ export default function AppPage() {
   const cf = useCofounder();
   const onb = useOnboarding();
   const localAgents = useCustomAgents();
+  const router = useRouter();
+
+  // FRONT-DOOR REDIRECT: a genuinely fresh /app (no ?w= company, no ?new= create
+  // flow, and no locally-saved active workspace to resume) belongs on the
+  // /app/companies picker. Fires ONCE on mount and NEVER blanks the page — the
+  // dashboard always renders below, and only a truly-empty bare /app quietly
+  // replaces itself with the picker. (Earlier this used a "checking" gate that
+  // rendered a full-screen blank during the redirect; on a slow navigation that
+  // blank lingered — the classic "goes blank" report. It's gone.)
+  const redirectedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (redirectedRef.current || typeof window === "undefined") return;
+    redirectedRef.current = true;
+    const sp = new URLSearchParams(window.location.search);
+    const hasActive = !!window.localStorage.getItem("cf_workspace");
+    if (!sp.get("w") && sp.get("new") !== "1" && !hasActive) {
+      router.replace("/app/companies");
+    }
+  }, [router]);
 
   // Custom agents are durable on the workspace (DB) once a company exists; before
   // that — or with no database — they fall back to browser localStorage.
@@ -208,6 +229,29 @@ export default function AppPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot guarded restore
   }, [cf.persisted, cf.meta, onb.status, idea]);
+
+  // Register the active company in the local picker registry (/app/companies) so it
+  // can be resumed later, keeping name/idea/edit-key fresh as they resolve.
+  React.useEffect(() => {
+    if (!cf.workspaceId) return;
+    const secret = typeof window !== "undefined" ? window.localStorage.getItem("cf_secret") ?? undefined : undefined;
+    recordCompany({ id: cf.workspaceId, name: brand, idea, secret });
+  }, [cf.workspaceId, brand, idea]);
+
+  // Seeded ideation: the companies page stashes the founder's idea in cf_seed and
+  // navigates here with ?new=1 — kick off onboarding with it once, then clear it.
+  const seededRef = React.useRef(false);
+  React.useEffect(() => {
+    if (seededRef.current || !mounted || typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("new") !== "1") return;
+    const seed = window.localStorage.getItem("cf_seed");
+    if (seed && onb.status === "idle" && !hasCompany) {
+      seededRef.current = true;
+      window.localStorage.removeItem("cf_seed");
+      void onb.start(seed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot seeded kickoff
+  }, [mounted, onb.status, hasCompany]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--background)] text-[var(--text)]">

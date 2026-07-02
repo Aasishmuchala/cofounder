@@ -61,7 +61,7 @@ export default function Hero() {
           transition={{ duration: 0.6, ease: [0.23, 1, 0.32, 1], delay: 0.45 }}
           className="mt-8 flex flex-wrap items-center gap-3"
         >
-          <Link href="/app">
+          <Link href="/app/companies">
             <span className="btn-light-surface font-display inline-flex h-[44px] items-center justify-center px-5 text-[15px] text-[var(--text-80)] tracking-[0.15px] cursor-pointer">
               Run a company
             </span>
