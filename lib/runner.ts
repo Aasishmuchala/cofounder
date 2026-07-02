@@ -506,7 +506,16 @@ async function runHop(
     if (hooks.onText) stream.on("text", (t: string) => hooks.onText!(t));
     return await stream.finalMessage();
   }
-  return await client.messages.create(params);
+  // ALWAYS stream server-side, even with no client hooks. A non-streamed
+  // create() for a large, multi-minute generation (a premium landing page /
+  // pitch deck runs ~14k tokens over ~2–5 min) trips intermediary read-timeouts:
+  // the omega gateway sits behind Cloudflare, whose non-streamed Proxy Read
+  // Timeout is 120s → a 524 that the SDK retries and then surfaces, dropping the
+  // deliverable to the mock template. Streaming keeps bytes flowing so that
+  // idle-timeout never fires; we just await the assembled final message. Small
+  // calls are unaffected. (Measured: create() 524s at 125s; stream() completes
+  // a full 14k-token page in ~137s.)
+  return await client.messages.stream(params).finalMessage();
 }
 
 /**
