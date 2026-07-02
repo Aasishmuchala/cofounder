@@ -76,13 +76,13 @@ function release(): void {
  * throws.
  */
 export async function withGenerationSlot<T>(fn: () => Promise<T>): Promise<T> {
-  // Global hourly ceiling (fail-closed backstop) BEFORE taking a slot — a runaway
-  // can't consume capacity it isn't allowed to spend. Checked here so EVERY model
-  // route inherits it through the single chokepoint.
-  const budget = recordGeneration();
-  if (!budget.allowed) throw new Saturated(Math.ceil(budget.retryAfterMs / 1000));
-  await acquire();
+  await acquire(); // concurrency gate first (may throw Saturated when the queue is full)
   try {
+    // Global hourly ceiling (fail-closed backstop), counted ONLY for slot-admitted
+    // work so queue-rejected attempts don't inflate the budget. EVERY model route
+    // inherits it through this single chokepoint.
+    const budget = recordGeneration();
+    if (!budget.allowed) throw new Saturated(Math.ceil(budget.retryAfterMs / 1000));
     return await fn();
   } finally {
     release();

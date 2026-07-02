@@ -59,6 +59,13 @@ Set every one of these before serving public traffic.
       RPC — a shared, atomic per-workspace rate window enforced across all instances.
       Both are feature-detected: a pre-migration database keeps the exact legacy
       single-instance behavior.
+- [ ] **Apply `supabase/migrations/0003_drop_legacy_anon_policies.sql`.** It removes any
+      permissive `anon`/`authenticated` RLS policies (`*_anon_all`, `helm_anon_all`) that
+      an earlier setup may have left behind — those blanket `USING (true)` policies let a
+      leaked anon key read/write every table, defeating 0001's whole point. After it,
+      anon/authenticated match zero rows; the service role is unaffected. **The reference
+      DB (`cofounder-clone`) has 0001–0003 applied, the uploads bucket set private, and
+      anon read/write verified denied.**
 - [ ] Understand the trust model: the app talks to Postgres with the **Supabase
       service key, server-side only** (via PostgREST `fetch`; the browser never holds a
       key and only ever calls `/api/*`). The **primary tenant boundary is the
@@ -194,6 +201,7 @@ when their server env flag is set, unless you *also* set their explicit
 | `CRON_SECRET` | **Yes** (if cron used) | `/api/cron` disabled (401) |
 | `0001_hardening.sql` migration | **Yes** | RLS off (app filter only) |
 | `0002_occ_rate_limit.sql` migration | **Yes (before scaling out)** | legacy single-instance semantics |
+| `0003_drop_legacy_anon_policies.sql` | **Yes** | leaked anon key can read/write all data |
 | `COMPUTER_USE` / `CLAUDE_CODE` | **No — keep unset** | disabled (good) |
 | Private `cofounder-uploads` bucket | **Yes** (set public OFF) | code signs URLs; bucket must be private |
 | `HELM_MAX_GENERATIONS_PER_HOUR` | Recommended | 2000/hr/instance in prod (0/off disables) |

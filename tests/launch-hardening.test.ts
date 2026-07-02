@@ -194,19 +194,6 @@ describe("private Library files — meta path sanitization", () => {
   });
 });
 
-describe("secureId", () => {
-  it("mints unguessable, prefixed, unique ids", async () => {
-    const { secureId } = await import("@/lib/supabase-rest");
-    const a = secureId("ws_");
-    const b = secureId("ws_");
-    expect(a.startsWith("ws_")).toBe(true);
-    expect(a).not.toBe(b);
-    // 16 random bytes -> 22 base64url chars after the prefix (>= 128 bits entropy).
-    expect(a.length).toBeGreaterThanOrEqual(3 + 22);
-    expect(a.slice(3)).toMatch(/^[A-Za-z0-9_-]+$/);
-  });
-});
-
 describe("meta size guard (200KB) is never exceeded", () => {
   it("trims designChoices — the largest growth vector — to stay under the ceiling", async () => {
     const { sanitizeWorkspaceMeta } = await import("@/lib/agent-types");

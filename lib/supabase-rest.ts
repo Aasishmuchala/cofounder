@@ -9,16 +9,13 @@ const KEY = process.env.SUPABASE_KEY;
 
 export const dbConfigured = Boolean(URL && KEY);
 
-/**
- * Crypto-strong public id (~128 bits). Workspace ids and artifact ids double as
- * CAPABILITY URLS — the workspace id is the read/share key, and an artifact id is
- * its public /p/<id> link — so they must be UNGUESSABLE, not a short base36 the
- * DB default might mint. We set the id explicitly on insert rather than trust the
- * column default. `prefix` keeps ids human-scannable (ws_/a_) in logs and URLs.
- */
-export function secureId(prefix: string): string {
-  return `${prefix}${randomBytes(16).toString("base64url")}`;
-}
+// NOTE on capability-url strength: workspace ids and artifact ids double as
+// capability URLs (the workspace id is the read/share key; an artifact id is its
+// public /p/<id> link). The DB mints them with `gen_random_uuid()` — a v4 UUID
+// with 122 bits of CSPRNG entropy — which is already unguessable, so we do NOT
+// set the id on insert (the columns are typed `uuid`; a prefixed string id would
+// be rejected). The short `a_<base36>` ids seen elsewhere are the in-memory,
+// no-DB fallback only and never become public capability URLs.
 
 interface DbTaskRow {
   id: string;
@@ -203,8 +200,8 @@ export async function createWorkspace(
     method: "POST",
     headers: headers({ Prefer: "return=representation" }),
     body: JSON.stringify({
-      // App-minted unguessable id (the workspace id IS the public read/share key).
-      id: secureId("ws_"),
+      // id is left to the DB default gen_random_uuid() (v4, 122-bit CSPRNG) — the
+      // workspace id is the public read/share key and is unguessable as a UUID.
       name: name.slice(0, 120),
       idea: idea.slice(0, 600),
       meta,
@@ -508,8 +505,8 @@ export async function insertArtifact(
     method: "POST",
     headers: headers({ Prefer: "return=representation" }),
     body: JSON.stringify({
-      // App-minted unguessable id — this id is the public /p/<id> capability URL.
-      id: secureId("a_"),
+      // id left to the DB default gen_random_uuid() (v4, 122-bit) — this id is the
+      // public /p/<id> capability URL and is unguessable as a UUID.
       workspace_id: workspaceId,
       task_id: artifact.taskId,
       kind: artifact.kind,
