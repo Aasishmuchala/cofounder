@@ -30,8 +30,11 @@ function maxQueue(): number {
 let active = 0;
 const waiters: Array<(ok: boolean) => void> = [];
 
-/** Thrown by withGenerationSlot when the instance is saturated. Carries the
- *  suggested Retry-After (seconds) so the route can surface it. */
+import { recordGeneration } from "@/lib/spend-guard";
+
+/** Thrown by withGenerationSlot when the instance is saturated OR the global
+ *  hourly generation ceiling is hit. Carries the suggested Retry-After (seconds)
+ *  so the route can surface it — routes already map this to HTTP 503. */
 export class Saturated extends Error {
   readonly retryAfterSec: number;
   constructor(retryAfterSec = 2) {
@@ -73,6 +76,11 @@ function release(): void {
  * throws.
  */
 export async function withGenerationSlot<T>(fn: () => Promise<T>): Promise<T> {
+  // Global hourly ceiling (fail-closed backstop) BEFORE taking a slot — a runaway
+  // can't consume capacity it isn't allowed to spend. Checked here so EVERY model
+  // route inherits it through the single chokepoint.
+  const budget = recordGeneration();
+  if (!budget.allowed) throw new Saturated(Math.ceil(budget.retryAfterMs / 1000));
   await acquire();
   try {
     return await fn();

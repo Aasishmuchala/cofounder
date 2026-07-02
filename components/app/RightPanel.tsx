@@ -596,7 +596,7 @@ function LibraryTab({ cf, vibeId, brand }: { cf: UseCofounder; vibeId: string | 
       fd.append("workspaceId", cf.workspaceId ?? "");
       fd.append("workspaceSecret", (typeof window !== "undefined" ? window.localStorage.getItem("cf_secret") : "") ?? "");
       const r = await fetch("/api/upload", { method: "POST", body: fd });
-      const d = (await r.json()) as { ok: boolean; file?: { name: string; url: string } };
+      const d = (await r.json()) as { ok: boolean; file?: { name: string; path?: string; url?: string } };
       if (d.ok && d.file) cf.saveMeta({ files: [...files, d.file] });
     } catch {
       /* ignore */
@@ -629,13 +629,19 @@ function LibraryTab({ cf, vibeId, brand }: { cf: UseCofounder; vibeId: string | 
         Your agents save their work here and are automatically referenced in future tasks unless archived.
       </p>
 
-      {/* Uploaded files */}
+      {/* Uploaded files — private objects resolve through /api/files (fresh
+          signed URL per click); legacy entries keep their direct url. */}
       {files.length > 0 && (
         <div className="mt-4 space-y-1.5">
-          {files.map((f, i) => (
+          {files.map((f, i) => {
+            const secret = typeof window !== "undefined" ? window.localStorage.getItem("cf_secret") ?? "" : "";
+            const href = f.path
+              ? `/api/files?workspace=${encodeURIComponent(cf.workspaceId ?? "")}&path=${encodeURIComponent(f.path)}&secret=${encodeURIComponent(secret)}`
+              : f.url ?? "#";
+            return (
             <a
-              key={`${i}-${f.url}`}
-              href={f.url}
+              key={`${i}-${f.path ?? f.url}`}
+              href={href}
               target="_blank"
               rel="noreferrer"
               className="flex items-center gap-2.5 rounded-[9px] bg-white px-3 py-2 shadow-raised transition-colors hover:bg-black/[0.02]"
@@ -646,7 +652,8 @@ function LibraryTab({ cf, vibeId, brand }: { cf: UseCofounder; vibeId: string | 
                 <path d="M7 17 17 7M9 7h8v8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </a>
-          ))}
+            );
+          })}
         </div>
       )}
 

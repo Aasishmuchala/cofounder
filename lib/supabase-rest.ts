@@ -631,7 +631,12 @@ export async function claimTask(
 
 const UPLOAD_BUCKET = "cofounder-uploads";
 
-/** Upload bytes to the public Library bucket; returns the public URL or null. */
+/** Upload bytes to the PRIVATE Library bucket; returns the stored object PATH
+ *  (NOT a URL) or null. The path is namespaced by workspace (`<workspaceId>/…`)
+ *  and is what we persist in meta.files — reads go through a short-lived signed
+ *  URL (createSignedUrl), never a public object URL, so an uploaded file is not
+ *  world-readable by guessable URL. The bucket must be created PRIVATE (public
+ *  off); this code never emits a `/object/public/` link regardless. */
 export async function uploadToStorage(
   path: string,
   bytes: Buffer,
@@ -649,7 +654,33 @@ export async function uploadToStorage(
     body: new Uint8Array(bytes),
   });
   if (!res.ok) return null;
-  return `${URL}/storage/v1/object/public/${UPLOAD_BUCKET}/${path.split("/").map(encodeURIComponent).join("/")}`;
+  return path;
+}
+
+/**
+ * Mint a short-lived signed URL for a private Library object. Server-only (uses
+ * the service key); the returned URL is time-limited (default 10 min) so it can
+ * be handed to the browser for a single view/download without making the object
+ * public. Returns null on any failure (caller 404s). `path` must already be
+ * validated as belonging to the caller's workspace.
+ */
+export async function createSignedUrl(path: string, expiresIn = 600): Promise<string | null> {
+  if (!dbConfigured) return null;
+  const clean = path.split("/").map(encodeURIComponent).join("/");
+  const res = await fetch(`${URL}/storage/v1/object/sign/${UPLOAD_BUCKET}/${clean}`, {
+    method: "POST",
+    headers: {
+      apikey: KEY as string,
+      Authorization: `Bearer ${KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ expiresIn }),
+  }).catch(() => null);
+  if (!res || !res.ok) return null;
+  const body = (await res.json().catch(() => null)) as { signedURL?: string } | null;
+  if (!body?.signedURL) return null;
+  // Supabase returns a root-relative signedURL like "/object/sign/bucket/…?token=…".
+  return `${URL}/storage/v1${body.signedURL.startsWith("/") ? "" : "/"}${body.signedURL}`;
 }
 
 /** Edit a deliverable's content/title in place (scoped to its workspace). */

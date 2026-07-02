@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { coerceText } from "@/lib/agent-types";
 import { authorizeWrite, tooLarge } from "@/lib/auth";
 import { uploadToStorage, dbConfigured } from "@/lib/supabase-rest";
@@ -71,17 +72,19 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  // NOTE: the storage bucket (cofounder-uploads) is PUBLIC — every uploaded
-  // object is world-readable by its URL. For production, prefer a PRIVATE bucket
-  // and hand out short-lived signed URLs instead of public object URLs.
+  // The bucket is PRIVATE: uploadToStorage returns the stored object PATH (not a
+  // URL). We persist the path in meta.files and hand out a short-lived signed URL
+  // on read (via /api/files), so an uploaded file is never world-readable by a
+  // guessable URL. The object key is namespaced by workspaceId, so the signer can
+  // verify a file belongs to the workspace requesting it.
   const safe = (file.name || "file").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80) || "file";
-  const rand = Math.random().toString(36).slice(2, 8);
+  const rand = randomBytes(6).toString("hex");
   const path = `${workspaceId}/${Date.now()}-${rand}-${safe}`;
   try {
     const bytes = Buffer.from(await file.arrayBuffer());
-    const url = await uploadToStorage(path, bytes, file.type);
-    if (!url) return Response.json({ ok: false, error: "upload failed" }, { status: 500 });
-    return Response.json({ ok: true, file: { name: (file.name || safe).slice(0, 120), url } });
+    const stored = await uploadToStorage(path, bytes, file.type);
+    if (!stored) return Response.json({ ok: false, error: "upload failed" }, { status: 500 });
+    return Response.json({ ok: true, file: { name: (file.name || safe).slice(0, 120), path: stored } });
   } catch {
     return Response.json({ ok: false, error: "upload failed" }, { status: 500 });
   }

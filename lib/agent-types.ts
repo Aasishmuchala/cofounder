@@ -232,7 +232,12 @@ export interface CustomAgentSpec {
 /** A file uploaded to the company's Library. */
 export interface UploadedFile {
   name: string;
-  url: string;
+  /** Private object path in the Library bucket (new uploads). Read via a
+   *  short-lived signed URL through /api/files — never a public URL. */
+  path?: string;
+  /** Legacy public URL (uploads created before private buckets). Still rendered
+   *  directly for back-compat; new uploads carry `path` instead. */
+  url?: string;
 }
 
 /* ------------------------------------------------------------------ *
@@ -530,9 +535,24 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
       .slice(0, 50)
       .map((f) => {
         const o = (f && typeof f === "object" ? f : {}) as Record<string, unknown>;
-        return { name: coerceText(o.name, 120) || "file", url: typeof o.url === "string" ? o.url.slice(0, 600) : "" };
+        const file: UploadedFile = { name: coerceText(o.name, 120) || "file" };
+        // New: a private object path (namespaced by workspace). Keep only a safe
+        // relative path — no scheme, no "..", no leading slash — so a crafted meta
+        // can't point the signer at another bucket/object or traverse out.
+        if (typeof o.path === "string") {
+          const p = o.path.slice(0, 300);
+          if (/^[A-Za-z0-9](?:[A-Za-z0-9._\-/]*[A-Za-z0-9._-])?$/.test(p) && !p.includes("..")) {
+            file.path = p;
+          }
+        }
+        // Legacy: an https public URL (pre-private-bucket uploads).
+        if (typeof o.url === "string" && /^https:\/\//i.test(o.url)) {
+          file.url = o.url.slice(0, 600);
+        }
+        return file;
       })
-      .filter((f) => /^https:\/\//i.test(f.url));
+      // Keep only entries that resolve to something readable (path OR legacy url).
+      .filter((f) => Boolean(f.path) || Boolean(f.url));
   }
 
   if (Array.isArray(m.customAgents)) {

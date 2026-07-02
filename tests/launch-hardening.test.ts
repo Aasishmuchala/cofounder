@@ -118,6 +118,82 @@ describe("per-IP anon rate limit (request-guard)", () => {
   });
 });
 
+describe("spend guard (global hourly ceiling)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    delete process.env.NODE_ENV;
+    delete process.env.VERCEL;
+    delete process.env.HELM_MAX_GENERATIONS_PER_HOUR;
+  });
+
+  it("is unlimited in dev (keyless demo unchanged)", async () => {
+    const { recordGeneration, _resetSpendGuard } = await import("@/lib/spend-guard");
+    _resetSpendGuard();
+    for (let i = 0; i < 5000; i++) expect(recordGeneration(1_000).allowed).toBe(true);
+  });
+
+  it("fails closed at the ceiling, then recovers as the window drains", async () => {
+    process.env.HELM_MAX_GENERATIONS_PER_HOUR = "3";
+    vi.resetModules();
+    const { recordGeneration, _spentThisWindow, _resetSpendGuard } = await import("@/lib/spend-guard");
+    _resetSpendGuard();
+    const t0 = 1_000_000;
+    expect(recordGeneration(t0).allowed).toBe(true);
+    expect(recordGeneration(t0 + 1).allowed).toBe(true);
+    expect(recordGeneration(t0 + 2).allowed).toBe(true);
+    const blocked = recordGeneration(t0 + 3);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.retryAfterMs).toBeGreaterThan(0);
+    expect(_spentThisWindow(t0 + 3)).toBe(3);
+    // An hour and change later, the earliest hits have aged out -> room again.
+    expect(recordGeneration(t0 + 60 * 60 * 1000 + 5).allowed).toBe(true);
+  });
+
+  it("treats 0 / off as disabled even in production", async () => {
+    process.env.VERCEL = "1";
+    process.env.HELM_MAX_GENERATIONS_PER_HOUR = "off";
+    vi.resetModules();
+    const { recordGeneration, _resetSpendGuard } = await import("@/lib/spend-guard");
+    _resetSpendGuard();
+    for (let i = 0; i < 5000; i++) expect(recordGeneration(1_000).allowed).toBe(true);
+  });
+
+  it("defaults to a finite ceiling in production", async () => {
+    process.env.VERCEL = "1";
+    vi.resetModules();
+    const { recordGeneration, _resetSpendGuard } = await import("@/lib/spend-guard");
+    _resetSpendGuard();
+    let blockedAt = -1;
+    for (let i = 0; i < 2100; i++) {
+      if (!recordGeneration(1_000 + i).allowed) { blockedAt = i; break; }
+    }
+    expect(blockedAt).toBe(2000); // DEFAULT_PROD_CEILING
+  });
+});
+
+describe("private Library files — meta path sanitization", () => {
+  it("keeps a safe workspace-namespaced path and drops traversal/absolute/scheme", async () => {
+    const { sanitizeWorkspaceMeta } = await import("@/lib/agent-types");
+    const out = sanitizeWorkspaceMeta({
+      files: [
+        { name: "good", path: "ws_abc/1700000000-deadbeef-report.pdf" },
+        { name: "traversal", path: "ws_abc/../ws_other/secret.pdf" },
+        { name: "absolute", path: "/etc/passwd" },
+        { name: "scheme", path: "https://evil.example/x" },
+        { name: "legacy", url: "https://cdn.example/f.png" },
+        { name: "ftp-dropped", url: "ftp://x/y" },
+      ],
+    });
+    const byName = Object.fromEntries((out.files ?? []).map((f) => [f.name, f]));
+    expect(byName.good?.path).toBe("ws_abc/1700000000-deadbeef-report.pdf");
+    expect(byName.traversal).toBeUndefined(); // ".." rejected
+    expect(byName.absolute).toBeUndefined(); // leading "/" rejected
+    expect(byName.scheme).toBeUndefined(); // path can't be a URL
+    expect(byName.legacy?.url).toBe("https://cdn.example/f.png"); // back-compat kept
+    expect(byName["ftp-dropped"]).toBeUndefined(); // non-https url dropped
+  });
+});
+
 describe("secureId", () => {
   it("mints unguessable, prefixed, unique ids", async () => {
     const { secureId } = await import("@/lib/supabase-rest");
