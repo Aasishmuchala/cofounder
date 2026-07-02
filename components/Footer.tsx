@@ -5,7 +5,7 @@ export default function Footer() {
   return (
     <footer
       className="relative mt-24 border-t border-black/5 bg-cover bg-bottom"
-      style={{ backgroundImage: "url(/footer/bg-footer-pattern.png)" }}
+      style={{ backgroundImage: "url(/footer/bg-footer-pattern.svg)" }}
     >
       <div className="container-1440 px-5 min-[476px]:px-8 pt-16 pb-10">
         <div className="grid grid-cols-2 gap-10 md:grid-cols-4">

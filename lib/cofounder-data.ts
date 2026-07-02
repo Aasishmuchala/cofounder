@@ -79,10 +79,10 @@ export const DEFAULT_SUGGESTED_NEXT = [
 
 /** Cover art used for Library collections (reuses generated brand imagery). */
 export const LIBRARY_COVERS = [
-  "/chapters/build.jpg",
-  "/chapters/sell.jpg",
-  "/chapters/scale.jpg",
-  "/chapters/start.jpg",
+  "/chapters/build.svg",
+  "/chapters/sell.svg",
+  "/chapters/scale.svg",
+  "/chapters/start.svg",
 ];
 
 /** Per-department detail shown in the drill-in view (cover, blurb, lead agent). */
@@ -93,18 +93,18 @@ export interface DepartmentInfo {
 }
 
 export const DEPARTMENT_INFO: Record<string, DepartmentInfo> = {
-  Engineering: { blurb: "Engineering agents build and ship product changes across the stack.", cover: "/depts/engineering.jpg", agent: "Engineer" },
-  Sales: { blurb: "Sales agents handle ICP, outbound, and customer development.", cover: "/depts/sales.jpg", agent: "Sales Agent" },
-  Marketing: { blurb: "Marketing agents build campaigns, content, and creative.", cover: "/depts/marketing.jpg", agent: "Marketing Agent" },
-  Design: { blurb: "Design agents create brand systems, decks, and email templates.", cover: "/depts/design.jpg", agent: "Design Agent" },
-  Support: { blurb: "Support agents draft replies, triage tickets, and improve support workflows.", cover: "/depts/support.jpg", agent: "Support Agent" },
-  Operations: { blurb: "Operations agents streamline your processes, coordinate teams, and keep everything running smoothly.", cover: "/depts/operations.jpg", agent: "Ops Agent" },
-  Finance: { blurb: "Finance agents handle collections, close support, and billing inbox triage.", cover: "/depts/finance.jpg", agent: "Finance Agent" },
-  Legal: { blurb: "Legal agents review contracts, policies, and compliance artifacts.", cover: "/depts/legal.jpg", agent: "Legal Agent" },
-  Product: { blurb: "Product agents shape the roadmap, specs, and analytics that guide what gets built.", cover: "/depts/engineering.jpg", agent: "Product Agent" },
-  People: { blurb: "People agents run recruiting, onboarding, and the culture that scales the team.", cover: "/depts/operations.jpg", agent: "People Agent" },
-  Data: { blurb: "Data agents build pipelines, analytics, and the ML that turns data into decisions.", cover: "/depts/engineering.jpg", agent: "Data Agent" },
-  Security: { blurb: "Security agents harden the company — SecOps, IT, and audit & compliance.", cover: "/depts/legal.jpg", agent: "Security Agent" },
+  Engineering: { blurb: "Engineering agents build and ship product changes across the stack.", cover: "/depts/engineering.svg", agent: "Engineer" },
+  Sales: { blurb: "Sales agents handle ICP, outbound, and customer development.", cover: "/depts/sales.svg", agent: "Sales Agent" },
+  Marketing: { blurb: "Marketing agents build campaigns, content, and creative.", cover: "/depts/marketing.svg", agent: "Marketing Agent" },
+  Design: { blurb: "Design agents create brand systems, decks, and email templates.", cover: "/depts/design.svg", agent: "Design Agent" },
+  Support: { blurb: "Support agents draft replies, triage tickets, and improve support workflows.", cover: "/depts/support.svg", agent: "Support Agent" },
+  Operations: { blurb: "Operations agents streamline your processes, coordinate teams, and keep everything running smoothly.", cover: "/depts/operations.svg", agent: "Ops Agent" },
+  Finance: { blurb: "Finance agents handle collections, close support, and billing inbox triage.", cover: "/depts/finance.svg", agent: "Finance Agent" },
+  Legal: { blurb: "Legal agents review contracts, policies, and compliance artifacts.", cover: "/depts/legal.svg", agent: "Legal Agent" },
+  Product: { blurb: "Product agents shape the roadmap, specs, and analytics that guide what gets built.", cover: "/depts/engineering.svg", agent: "Product Agent" },
+  People: { blurb: "People agents run recruiting, onboarding, and the culture that scales the team.", cover: "/depts/operations.svg", agent: "People Agent" },
+  Data: { blurb: "Data agents build pipelines, analytics, and the ML that turns data into decisions.", cover: "/depts/engineering.svg", agent: "Data Agent" },
+  Security: { blurb: "Security agents harden the company — SecOps, IT, and audit & compliance.", cover: "/depts/legal.svg", agent: "Security Agent" },
 };
 
 export function departmentInfo(dept: string | null | undefined): DepartmentInfo | null {

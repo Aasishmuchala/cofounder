@@ -1,0 +1,17 @@
+<svg viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Saturated tech">
+  
+  <defs>
+    <linearGradient id="g-vst" gradientTransform="rotate(45 .5 .5)">
+      <stop offset="0%" stop-color="#1b1140"/><stop offset="50%" stop-color="#3b1d8a"/><stop offset="100%" stop-color="#7b3ff2"/>
+    </linearGradient>
+    <filter id="grain-vst"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer><feComposite operator="over" in2="SourceGraphic"/></filter>
+  </defs>
+  <rect width="480" height="320" fill="url(#g-vst)"/>
+  <g stroke="#b69cff" stroke-opacity="0.5" stroke-width="1">
+    <line x1="0" y1="0" x2="0" y2="320"/><line x1="60" y1="0" x2="60" y2="320"/><line x1="120" y1="0" x2="120" y2="320"/><line x1="180" y1="0" x2="180" y2="320"/><line x1="240" y1="0" x2="240" y2="320"/><line x1="300" y1="0" x2="300" y2="320"/><line x1="360" y1="0" x2="360" y2="320"/><line x1="420" y1="0" x2="420" y2="320"/><line x1="480" y1="0" x2="480" y2="320"/>
+    <line x1="0" y1="0" x2="480" y2="0"/><line x1="0" y1="60" x2="480" y2="60"/><line x1="0" y1="120" x2="480" y2="120"/><line x1="0" y1="180" x2="480" y2="180"/><line x1="0" y1="240" x2="480" y2="240"/><line x1="0" y1="300" x2="480" y2="300"/>
+  </g>
+  <circle cx="240" cy="160" r="72" fill="none" stroke="#d8c9ff" stroke-width="3"/>
+  <circle cx="240" cy="160" r="10" fill="#eee6ff"/>
+  <rect width="480" height="320" filter="url(#grain-vst)" opacity="0.4"/>
+</svg>

@@ -1,0 +1,14 @@
+<svg viewBox="0 0 360 480" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Scale">
+  
+  <defs>
+    <linearGradient id="g-csc" gradientTransform="rotate(160 .5 .5)">
+      <stop offset="0%" stop-color="#1f2f5a"/><stop offset="100%" stop-color="#3f68b0"/>
+    </linearGradient>
+    <filter id="grain-csc"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer><feComposite operator="over" in2="SourceGraphic"/></filter>
+  </defs>
+  <rect width="360" height="480" fill="url(#g-csc)"/>
+  <rect x="22" y="22" width="316" height="436" rx="10" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="1.5"/>
+  <g fill="#dbe6ff"><rect x="110" y="220" width="30" height="40"/><rect x="150" y="190" width="30" height="70"/><rect x="190" y="160" width="30" height="100"/><rect x="230" y="130" width="30" height="130"/></g>
+  <text x="40" y="430" font-family="Georgia, 'Times New Roman', serif" font-size="34" fill="#fff" letter-spacing="1">Scale</text>
+  <rect width="360" height="480" filter="url(#grain-csc)" opacity="0.5"/>
+</svg>

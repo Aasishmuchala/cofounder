@@ -1,0 +1,18 @@
+<svg viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Editorial mint">
+  
+  <defs>
+    <linearGradient id="g-vem" gradientTransform="rotate(90 .5 .5)">
+      <stop offset="0%" stop-color="#eef6f0"/><stop offset="100%" stop-color="#dcefe4"/>
+    </linearGradient>
+    <filter id="grain-vem"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer><feComposite operator="over" in2="SourceGraphic"/></filter>
+  </defs>
+  <rect width="480" height="320" fill="url(#g-vem)"/>
+  <rect x="48" y="52" width="220" height="14" rx="7" fill="#123a2c"/>
+  <rect x="48" y="80" width="150" height="14" rx="7" fill="#123a2c" fill-opacity="0.6"/>
+  <line x1="48" y1="120" x2="432" y2="120" stroke="#5aa98d" stroke-width="2"/>
+  <rect x="48" y="150" width="384" height="8" rx="4" fill="#1a1712" fill-opacity="0.28"/>
+  <rect x="48" y="170" width="384" height="8" rx="4" fill="#1a1712" fill-opacity="0.28"/>
+  <rect x="48" y="190" width="300" height="8" rx="4" fill="#1a1712" fill-opacity="0.28"/>
+  <circle cx="392" cy="250" r="34" fill="#5aa98d"/>
+  <rect width="480" height="320" filter="url(#grain-vem)" opacity="0.5"/>
+</svg>

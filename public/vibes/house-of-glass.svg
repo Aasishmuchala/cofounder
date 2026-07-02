@@ -1,0 +1,16 @@
+<svg viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="House of glass">
+  
+  <defs>
+    <linearGradient id="g-vhg" gradientTransform="rotate(135 .5 .5)">
+      <stop offset="0%" stop-color="#dfe7ee"/><stop offset="50%" stop-color="#cdd9e6"/><stop offset="100%" stop-color="#b9c9dc"/>
+    </linearGradient>
+    <filter id="grain-vhg"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer><feComposite operator="over" in2="SourceGraphic"/></filter>
+  </defs>
+  <rect width="480" height="320" fill="url(#g-vhg)"/>
+  <g fill="#ffffff" fill-opacity="0.35" stroke="#ffffff" stroke-opacity="0.6" stroke-width="1.5">
+    <rect x="70" y="60" width="150" height="200" rx="18"/>
+    <rect x="180" y="110" width="170" height="150" rx="18"/>
+    <rect x="250" y="70" width="140" height="120" rx="18"/>
+  </g>
+  <rect width="480" height="320" filter="url(#grain-vhg)" opacity="0.3"/>
+</svg>

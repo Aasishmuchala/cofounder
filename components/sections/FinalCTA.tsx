@@ -17,7 +17,7 @@ export default function FinalCTA() {
         >
           {/* Decorative clouds */}
           <Image
-            src="/build-ui-bits/clouds-left.png"
+            src="/build-ui-bits/clouds-left.svg"
             alt=""
             aria-hidden
             width={420}
@@ -25,7 +25,7 @@ export default function FinalCTA() {
             className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 w-[200px] opacity-25 select-none md:w-[340px]"
           />
           <Image
-            src="/build-ui-bits/clouds-right.png"
+            src="/build-ui-bits/clouds-right.svg"
             alt=""
             aria-hidden
             width={420}

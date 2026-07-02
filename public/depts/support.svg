@@ -1,0 +1,19 @@
+<svg viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="support department">
+  
+  <defs>
+    <linearGradient id="g-support" gradientTransform="rotate(120 .5 .5)">
+      <stop offset="0%" stop-color="#e6f2ee"/><stop offset="50%" stop-color="#a9d6c6"/><stop offset="100%" stop-color="#5aa98d"/>
+    </linearGradient>
+    <filter id="grain-support"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer><feComposite operator="over" in2="SourceGraphic"/></filter>
+  </defs>
+  <rect width="480" height="320" fill="url(#g-support)"/>
+  <g fill="none" stroke="#5aa98d" stroke-opacity="0.5" stroke-width="1.5">
+    <circle cx="360" cy="90" r="70"/><circle cx="360" cy="90" r="46"/><circle cx="360" cy="90" r="22"/>
+  </g>
+  <g fill="#1a1712" fill-opacity="0.9">
+    <rect x="40" y="212" width="150" height="9" rx="4.5"/>
+    <rect x="40" y="234" width="96" height="9" rx="4.5" fill-opacity="0.45"/>
+  </g>
+  <rect x="40" y="70" width="46" height="46" rx="12" fill="#5aa98d"/>
+  <rect width="480" height="320" filter="url(#grain-support)" opacity="0.6"/>
+</svg>

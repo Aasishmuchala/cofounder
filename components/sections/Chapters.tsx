@@ -12,10 +12,10 @@ const SPINE_COLORS = [
 ];
 
 const CHAPTER_IMAGES = [
-  "/chapters/start.jpg",
-  "/chapters/build.jpg",
-  "/chapters/sell.jpg",
-  "/chapters/scale.jpg",
+  "/chapters/start.svg",
+  "/chapters/build.svg",
+  "/chapters/sell.svg",
+  "/chapters/scale.svg",
 ];
 
 const EASE = [0.23, 1, 0.32, 1] as const;

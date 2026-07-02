@@ -187,7 +187,7 @@ function RoadmapMock() {
                   {i > 0 && <EtchedDivider />}
                   <div className="flex items-center gap-3 py-2.5">
                     <Image
-                      src={`/homepage/product-ui-1/icon-${step.icon}.png`}
+                      src={`/homepage/product-ui-1/icon-${step.icon}.svg`}
                       alt=""
                       width={28}
                       height={28}
@@ -222,7 +222,7 @@ function BuildMock() {
       <div
         className="h-8 w-full"
         style={{
-          backgroundImage: "url(/build-ui-bits/carousel-top.png)",
+          backgroundImage: "url(/build-ui-bits/carousel-top.svg)",
           backgroundRepeat: "repeat",
           backgroundSize: "auto 100%",
           opacity: 0.7,

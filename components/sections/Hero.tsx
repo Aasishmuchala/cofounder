@@ -20,7 +20,7 @@ export default function Hero() {
       <div className="absolute inset-0" aria-hidden>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/hero-lighthouse.jpg"
+          src="/hero-lighthouse.svg"
           alt=""
           fetchPriority="high"
           className="h-full w-full object-cover"

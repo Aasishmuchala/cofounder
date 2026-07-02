@@ -1,0 +1,16 @@
+<svg viewBox="0 0 1200 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="">
+  
+  <defs>
+    <linearGradient id="g-hb" gradientTransform="rotate(120 .5 .5)">
+      <stop offset="0%" stop-color="#efe7d7"/><stop offset="50%" stop-color="#e7d9c2"/><stop offset="100%" stop-color="#d8c4a2"/>
+    </linearGradient>
+    <filter id="grain-hb"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer><feComposite operator="over" in2="SourceGraphic"/></filter>
+  </defs>
+  <rect width="1200" height="400" fill="url(#g-hb)"/>
+  <g fill="none" stroke="#b79b6e" stroke-opacity="0.5" stroke-width="2">
+    <circle cx="980" cy="120" r="120"/><circle cx="980" cy="120" r="80"/><circle cx="980" cy="120" r="40"/>
+  </g>
+  <rect x="80" y="150" width="360" height="16" rx="8" fill="#1a1712" fill-opacity="0.8"/>
+  <rect x="80" y="184" width="240" height="16" rx="8" fill="#1a1712" fill-opacity="0.4"/>
+  <rect width="1200" height="400" filter="url(#grain-hb)" opacity="0.5"/>
+</svg>

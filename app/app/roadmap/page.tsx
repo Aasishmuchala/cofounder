@@ -97,7 +97,7 @@ export default function RoadmapPage() {
                         aria-hidden
                       >
                         <Image
-                          src={`/homepage/product-ui-1/icon-${step.icon}.png`}
+                          src={`/homepage/product-ui-1/icon-${step.icon}.svg`}
                           alt=""
                           width={22}
                           height={22}

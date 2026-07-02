@@ -1,0 +1,14 @@
+<svg viewBox="0 0 360 480" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sell">
+  
+  <defs>
+    <linearGradient id="g-cse" gradientTransform="rotate(160 .5 .5)">
+      <stop offset="0%" stop-color="#5a2a1f"/><stop offset="100%" stop-color="#a5502f"/>
+    </linearGradient>
+    <filter id="grain-cse"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer><feComposite operator="over" in2="SourceGraphic"/></filter>
+  </defs>
+  <rect width="360" height="480" fill="url(#g-cse)"/>
+  <rect x="22" y="22" width="316" height="436" rx="10" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="1.5"/>
+  <path d="M110 250 L180 130 L250 250 Z" fill="none" stroke="#ffe6d2" stroke-width="3"/><circle cx="180" cy="250" r="8" fill="#ffe6d2"/>
+  <text x="40" y="430" font-family="Georgia, 'Times New Roman', serif" font-size="34" fill="#fff" letter-spacing="1">Sell</text>
+  <rect width="360" height="480" filter="url(#grain-cse)" opacity="0.5"/>
+</svg>

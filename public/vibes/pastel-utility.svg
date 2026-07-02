@@ -1,0 +1,16 @@
+<svg viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pastel utility">
+  
+  <defs>
+    <linearGradient id="g-vpu" gradientTransform="rotate(90 .5 .5)">
+      <stop offset="0%" stop-color="#eef1f6"/><stop offset="100%" stop-color="#e3e8f0"/>
+    </linearGradient>
+    <filter id="grain-vpu"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer><feComposite operator="over" in2="SourceGraphic"/></filter>
+  </defs>
+  <rect width="480" height="320" fill="url(#g-vpu)"/>
+  <rect x="40" y="48" width="180" height="224" rx="16" fill="#fff" stroke="#c9d2e0" stroke-width="1.5"/>
+  <rect x="60" y="72" width="120" height="10" rx="5" fill="#8ea2c0"/>
+  <rect x="60" y="96" width="90" height="10" rx="5" fill="#c2cddd"/>
+  <rect x="248" y="48" width="192" height="104" rx="16" fill="#bcd3c9"/>
+  <rect x="248" y="168" width="192" height="104" rx="16" fill="#e6c9b8"/>
+  <rect width="480" height="320" filter="url(#grain-vpu)" opacity="0.4"/>
+</svg>

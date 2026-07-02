@@ -1,0 +1,14 @@
+<svg viewBox="0 0 360 480" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Start">
+  
+  <defs>
+    <linearGradient id="g-cs" gradientTransform="rotate(160 .5 .5)">
+      <stop offset="0%" stop-color="#2a2350"/><stop offset="100%" stop-color="#4a3a86"/>
+    </linearGradient>
+    <filter id="grain-cs"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer><feComposite operator="over" in2="SourceGraphic"/></filter>
+  </defs>
+  <rect width="360" height="480" fill="url(#g-cs)"/>
+  <rect x="22" y="22" width="316" height="436" rx="10" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="1.5"/>
+  <circle cx="180" cy="190" r="70" fill="none" stroke="#e9deff" stroke-width="3"/><circle cx="180" cy="190" r="12" fill="#e9deff"/>
+  <text x="40" y="430" font-family="Georgia, 'Times New Roman', serif" font-size="34" fill="#fff" letter-spacing="1">Start</text>
+  <rect width="360" height="480" filter="url(#grain-cs)" opacity="0.5"/>
+</svg>

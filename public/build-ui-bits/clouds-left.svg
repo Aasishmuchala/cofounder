@@ -1,0 +1,9 @@
+<svg viewBox="0 0 420 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="">
+  <defs><linearGradient id="cl-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#e9e0ff"/></linearGradient></defs>
+  <g fill="url(#cl-l)">
+    <ellipse cx="150" cy="140" rx="130" ry="60"/>
+    <ellipse cx="250" cy="120" rx="110" ry="70"/>
+    <ellipse cx="330" cy="150" rx="80" ry="46"/>
+    <ellipse cx="90" cy="150" rx="70" ry="42"/>
+  </g>
+</svg>
