@@ -5,6 +5,7 @@ import { enforceAnonRateLimit } from "@/lib/request-guard";
 import { withGenerationSlot, Saturated } from "@/lib/concurrency";
 import { dbConfigured, getWorkspace } from "@/lib/supabase-rest";
 import { decomposeGoal, materializePlan } from "@/lib/orchestrator";
+import { reviewPlan } from "@/lib/plan-review";
 
 export const runtime = "nodejs";
 // Goal decomposition is a single model call; keep a generous ceiling.
@@ -60,10 +61,15 @@ export async function POST(req: Request): Promise<Response> {
   const meta = workspaceId && dbConfigured ? (await getWorkspace(workspaceId).then((w) => w?.meta ?? null).catch(() => null)) : null;
 
   try {
-    const plan = await withGenerationSlot(() => decomposeGoal(workspaceId, goal, meta));
+    const raw = await withGenerationSlot(() => decomposeGoal(workspaceId, goal, meta));
+    // GStack-style plan review: run deterministic quality gates over the decomposed
+    // plan (coverage / sequencing / staffing / qa), apply safe auto-fixes, and return
+    // the tightened plan plus the gate results — so the founder approves a reviewed
+    // plan, not a raw first draft. Pure + instant; the runner path is untouched.
+    const { plan, review } = reviewPlan(raw);
     // Surface the heuristic-fallback flag at the top level too (mirrors plan.fallback)
     // so the UI can warn the founder the plan is a generic template, not bespoke.
-    return Response.json({ ok: true, plan, fallback: plan.fallback === true });
+    return Response.json({ ok: true, plan, fallback: plan.fallback === true, review });
   } catch (e) {
     if (e instanceof Saturated) {
       return Response.json(

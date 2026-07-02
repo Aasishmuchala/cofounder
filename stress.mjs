@@ -13,7 +13,7 @@ const BASE = process.env.BASE || "http://localhost:3300";
 let pass = 0, fail = 0;
 const findings = [];
 const rec = (ok, name, detail) => {
-  (ok ? pass++ : fail++);
+  if (ok) pass++; else fail++;
   if (!ok) findings.push(`${name} :: ${detail}`);
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? "  — " + detail : ""}`);
 };

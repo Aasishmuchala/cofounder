@@ -3,7 +3,7 @@
 // is fine — persistence runs regardless of the Anthropic key.
 const BASE = process.env.BASE || "http://localhost:3300";
 let pass = 0, fail = 0;
-const rec = (ok, n, d) => { ok ? pass++ : fail++; console.log(`${ok ? "ok  " : "FAIL"} ${n}${d ? "  — " + d : ""}`); };
+const rec = (ok, n, d) => { if (ok) pass++; else fail++; console.log(`${ok ? "ok  " : "FAIL"} ${n}${d ? "  — " + d : ""}`); };
 const post = (p, b) => fetch(BASE + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
 const patch = (p, b) => fetch(BASE + p, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
 const J = async (r) => { const t = await r.text(); try { return JSON.parse(t); } catch { return { __raw: t }; } };

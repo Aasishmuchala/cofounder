@@ -73,7 +73,7 @@ export default function Header() {
           >
             Log in
           </Link>
-          <Link href="/app">
+          <Link href="/app/companies">
             <LightButton as="span" className="w-[130px]">
               Run a company
             </LightButton>
