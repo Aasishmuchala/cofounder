@@ -1,15 +1,16 @@
-// Server-only: the preloaded skill catalog. Scans the local Claude/Cursor skill
-// library (~/.claude/skills, ~/.cursor/skills-cursor — 1400+ skills, each a
-// SKILL.md with YAML frontmatter), classifies each into a department, and caches
-// the index. The full SKILL.md body is read lazily when a skill is equipped.
+// Server-only: the preloaded skill catalog. Scans the FIRST-PARTY skill library
+// vendored into this repo (skills/ — 100 curated, department-tagged SKILL.md
+// files authored for Helm) plus any local Claude/Cursor skill library
+// (~/.claude/skills, ~/.cursor/skills-cursor), classifies each into a
+// department, and caches the index. The full SKILL.md body is read lazily when
+// a skill is equipped.
+//
+// Department resolution: an explicit `department:` frontmatter field (validated
+// against the org's department list) WINS; skills without one (e.g. home-dir
+// community skills) fall back to the keyword classifier below.
 //
 // Graceful: if the dirs don't exist (e.g. a deploy without the library), the
 // catalog is empty and callers fall back to open-design + live discovery.
-//
-// To grow the catalog from trending GitHub skill repos, run the one-shot
-// importer: `npm run skills:import` (see scripts/import-skills.mjs). It writes
-// new SKILL.md files into ~/.claude/skills/<slug>/ with `source: github:...`,
-// deduped + injection-scanned, which this loader then picks up automatically.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -24,29 +25,42 @@ export interface CatalogSkill {
 }
 
 const HOME = process.env.SKILLS_HOME || os.homedir();
-// Scan the user's local skill library AND the skills vendored INTO this repo
-// (skills/ — the 208 imported from trending GitHub repos via
-// scripts/import-skills.mjs). The repo copy makes the imported catalog
-// reproducible on any machine / deploy, not just one with a populated
-// ~/.claude/skills. loadCatalog() dedupes by skill name, so the home-dir and
-// repo copies of the same skill collapse to a single entry.
+// Scan the FIRST-PARTY catalog vendored into this repo (skills/ — 100 curated
+// skills, source: helm) AND the user's local skill library. The repo copy is
+// listed FIRST so it wins the by-name dedupe in loadCatalog(): a first-party
+// skill always beats a same-named home-dir copy, making the shipped catalog
+// reproducible on any machine / deploy.
 const ROOTS = [
+  path.join(process.cwd(), "skills"),
   path.join(HOME, ".claude", "skills"),
   path.join(HOME, ".cursor", "skills-cursor"),
-  path.join(process.cwd(), "skills"),
 ];
 
-// First matching rule wins — specific departments before the broad Engineering
-// catch-all, so e.g. a "sales dashboard" skill lands in Sales, not Engineering.
+/** The org's department vocabulary — the only values an explicit `department:`
+ *  frontmatter field may take (mirrors DEPARTMENTS in lib/agent-types.ts;
+ *  duplicated as a plain set here to keep this module dependency-free). */
+const VALID_DEPARTMENTS = new Set([
+  "Engineering", "Product", "Design", "Marketing", "Sales", "Finance",
+  "People", "Operations", "Support", "Data", "Legal", "Security",
+]);
+
+// Keyword FALLBACK for skills with no explicit `department:` frontmatter (the
+// first-party catalog always declares one). First matching rule wins — specific
+// departments before the broad Engineering catch-all, so e.g. a "sales
+// dashboard" skill lands in Sales, not Engineering.
 const DEPT_RULES: [string, RegExp][] = [
   ["Legal", /\b(legal|advogad|leiloeiro|juridic|contract|complian|gdpr|privacy|incorporat|patent|trademark|licen[sc]e|regulat|hipaa|pci|soc ?2)/i],
   ["Finance", /\b(financ|invoice|accounting|quant|trading|stripe|billing|valuation|fundrais|payment|paypal|revenue|\bdcf\b|\btax\b|budget|payroll|bookkeep|cfo)/i],
   ["Sales", /\b(sales|outbound|cold[- ]?email|\bcrm\b|lead gen|pipeline|hubspot|salesforce|pipedrive|prospect|outreach|sales-?automat)/i],
-  ["Support", /\b(support|help ?desk|zendesk|freshdesk|freshservice|intercom|customer success|\bfaq\b|ticket|helpdesk)/i],
+  ["Support", /\b(support|help ?desk|zendesk|freshdesk|freshservice|intercom|customer success|\bfaq\b|ticket|helpdesk|churn)/i],
+  ["People", /\b(hiring|recruit|onboarding|offer letter|job descript|performance review|compensation|leveling|\bhr\b|people ops|employer brand|culture)/i],
+  ["Security", /\b(security|threat model|pentest|vulnerab|appsec|infosec|breach|phishing|zero[- ]?trust|\bsso\b|\bmfa\b)/i],
+  ["Data", /\b(analytics|\bsql\b|data (pipeline|warehouse|model)|\betl\b|\belt\b|dashboard|experiment analysis|cohort|forecast|\bbi\b|metabase|looker|dbt|research (brief|synthesis))/i],
+  ["Product", /\b(product (manager|discovery|metric|launch|strategy)|\bprd\b|roadmap|backlog|user stor|\bmvp\b|feature spec|prioriti[sz]ation|jobs[- ]to[- ]be[- ]done)/i],
   ["Marketing", /\b(marketing|\bseo\b|growth|content|copywrit|\bads\b|campaign|blog|newsletter|email[- ]?marketing|influencer|viral|positioning|gtm|go-?to-?market|social-?(media|content|carousel))/i],
   ["Design", /\b(design|\bui\b|\bux\b|brand|figma|\bcss\b|tailwind|animation|landing[- ]?page|theme|color|typograph|awwwards|\bgsap\b|motion|wireframe|prototype|illustrat|\blogo\b|visual|aesthetic|shader|canvas)/i],
-  ["Operations", /\b(automation|workflow|\bn8n\b|zapier|\bops\b|runbook|logistics|inventory|scheduling|project manage|\bjira\b|asana|monday|trello|notion|slack|calendar|\bhr\b|recruit|procurement|supply chain|incident|on-?call|deploy|terraform|kubernetes|\bk8s\b|docker|devops|gitops|cicd|ci\/cd)/i],
-  ["Engineering", /\b(react|next\.?js|node|typescript|javascript|python|rust|golang|\bgo\b|java|c\+\+|backend|frontend|fullstack|\bapi\b|database|\bsql\b|postgres|graphql|fastapi|django|\bsdk\b|webpack|vite|\bbun\b|deno|firmware|embedded|game|unity|godot|mobile|\bios\b|android|flutter|electron|webgl|three\.?js|\bcode\b|build|test|debug|refactor|architect|microservice|engineer)/i],
+  ["Operations", /\b(automation|workflow|\bn8n\b|zapier|\bops\b|runbook|logistics|inventory|scheduling|project manage|\bjira\b|asana|monday|trello|notion|slack|calendar|procurement|supply chain|incident|on-?call|deploy|terraform|kubernetes|\bk8s\b|docker|devops|gitops|cicd|ci\/cd)/i],
+  ["Engineering", /\b(react|next\.?js|node|typescript|javascript|python|rust|golang|\bgo\b|java|c\+\+|backend|frontend|fullstack|\bapi\b|database|postgres|graphql|fastapi|django|\bsdk\b|webpack|vite|\bbun\b|deno|firmware|embedded|game|unity|godot|mobile|\bios\b|android|flutter|electron|webgl|three\.?js|\bcode\b|build|test|debug|refactor|architect|microservice|engineer)/i],
 ];
 
 export function classifyDepartment(name: string, description: string): string {
@@ -67,7 +81,7 @@ function readHead(p: string, bytes = 4096): string {
   }
 }
 
-function frontmatter(head: string): { name?: string; description?: string; source?: string } {
+function frontmatter(head: string): { name?: string; description?: string; source?: string; department?: string } {
   const m = head.match(/^---\s*\n([\s\S]*?)\n---/);
   if (!m) return {};
   const fm = m[1];
@@ -75,7 +89,7 @@ function frontmatter(head: string): { name?: string; description?: string; sourc
     const r = fm.match(new RegExp(`^${k}:\\s*(.+)$`, "m"));
     return r ? r[1].trim().replace(/^["']|["']$/g, "") : undefined;
   };
-  return { name: get("name"), description: get("description"), source: get("source") };
+  return { name: get("name"), description: get("description"), source: get("source"), department: get("department") };
 }
 
 let cache: CatalogSkill[] | null = null;
@@ -105,10 +119,13 @@ export function loadCatalog(): CatalogSkill[] {
       if (!name || seen.has(name)) continue;
       seen.add(name);
       const description = (fm.description || "").replace(/\s+/g, " ").trim().slice(0, 280);
+      // Explicit, validated `department:` frontmatter wins; keyword fallback
+      // covers community skills that don't declare one.
+      const declared = (fm.department || "").trim();
       out.push({
         name,
         description,
-        department: classifyDepartment(name, description),
+        department: VALID_DEPARTMENTS.has(declared) ? declared : classifyDepartment(name, description),
         source: (fm.source || "community").slice(0, 40),
         dir: path.join(root, e.name),
       });
@@ -141,13 +158,18 @@ export function skillByName(name: string): CatalogSkill | null {
 }
 
 /**
- * Public URL for a catalog skill, derived from its provenance `source`. Imported
- * skills carry `source: github:owner/repo` (a bare `owner/repo` also works); anything
- * without repo provenance falls back to a GitHub search for the skill — so an equipped
- * catalog skill ALWAYS exposes a live, clickable link (not an empty string).
+ * Public URL for a catalog skill, derived from its provenance `source`.
+ * First-party skills carry `source: helm` and link to their SKILL.md in this
+ * repo. Imported skills carry `source: github:owner/repo` (a bare `owner/repo`
+ * also works); anything without repo provenance falls back to a GitHub search —
+ * so an equipped catalog skill ALWAYS exposes a live, clickable link.
  */
 export function catalogSkillUrl(source: string | undefined, name: string): string {
-  const m = (source || "").trim().match(/^(?:github:)?([\w.-]+\/[\w.-]+)$/i);
+  const s = (source || "").trim();
+  if (s === "helm") {
+    return `https://github.com/Aasishmuchala/cofounder/tree/main/skills/${encodeURIComponent(name)}`;
+  }
+  const m = s.match(/^(?:github:)?([\w.-]+\/[\w.-]+)$/i);
   if (m) return `https://github.com/${m[1]}`;
   return `https://github.com/search?q=${encodeURIComponent(`${name} skill`)}&type=repositories`;
 }

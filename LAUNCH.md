@@ -141,10 +141,10 @@ when their server env flag is set, unless you *also* set their explicit
 - [ ] **Copyrighted artwork:** the pixel-art / icon PNGs in `public/` were **mirrored
       from the live site** for fidelity and are **copyrighted**. **Replace them with
       original artwork before any public deployment.**
-- [x] **Honesty pass on copy:** the catalog ships **208 skills**. The Skills-tab search
-      placeholder now renders the live count from `/api/skills` (the prior "1,500+"
-      string was removed). Swept the rest of the UI + marketing copy — no other hardcoded
-      catalog claim; the only count strings (`components/app/SkillsTab.tsx`) are both
+- [x] **Honesty pass on copy:** the catalog ships **100 first-party skills** (authored
+      in-repo, `source: helm` — no imported third-party skill text, so no upstream
+      attribution obligations). The Skills-tab search placeholder renders the live count
+      from `/api/skills`; the only count strings (`components/app/SkillsTab.tsx`) are
       live-computed from `overview.total`.
 
 ---

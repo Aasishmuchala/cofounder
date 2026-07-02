@@ -94,6 +94,7 @@ Tokens and reusable surfaces live in `app/globals.css`; primitives (`RaisedCard`
   variable, same friendly geometric character). Body = Inter, mono = IBM Plex Mono.
 - **Assets:** pixel-art / icon PNGs in `public/` were mirrored from the live site for fidelity.
   Replace with original artwork before any public deployment (the originals are copyrighted).
-- **Skill catalog size:** the bundled catalog is **208 skills** (`skills/`); the Skills-tab
-  search placeholder now shows the live catalog count from `/api/skills` rather than a
-  hardcoded figure.
+- **Skill catalog:** the bundled catalog is **100 first-party skills** (`skills/`), authored
+  for Helm and department-tagged (`department:` frontmatter) across all 12 org departments —
+  no imported third-party skill content, so there are no upstream license/attribution strings
+  attached. The Skills-tab search placeholder shows the live catalog count from `/api/skills`.
