@@ -15,7 +15,7 @@ import {
   greeting,
 } from "@/lib/cofounder-data";
 import type { UseOnboarding } from "@/lib/use-onboarding";
-import { OnboardingFlow, BusinessPlanCard } from "@/components/app/Onboarding";
+import { OnboardingFlow, BusinessPlanCard, ProductProfileStep, BrandNameStep, TaglineStep } from "@/components/app/Onboarding";
 import { IdentityFlow, BrandKitCard } from "@/components/app/Identity";
 import { vibeById } from "@/lib/vibes";
 import DepartmentView from "@/components/app/DepartmentView";
@@ -31,6 +31,7 @@ const TABS: TabKey[] = ["Home", "Cofounder", "Company", "Org", "Tasks", "Skills"
 export default function RightPanel({
   cf,
   brand,
+  brandTagline,
   tab,
   onTabChange,
   onb,
@@ -44,6 +45,7 @@ export default function RightPanel({
 }: {
   cf: UseCofounder;
   brand: string;
+  brandTagline?: string | null;
   tab: TabKey;
   onTabChange: (t: TabKey) => void;
   onb: UseOnboarding;
@@ -73,34 +75,38 @@ export default function RightPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--surface-raised)]">
-      {/* Tab bar */}
-      <div className="flex items-center justify-between gap-1 overflow-x-auto px-5 pt-5">
-        {TABS.map((t) => {
-          const active = t === tab && !selectedDept;
-          return (
-            <button
-              key={t}
-              onClick={() => {
-                onClearDept();
-                onTabChange(t);
-              }}
-              className={cx(
-                "relative shrink-0 pb-2 font-display text-[12.5px] tracking-[0.1px] transition-colors",
-                active ? "text-[var(--text)]" : "text-[var(--text-50)] hover:text-[var(--text-70)]",
-              )}
-            >
-              {t}
-              {active && (
-                <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-[var(--text)]" />
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <div className="divider-etched" />
+      {!onboardingActive && (
+        <>
+          {/* Tab bar */}
+          <div className="flex items-center justify-between gap-1 overflow-x-auto px-5 pt-5">
+            {TABS.map((t) => {
+              const active = t === tab && !selectedDept;
+              return (
+                <button
+                  key={t}
+                  onClick={() => {
+                    onClearDept();
+                    onTabChange(t);
+                  }}
+                  className={cx(
+                    "relative shrink-0 pb-2 font-display text-[12.5px] tracking-[0.1px] transition-colors",
+                    active ? "text-[var(--text)]" : "text-[var(--text-50)] hover:text-[var(--text-70)]",
+                  )}
+                >
+                  {t}
+                  {active && (
+                    <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-[var(--text)]" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="divider-etched" />
+        </>
+      )}
 
       {/* Tab content (scrolls) */}
-      <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
+      <div className={cx("min-h-0 flex-1 overflow-auto", onboardingActive ? "p-0" : "px-6 py-5")}>
         {selectedDept ? (
           <DepartmentView department={selectedDept} cf={cf} brand={brand} onBack={onClearDept} />
         ) : (
@@ -111,6 +117,7 @@ export default function RightPanel({
                 cf={cf}
                 onb={onb}
                 brand={brand}
+                brandTagline={brandTagline}
                 onAcceptPlan={onAcceptPlan}
                 onLaunch={onLaunch}
                 hasCompany={hasCompany}
@@ -346,6 +353,7 @@ function CofounderTab({
   cf,
   onb,
   brand,
+  brandTagline,
   onAcceptPlan,
   onLaunch,
   hasCompany,
@@ -353,15 +361,55 @@ function CofounderTab({
   cf: UseCofounder;
   onb: UseOnboarding;
   brand: string;
+  brandTagline?: string | null;
   onAcceptPlan: () => void;
   onLaunch: () => void;
   hasCompany: boolean;
 }) {
   const { messages, loading } = cf;
 
+  // Mid-flow safety net: if the user lands on /app mid-onboarding (e.g. they
+  // refreshed the dashboard URL while the modal was open), redirect them back to
+  // the dedicated /app/onboarding page rather than rendering inline.
+  if (!hasCompany && onb.active) {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const seed = sp.get("seed") ?? window.localStorage.getItem("cf_seed") ?? "";
+      const url = `/app/onboarding${seed ? `?seed=${encodeURIComponent(seed)}` : ""}`;
+      window.location.replace(url);
+      return null;
+    }
+  }
+
+  // Inline brand-building branches are kept as a defensive fallback for any
+  // path that lands here mid-flow, but the primary surface is /app/onboarding.
+
+  // New: Step 4 — review the AI-generated Product Profile.
+  if (!hasCompany && onb.status === "profile") {
+    return <ProductProfileStep onb={onb} onBack={() => onb.back()} />;
+  }
+
+  // New: Step 5 — pick a brand name from AI-suggested candidates.
+  if (!hasCompany && onb.status === "naming") {
+    return <BrandNameStep onb={onb} onBack={() => onb.back()} />;
+  }
+
+  // New: Step 6 — pick a tagline for the chosen name.
+  if (!hasCompany && onb.status === "tagline") {
+    return <TaglineStep onb={onb} onBack={() => onb.back()} />;
+  }
+
   // Visual-identity step (choose vibe → paint → brand kit) before spin-up.
   if (!hasCompany && (onb.status === "vibe" || onb.status === "painting" || onb.status === "brand")) {
-    return <IdentityFlow onb={onb} brand={brand} onComplete={onLaunch} />;
+    return (
+      <IdentityFlow
+        onb={onb}
+        brand={brand}
+        tagline={brandTagline}
+        onComplete={onLaunch}
+        onBack={() => onb.back()}
+      />
+    );
   }
 
   // Onboarding (questions / business plan) before the identity step.

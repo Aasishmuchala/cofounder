@@ -428,6 +428,13 @@ export interface DesignChoice {
   brief: string;
 }
 
+export interface ProductProfileShape {
+  oneLiner: string;
+  icp: string;
+  wedge: string;
+  valueProp: string;
+}
+
 export interface WorkspaceMeta {
   /** Chosen visual-identity vibe id (drives the brand kit). */
   vibeId?: string | null;
@@ -464,6 +471,12 @@ export interface WorkspaceMeta {
    *  idempotency key for approve double-submits (stronger than title matching:
    *  two different plans can share titles; the hash covers structure too). */
   planHashes?: string[];
+  /** Founder-picked brand name (≤ 80 chars, set during the brand-building flow). */
+  brandName?: string | null;
+  /** Founder-picked tagline (≤ 160 chars). */
+  tagline?: string | null;
+  /** Accepted Product Profile (oneLiner / icp / wedge / valueProp, each ≤ 240). */
+  productProfile?: ProductProfileShape | null;
 }
 
 /** Env-var-NAME shape: uppercase, digits, underscore — never an actual secret
@@ -532,6 +545,49 @@ export function sanitizeWorkspaceMeta(raw: unknown): WorkspaceMeta {
     out.brandImage = m.brandImage.slice(0, 600);
   } else if (m.brandImage === null) {
     out.brandImage = null;
+  }
+
+  // ---- Founder-picked brand (name + tagline + product profile) ----
+  // Strip ASCII control chars (a stray \n would otherwise break the canvas).
+  const sanitizeText = (s: string): string => s.replace(/[\x00-\x1F\x7F]/g, "");
+  if (typeof m.brandName === "string") {
+    const v = sanitizeText(m.brandName).trim();
+    if (v.length > 0) out.brandName = v.slice(0, 80);
+    else out.brandName = null;
+  } else if (m.brandName === null) {
+    out.brandName = null;
+  }
+  if (typeof m.tagline === "string") {
+    const v = sanitizeText(m.tagline).trim();
+    if (v.length > 0) out.tagline = v.slice(0, 160);
+    else out.tagline = null;
+  } else if (m.tagline === null) {
+    out.tagline = null;
+  }
+  if (m.productProfile && typeof m.productProfile === "object" && !Array.isArray(m.productProfile)) {
+    const src = m.productProfile as Record<string, unknown>;
+    const profile: ProductProfileShape = {
+      oneLiner: sanitizeText(coerceText(src.oneLiner, 240)),
+      icp: sanitizeText(coerceText(src.icp, 160)),
+      wedge: sanitizeText(coerceText(src.wedge, 240)),
+      valueProp: sanitizeText(coerceText(src.valueProp, 240)),
+    };
+    // Drop the field entirely if any required key is empty (a half-baked profile
+    // is worse than no profile — the dashboard re-derives a fallback).
+    if (
+      profile.oneLiner &&
+      profile.icp &&
+      profile.wedge &&
+      profile.valueProp
+    ) {
+      try {
+        if (JSON.stringify(profile).length <= 1500) out.productProfile = profile;
+      } catch {
+        /* circular — drop */
+      }
+    }
+  } else if (m.productProfile === null) {
+    out.productProfile = null;
   }
 
   if (Array.isArray(m.files)) {

@@ -72,7 +72,13 @@ export default function AppPage() {
     if (mounted && typeof window !== "undefined") return window.localStorage.getItem("cf_idea") ?? "";
     return "";
   }, [cf.messages, onb.idea, mounted]);
-  const brand = brandName(idea || null);
+  // Brand-name precedence: user pick in this session → persisted meta (cross-device)
+  // → heuristic word extraction (legacy / no-pick fallback).
+  const brand =
+    onb.brandName
+    ?? (typeof cf.meta.brandName === "string" && cf.meta.brandName.trim() ? cf.meta.brandName : null)
+    ?? brandName(idea || null);
+  const brandTagline = onb.tagline ?? (typeof cf.meta.tagline === "string" ? cf.meta.tagline : null);
   const hasCompany = cf.messages.length > 0 || cf.tasks.length > 0;
 
   // `null` = no explicit choice yet; auto-select the onboarding chat until a
@@ -94,14 +100,14 @@ export default function AppPage() {
     }
   }
 
-  // Accept the business plan → move into the visual-identity step (no spin-up yet).
+  // Accept the business plan → move into the brand-building flow (Profile first).
   function handleAcceptPlan() {
-    onb.startIdentity();
+    onb.startBranding();
   }
 
   // Approve the brand kit (or skip) → spin up the company, land on Home.
-  // The chosen brand + business plan are stamped onto the new workspace so they
-  // persist server-side (survive a cache clear, scoped to this company).
+  // The chosen brand + tagline + business plan are stamped onto the new workspace
+  // so they persist server-side (survive a cache clear, scoped to this company).
   function handleLaunch() {
     onb.approveBrand();
     void cf.send(onb.idea || idea || "Get started.", {
@@ -109,6 +115,9 @@ export default function AppPage() {
       brandReady: true,
       plan: onb.plan,
       brandImage: onb.brandImage,
+      brandName: onb.brandName,
+      tagline: onb.tagline,
+      productProfile: onb.productProfile,
     });
     setPicked("Home");
   }
@@ -219,13 +228,21 @@ export default function AppPage() {
     if (onbHydratedRef.current) return;
     if (!cf.persisted || onb.status !== "idle") return;
     const m = cf.meta;
-    if (m && (m.vibeId || m.plan)) {
+    if (m && (m.vibeId || m.plan || m.brandName || m.tagline || m.productProfile)) {
       onbHydratedRef.current = true;
       // Prefer the idea restored into localStorage by the workspace hydrate, so
       // the brand name is correct even when the browser had lost it.
       const restoredIdea =
         idea || (typeof window !== "undefined" ? window.localStorage.getItem("cf_idea") ?? "" : "");
-      onb.hydrateFromMeta({ idea: restoredIdea, vibeId: m.vibeId ?? null, plan: m.plan ?? null, brandImage: m.brandImage ?? null });
+      onb.hydrateFromMeta({
+        idea: restoredIdea,
+        vibeId: m.vibeId ?? null,
+        plan: m.plan ?? null,
+        brandImage: m.brandImage ?? null,
+        brandName: m.brandName ?? null,
+        tagline: m.tagline ?? null,
+        productProfile: m.productProfile ?? null,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot guarded restore
   }, [cf.persisted, cf.meta, onb.status, idea]);
@@ -239,113 +256,130 @@ export default function AppPage() {
   }, [cf.workspaceId, brand, idea]);
 
   // Seeded ideation: the companies page stashes the founder's idea in cf_seed and
-  // navigates here with ?new=1 — kick off onboarding with it once, then clear it.
+  // navigates here with ?new=1 — bounce to the dedicated multi-step page.
   const seededRef = React.useRef(false);
   React.useEffect(() => {
     if (seededRef.current || !mounted || typeof window === "undefined") return;
     if (new URLSearchParams(window.location.search).get("new") !== "1") return;
-    const seed = window.localStorage.getItem("cf_seed");
-    if (seed && onb.status === "idle" && !hasCompany) {
-      seededRef.current = true;
-      window.localStorage.removeItem("cf_seed");
-      void onb.start(seed);
+    const seed = window.localStorage.getItem("cf_seed") ?? "";
+    seededRef.current = true;
+    // Remove the seed marker regardless of whether we navigate, so a refresh
+    // doesn't bounce the user back to the modal.
+    window.localStorage.removeItem("cf_seed");
+    if (onb.status === "idle" && !hasCompany) {
+      router.replace(`/app/onboarding${seed ? `?seed=${encodeURIComponent(seed)}` : ""}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot seeded kickoff
-  }, [mounted, onb.status, hasCompany]);
+  }, [mounted, onb.status, hasCompany, router]);
+
+  // While the founder is going through onboarding (no real company yet), the
+  // left canvas has nothing meaningful to show — empty org charts + floating
+  // controls are confusing. Hide it and give the right panel the full width so
+  // the founder sees ONLY the brand-building flow.
+  const inOnboardingFlow = !hasCompany && onb.active;
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--background)] text-[var(--text)]">
       {/* Design Direction gate — overlays everything when a visual deliverable is
           waiting for the founder's style / layout / brief. Self-hides otherwise. */}
       <DesignChoiceModal cf={cf} />
-      {/* Left — radial department canvas */}
-      <div className="relative hidden min-w-0 flex-1 md:block">
-        <Canvas
-          cf={cf}
-          brand={brand}
-          onSelectDepartment={setSelectedDept}
-          addAgent={addAgent}
-          onCreatedTask={() => {
-            setSelectedDept(null);
-            setPicked("Tasks");
-          }}
-          onCreatedAgent={() => {
-            setSelectedDept(null);
-            setPicked("Company");
-          }}
-        />
-        <div className="absolute right-5 top-4 z-30 flex items-center gap-2">
-          {cf.persisted && cf.workspaceId && !cf.canEdit && (
-            <span
-              title="You opened a shared view link — changes are disabled. Ask the owner for an edit link."
-              className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-50)] shadow-raised"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
-                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-              View only
-            </span>
-          )}
-          {cf.persisted && cf.workspaceId && cf.canEdit && (
-            <>
-              <button
-                onClick={handleShareView}
-                title="Copy a view-only link to this company"
-                className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
+      {/* Left — radial department canvas (hidden during the onboarding flow) */}
+      {!inOnboardingFlow && (
+        <div className="relative hidden min-w-0 flex-1 md:block">
+          <Canvas
+            cf={cf}
+            brand={brand}
+            onSelectDepartment={setSelectedDept}
+            addAgent={addAgent}
+            onCreatedTask={() => {
+              setSelectedDept(null);
+              setPicked("Tasks");
+            }}
+            onCreatedAgent={() => {
+              setSelectedDept(null);
+              setPicked("Company");
+            }}
+          />
+          <div className="absolute right-5 top-4 z-30 flex items-center gap-2">
+            {cf.persisted && cf.workspaceId && !cf.canEdit && (
+              <span
+                title="You opened a shared view link — changes are disabled. Ask the owner for an edit link."
+                className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-50)] shadow-raised"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
-                  <circle cx="18" cy="5" r="3" />
-                  <circle cx="6" cy="12" r="3" />
-                  <circle cx="18" cy="19" r="3" />
-                  <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" strokeLinecap="round" />
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+                  <circle cx="12" cy="12" r="3" />
                 </svg>
-                {shared === "view" ? "Link copied ✓" : "Share"}
-              </button>
-              {cf.isProtected && (
+                View only
+              </span>
+            )}
+            {cf.persisted && cf.workspaceId && cf.canEdit && (
+              <>
                 <button
-                  onClick={handleShareEdit}
-                  title="Copy your owner edit link — keeps full access (save it to edit from another device)"
-                  aria-label="Copy owner edit link"
-                  className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-2.5 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
+                  onClick={handleShareView}
+                  title="Copy a view-only link to this company"
+                  className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
-                    <path d="M21 2l-2 2m-7.6 7.6a5 5 0 11-7 7 5 5 0 017-7zm0 0L15 8m0 0l3 3 3-3-3-3" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" strokeLinecap="round" />
                   </svg>
-                  {shared === "edit" ? "Copied ✓" : "Owner link"}
+                  {shared === "view" ? "Link copied ✓" : "Share"}
                 </button>
-              )}
-            </>
-          )}
-          <button
-            onClick={handlePublish}
-            disabled={!site}
-            title={site ? "Publish the landing page to a shareable link" : "No landing page to publish yet"}
-            className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)] disabled:opacity-45"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
-              <path d="M12 16V4M7 9l5-5 5 5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M5 20h14" strokeLinecap="round" />
-            </svg>
-            {published ? "Link copied ✓" : "Publish"}
-          </button>
-          <Link
-            href="/pricing"
-            className="inline-flex items-center gap-1.5 rounded-[10px] bg-[var(--text)] px-3 py-1.5 font-display text-[13px] text-white shadow-deep transition-opacity hover:opacity-90"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-12H12l1-8z" />
-            </svg>
-            Upgrade
-          </Link>
+                {cf.isProtected && (
+                  <button
+                    onClick={handleShareEdit}
+                    title="Copy your owner edit link — keeps full access (save it to edit from another device)"
+                    aria-label="Copy owner edit link"
+                    className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-2.5 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                      <path d="M21 2l-2 2m-7.6 7.6a5 5 0 11-7 7 5 5 0 017-7zm0 0L15 8m0 0l3 3 3-3-3-3" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    {shared === "edit" ? "Copied ✓" : "Owner link"}
+                  </button>
+                )}
+              </>
+            )}
+            <button
+              onClick={handlePublish}
+              disabled={!site}
+              title={site ? "Publish the landing page to a shareable link" : "No landing page to publish yet"}
+              className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3 py-1.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)] disabled:opacity-45"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                <path d="M12 16V4M7 9l5-5 5 5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M5 20h14" strokeLinecap="round" />
+              </svg>
+              {published ? "Link copied ✓" : "Publish"}
+            </button>
+            <Link
+              href="/pricing"
+              className="inline-flex items-center gap-1.5 rounded-[10px] bg-[var(--text)] px-3 py-1.5 font-display text-[13px] text-white shadow-deep transition-opacity hover:opacity-90"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-12H12l1-8z" />
+              </svg>
+              Upgrade
+            </Link>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Right — tabbed panel */}
-      <aside className="h-screen w-full shrink-0 overflow-hidden border-l border-[var(--border-line)] md:w-[460px]">
+      {/* Right — tabbed panel. During onboarding flow, it stretches full width. */}
+      <aside
+        className={
+          inOnboardingFlow
+            ? "h-screen w-full shrink-0 overflow-hidden"
+            : "h-screen w-full shrink-0 overflow-hidden border-l border-[var(--border-line)] md:w-[460px]"
+        }
+      >
         <RightPanel
           cf={cf}
           brand={brand}
+          brandTagline={brandTagline}
           tab={tab}
           onTabChange={setPicked}
           onb={onb}

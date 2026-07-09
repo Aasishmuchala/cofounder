@@ -104,4 +104,57 @@ describe("sanitizeWorkspaceMeta", () => {
     const s = sanitizeWorkspaceMeta({ foo: "bar" as never });
     expect((s as Record<string, unknown>).foo).toBeUndefined();
   });
+
+  it("caps brandName to 80 chars and strips control chars", () => {
+    const s = sanitizeWorkspaceMeta({ brandName: "Coffeely\n\rBad\tName" + "x".repeat(100) });
+    expect(s.brandName).toBeDefined();
+    expect(s.brandName!.length).toBe(80);
+    expect(s.brandName).not.toMatch(/[\n\r\t]/);
+  });
+
+  it("caps tagline to 160 chars", () => {
+    const s = sanitizeWorkspaceMeta({ tagline: "Coffee, on autopilot." + "x".repeat(200) });
+    expect(s.tagline!.length).toBe(160);
+  });
+
+  it("keeps productProfile when all four fields present and serialize fits", () => {
+    const s = sanitizeWorkspaceMeta({
+      productProfile: {
+        oneLiner: "A coffee operations tool.",
+        icp: "Indie cafe owners in the US",
+        wedge: "Built around indie coffee workflows",
+        valueProp: "Saves 5 hours a week on ops",
+      },
+    });
+    expect(s.productProfile).toBeDefined();
+    expect(s.productProfile!.oneLiner).toBe("A coffee operations tool.");
+  });
+
+  it("drops productProfile when any required field is empty", () => {
+    const s = sanitizeWorkspaceMeta({
+      productProfile: {
+        oneLiner: "x",
+        icp: "",
+        wedge: "z",
+        valueProp: "a",
+      },
+    });
+    expect(s.productProfile).toBeUndefined();
+  });
+
+  it("caps each productProfile field to its per-field max", () => {
+    const s = sanitizeWorkspaceMeta({
+      productProfile: {
+        oneLiner: "x".repeat(300),
+        icp: "y".repeat(200),
+        wedge: "z".repeat(300),
+        valueProp: "a".repeat(300),
+      },
+    });
+    expect(s.productProfile).toBeDefined();
+    expect(s.productProfile!.oneLiner.length).toBe(240);
+    expect(s.productProfile!.icp.length).toBe(160);
+    expect(s.productProfile!.wedge.length).toBe(240);
+    expect(s.productProfile!.valueProp.length).toBe(240);
+  });
 });

@@ -7,8 +7,10 @@ import { getAnthropic, aiConfigured, MODEL } from "@/lib/anthropic";
 import {
   mockQuestions,
   mockPlan,
+  mockBrand,
   parseQuestions,
   parsePlan,
+  parseBrand,
   type AnsweredQuestion,
 } from "@/lib/onboarding";
 
@@ -37,13 +39,43 @@ Return ONLY a single fenced json block and nothing else:
 }
 \`\`\``;
 
+const BRAND_SYSTEM = `You are Cofounder's brand-naming agent. Given the founder's idea and onboarding answers, generate a Product Profile (the source of truth for all later brand artifacts), 5 brand-name candidates, and 3 tagline options.
+
+Product Profile (mandatory):
+- oneLiner: a single specific sentence describing what the product does and for whom — no boilerplate ("revolutionize", "empower", "all-in-one" are forbidden)
+- icp: ideal customer profile (specific role/segment, not "businesses")
+- wedge: 8-20 word differentiator grounded in the onboarding answers
+- valueProp: how the product changes the customer's day concretely
+
+Brand names (5 candidates):
+- Each name SPECIFIC to the idea's domain — never generic startup-template words
+- Range from descriptive (e.g. "Coffeely") to more abstract/positioned ("Roastly", "Beanly")
+- vibeFit: array subset of ["minimal", "bold", "playful", "premium", "technical"] naming which visual styles fit the name's voice
+- rationale: 1-2 sentences explaining why the name fits the idea and what it signals
+- tagline: one short phrase tuned to the name's voice (≤10 words)
+
+Taglines (3 candidates): vary tone — pick three different emotional registers from ["Approachable", "Confident", "Concise", "Warm", "Sharp"].
+
+Return ONLY a single fenced json block and nothing else:
+\`\`\`json
+{
+  "profile": { "oneLiner": "...", "icp": "...", "wedge": "...", "valueProp": "..." },
+  "names": [
+    { "name": "...", "tagline": "...", "rationale": "...", "vibeFit": ["minimal", "premium"] }
+  ],
+  "taglines": [
+    { "text": "...", "tone": "Approachable" }
+  ]
+}
+\`\`\``;
+
 interface Body {
   action?: string;
   idea?: string;
   answers?: { prompt?: unknown; answer?: unknown }[];
 }
 
-async function callClaude(system: string, userText: string): Promise<string | null> {
+async function callClaude(system: string, userText: string, maxTokens = 2500): Promise<string | null> {
   const client = getAnthropic();
   if (!aiConfigured || !client) return null;
   try {
@@ -53,7 +85,7 @@ async function callClaude(system: string, userText: string): Promise<string | nu
     const response = await withGenerationSlot(() =>
       client.messages.create({
         model: MODEL,
-        max_tokens: 2500,
+        max_tokens: maxTokens,
         system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: userText }] as Anthropic.MessageParam[],
       }),
@@ -111,6 +143,30 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({
         plan: plan ?? mockPlan(idea, answers),
         mock: !plan,
+      });
+    }
+
+    if (action === "nameOptions") {
+      const answers: AnsweredQuestion[] = Array.isArray(body.answers)
+        ? body.answers
+            .map((a) => ({ prompt: coerceText(a?.prompt, 240), answer: coerceText(a?.answer, 240) }))
+            .filter((a) => a.prompt && a.answer)
+        : [];
+      const qa = answers.map((a) => `Q: ${a.prompt}\nA: ${a.answer}`).join("\n\n");
+      const userText =
+        `Company idea: ${idea || "a new startup"}\n\n` +
+        `Onboarding answers:\n${qa || "(none)"}\n\n` +
+        `Generate a Product Profile, 5 brand-name candidates, and 3 tagline options. Names and taglines must be specific to the idea.`;
+      const text = await callClaude(BRAND_SYSTEM, userText, 4000);
+      const brand = text ? parseBrand(text) : null;
+      // Always return a usable bundle — if the AI failed, mock the missing fields
+      // so the UI never gets a half-empty response.
+      const fallback = mockBrand(idea, answers);
+      return Response.json({
+        profile: brand?.profile ?? fallback.profile,
+        names: brand?.names ?? fallback.names,
+        taglines: brand?.taglines ?? fallback.taglines,
+        mock: !brand,
       });
     }
   } catch (e) {

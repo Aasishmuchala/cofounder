@@ -7,26 +7,30 @@ describe("brandName", () => {
     expect(brandName("")).toBe("Untitled");
   });
 
-  it("returns a deterministic branded codename for any idea", () => {
-    const a = brandName("Build a coffee shop app");
-    const b = brandName("Build a coffee shop app");
-    expect(a).toBe(b); // deterministic
-    expect(a).toBeTypeOf("string");
-    expect(a.length).toBeGreaterThan(0);
+  it("extracts a meaningful word from the idea text", () => {
+    const name = brandName("Build a coffee shop SaaS for indie cafe owners");
+    expect(name).toBeTypeOf("string");
+    expect(name.length).toBeGreaterThan(0);
+    expect(name).not.toBe("Untitled");
+    // The name should come FROM the idea text, not a random codename
+    expect(name.toLowerCase()).toMatch(/cafe|coffee/);
   });
 
-  it("returns a different name for different ideas", () => {
-    const a = brandName("Build a coffee shop app");
-    const b = brandName("Create a Saas platform for designers");
-    expect(a).not.toBe(b);
+  it("is deterministic — same input always gives same output", () => {
+    const a = brandName("Build a coffee shop SaaS");
+    const b = brandName("Build a coffee shop SaaS");
+    expect(a).toBe(b);
   });
 
-  it("returns a value from the known pool", () => {
-    const names = [
-      "STHYRA", "NOVERA", "AURELIO", "VANTA", "LUMEN", "OBLISK",
-      "CADENCE", "MERIDIAN", "HALCYON", "AXIOM", "VERANT", "SOLARA",
-    ];
-    const result = brandName("any idea at all");
-    expect(names).toContain(result);
+  it("extracts different names for different idea domains", () => {
+    const coffee = brandName("Build a coffee shop management SaaS");
+    const dental = brandName("Online booking platform for dentists");
+    expect(coffee).not.toBe(dental);
+    expect(coffee.toLowerCase()).toMatch(/coffee/);
+    expect(dental.toLowerCase()).toMatch(/dentist/);
+  });
+
+  it("handles short ideas gracefully", () => {
+    expect(brandName("Invoice")).toBe("Invoice");
   });
 });

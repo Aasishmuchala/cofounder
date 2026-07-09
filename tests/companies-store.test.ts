@@ -111,11 +111,13 @@ describe("companies-store (adversarial)", () => {
     g.window!.localStorage.setItem("cf_workspace", "ws_1");
     g.window!.localStorage.setItem("cf_secret", "k");
     g.window!.localStorage.setItem("cf_idea", "an idea");
+    g.window!.localStorage.setItem("cf_onboarding_v1", JSON.stringify({ status: "accepted" }));
     recordCompany({ id: "keep", name: "Keep" });
     clearActiveCompany();
     expect(g.window!.localStorage.getItem("cf_workspace")).toBeNull();
     expect(g.window!.localStorage.getItem("cf_secret")).toBeNull();
     expect(g.window!.localStorage.getItem("cf_idea")).toBeNull();
+    expect(g.window!.localStorage.getItem("cf_onboarding_v1")).toBeNull();
     expect(listCompanies()).toHaveLength(1); // registry intact
   });
 

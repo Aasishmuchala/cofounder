@@ -186,8 +186,16 @@ async function finalize(
       let workspaceId = opts.workspaceId;
       let editKey: string | undefined;
       if (!workspaceId) {
+        // Prefer the user-picked brand name (set during the brand-building flow)
+        // for the `name` column; fall back to the raw idea, then a generic
+        // placeholder. Legacy `Untitled company` is preserved for callers that
+        // don't pass either.
+        const chosenName =
+          typeof opts.meta?.brandName === "string" && opts.meta.brandName.trim()
+            ? opts.meta.brandName.trim()
+            : opts.idea || "Untitled company";
         const created = await createWorkspace(
-          opts.idea || "Untitled company",
+          chosenName,
           opts.idea,
           opts.meta ?? {},
         );

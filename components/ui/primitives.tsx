@@ -194,4 +194,106 @@ export function Chip({
   );
 }
 
+/* ── Stepper ──────────────────────────────────────────────────────────────
+   Paper-warm stepper matching the visual language of DesignRoadmap. Renders
+   the current position in a multi-step flow with a number badge + label per
+   step (done / current / pending) plus a `currentIndex / total` counter. */
+export function Stepper({
+  steps,
+  total,
+  title,
+  className,
+}: {
+  steps: { label: string; status: "done" | "current" | "pending" }[];
+  total?: number;
+  /** Optional title above the steps (e.g. "Build my brand"). */
+  title?: string;
+  className?: string;
+}) {
+  const n = total ?? steps.length;
+  const currentIdx = Math.max(
+    0,
+    steps.findIndex((s) => s.status === "current"),
+  );
+  const isDoneAll = steps.every((s) => s.status === "done");
+  const displayIdx = isDoneAll ? n : currentIdx + 1;
+
+  return (
+    <div
+      className={cx(
+        "rounded-[12px] bg-white p-3 shadow-raised",
+        className,
+      )}
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        {title ? (
+          <MonoLabel>{title}</MonoLabel>
+        ) : (
+          <span aria-hidden />
+        )}
+        <MonoLabel>
+          {displayIdx}/{n}
+        </MonoLabel>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        {steps.map((s, i) => {
+          const color =
+            s.status === "done"
+              ? "var(--green)"
+              : s.status === "current"
+              ? "var(--blue)"
+              : "var(--text-30)";
+          return (
+            <React.Fragment key={`${s.label}-${i}`}>
+              {i > 0 && (
+                <span
+                  aria-hidden
+                  className="inline-block h-px w-3 bg-[var(--border-line)]"
+                />
+              )}
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className={cx(
+                    "inline-grid h-4 w-4 place-items-center rounded-full font-mono",
+                    s.status === "done" || s.status === "current"
+                      ? ""
+                      : "border border-[var(--border-line)]",
+                  )}
+                  style={{
+                    fontSize: 8,
+                    lineHeight: "9px",
+                    background: s.status === "done"
+                      ? "var(--green-tint)"
+                      : s.status === "current"
+                      ? "var(--blue)"
+                      : "transparent",
+                    color: s.status === "done"
+                      ? "var(--green)"
+                      : s.status === "current"
+                      ? "white"
+                      : "var(--text-30)",
+                  }}
+                >
+                  {s.status === "done" ? "✓" : i + 1}
+                </span>
+                <span
+                  className={cx(
+                    "font-display text-[12.5px]",
+                    s.status === "pending"
+                      ? "text-[var(--text-30)]"
+                      : "text-[var(--text)]",
+                  )}
+                  style={{ color: s.status === "current" ? color : undefined }}
+                >
+                  {s.label}
+                </span>
+              </span>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export { cx };

@@ -91,3 +91,106 @@ describe("App shell: Task and Roadmap pages", () => {
     cy.get("body").should("be.visible");
   });
 });
+
+describe("AI brand builder API", () => {
+  it("POST /api/onboarding action=nameOptions returns profile + names + taglines", () => {
+    cy.request({
+      method: "POST",
+      url: "/api/onboarding",
+      headers: { "content-type": "application/json" },
+      body: {
+        action: "nameOptions",
+        idea: "Build a coffee shop management SaaS for indie cafe owners",
+        answers: [
+          { prompt: "Who pays?", answer: "Indie cafe owners" },
+          { prompt: "Geography?", answer: "US urban areas" },
+          { prompt: "Monetization?", answer: "SaaS subscription" },
+        ],
+      },
+    }).then((res) => {
+      expect(res.status).to.eq(200);
+      expect(res.body).to.have.property("profile");
+      expect(res.body).to.have.property("names");
+      expect(res.body).to.have.property("taglines");
+      expect(res.body.profile).to.have.property("oneLiner");
+      expect(res.body.profile.oneLiner.length).to.be.greaterThan(0);
+      expect(res.body.names).to.be.an("array").with.length.at.least(5);
+      expect(res.body.taglines).to.be.an("array").with.length.at.least(3);
+      // Each name has required fields
+      for (const n of res.body.names) {
+        expect(n).to.have.property("name");
+        expect(n).to.have.property("rationale");
+        expect(n).to.have.property("vibeFit");
+        expect(n.vibeFit).to.be.an("array").with.length.at.least(1);
+      }
+    });
+  });
+
+  it("nameOptions falls back to mock when no AI key", () => {
+    cy.request({
+      method: "POST",
+      url: "/api/onboarding",
+      headers: { "content-type": "application/json" },
+      body: {
+        action: "nameOptions",
+        idea: "AI-powered invoicing for freelancers",
+        answers: [],
+      },
+    }).then((res) => {
+      expect(res.status).to.eq(200);
+      expect(res.body.names.length).to.be.at.least(5);
+      // The first name should be derived from the idea seed
+      const allNames = res.body.names.map((n: { name: string }) => n.name.toLowerCase()).join(" ");
+      expect(allNames).to.match(/invoic|freelancer/);
+    });
+  });
+
+  it("nameOptions without an idea still returns a usable bundle", () => {
+    cy.request({
+      method: "POST",
+      url: "/api/onboarding",
+      headers: { "content-type": "application/json" },
+      body: { action: "nameOptions", idea: "" },
+    }).then((res) => {
+      expect(res.status).to.eq(200);
+      expect(res.body.names.length).to.be.at.least(5);
+      expect(res.body.taglines.length).to.be.at.least(3);
+    });
+  });
+});
+
+describe("Workspace creation with brand name stamping", () => {
+  it("meta.brandName becomes the workspace name column", () => {
+    cy.request({
+      method: "POST",
+      url: "/api/agent",
+      headers: { "content-type": "application/json" },
+      body: {
+        messages: [{ role: "user", content: "Test coffee shop idea" }],
+        meta: {
+          brandName: "Counterly",
+          tagline: "Your cafe, on autopilot.",
+          productProfile: {
+            oneLiner: "Cloud POS for indie coffee shops.",
+            icp: "Indie cafe owners",
+            wedge: "Built for the bar",
+            valueProp: "Saves hours/week",
+          },
+        },
+      },
+    }).then((res) => {
+      expect(res.status).to.eq(200);
+      if (res.body.persisted && res.body.workspaceId) {
+        cy.request(`/api/workspace?id=${res.body.workspaceId}`).then((ws) => {
+          expect(ws.body.name).to.eq("Counterly");
+          expect(ws.body.meta.brandName).to.eq("Counterly");
+          expect(ws.body.meta.tagline).to.eq("Your cafe, on autopilot.");
+          expect(ws.body.meta.productProfile.oneLiner).to.eq("Cloud POS for indie coffee shops.");
+        });
+      } else {
+        // Without persistence, we can't verify the DB column — that's fine for keyless demo.
+        cy.log("Skipping DB verification: persistence off (no Supabase)");
+      }
+    });
+  });
+});

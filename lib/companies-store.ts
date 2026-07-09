@@ -71,6 +71,10 @@ export function clearActiveCompany(): void {
     window.localStorage.removeItem("cf_workspace");
     window.localStorage.removeItem("cf_secret");
     window.localStorage.removeItem("cf_idea");
+    // A fresh "Start ideating" flow must not inherit the prior company's
+    // onboarding step (for example, a completed/accepted brand flow that would
+    // reopen the empty canvas instead of showing the new questions).
+    window.localStorage.removeItem("cf_onboarding_v1");
   } catch {
     /* non-fatal */
   }

@@ -46,20 +46,99 @@ export const FOUNDER_FIRST_NAME = "Aasish";
 export const FOUNDER_NAME = "Aasish Muchala";
 
 /**
- * Deterministically derive a brandable one-word company codename from the
- * founding idea — gives every workspace a stable "brand" with no randomness
- * (Math.random/Date are unavailable in this environment anyway).
+ * Extract a descriptive, brandable company name from the founding idea.
+ * Scans for nouns/keywords rather than returning a random codename.
+ * Stable (no randomness) across renders — same idea always gives the same name.
  */
-const BRAND_NAMES = [
-  "STHYRA", "NOVERA", "AURELIO", "VANTA", "LUMEN", "OBLISK",
-  "CADENCE", "MERIDIAN", "HALCYON", "AXIOM", "VERANT", "SOLARA",
-];
+const STOP_WORDS = new Set([
+  "a", "an", "the", "for", "and", "or", "of", "to", "in", "on", "at", "by",
+  "with", "without", "build", "create", "make", "launch", "start", "develop",
+  "my", "your", "new", "own", "first", "app", "web", "saas", "platform",
+  "tool", "software", "service", "site", "is", "it", "that", "this",
+]);
+
+const GENERIC_ROLES = new Set([
+  "owner", "owners", "user", "users", "manager", "managers", "admin", "admins",
+  "operator", "operators", "provider", "providers", "partner", "partners",
+  "client", "clients", "customer", "customers", "management", "agency", "agencies",
+  "shop", "shops", "store", "stores", "business", "businesses",
+  "scheduler", "schedulers", "marketplace", "marketplaces", "wearable", "wearables",
+  "community", "communities", "tracker", "trackers", "finder", "finders",
+  "maker", "makers", "builder", "builders", "engine", "engines",
+  "api", "apis", "dashboard", "dashboards", "portal", "portals",
+]);
+
+// Suffixes that mean a word is a generic verb, not a specific noun.
+const GENERIC_SUFFIXES = ["ing", "tion", "ment"];
+
+/** Crude but functional singularization for common English nouns. */
+function singularize(word: string): string {
+  const l = word.toLowerCase();
+  if (l.endsWith("ies") && l.length > 4) return l.slice(0, -3) + "y";
+  if (l.endsWith("ses") || l.endsWith("xes") || l.endsWith("zes") || l.endsWith("ches") || l.endsWith("shes")) return l.slice(0, -2);
+  if (l.endsWith("s") && !l.endsWith("ss") && l.length > 3) return l.slice(0, -1);
+  return l;
+}
+
+/**
+ * Extract a descriptive company name from the founding idea.
+ * Stable across renders — same input always gives the same output.
+ * No randomness (Math.random/Date unavailable in this environment).
+ */
+function extractName(idea: string): string {
+  const cleaned = idea.replace(/[^a-zA-Z\s'-]/g, "").trim();
+  const words = cleaned.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return "Untitled";
+  const lower = words.map((w) => w.toLowerCase());
+
+  // Scan from the end: the most specific noun is usually the last
+  // meaningful word (e.g. "build a SaaS for coffee shops" → "Coffee").
+  // Skip stop words and generic role words.
+  let best: string | null = null;
+  for (let i = words.length - 1; i >= 0; i--) {
+    const w = words[i];
+    const l = lower[i];
+    if (STOP_WORDS.has(l) || l.length <= 1) continue;
+    // Skip generic platform suffixes
+    if (["platform", "software", "app", "web", "site", "tool", "saas", "service"].includes(l)) continue;
+    // Skip generic role words
+    if (GENERIC_ROLES.has(l)) continue;
+    // Skip generic verbal suffixes (management, creation, etc.)
+    if (GENERIC_SUFFIXES.some((suf) => l.length > 5 && l.endsWith(suf))) continue;
+    best = w;
+    break;
+  }
+
+  // Fallback: use the last non-stop word (may be a generic role)
+  if (!best) {
+    for (let i = words.length - 1; i >= 0; i--) {
+      if (!STOP_WORDS.has(lower[i]) && lower[i].length > 1) {
+        best = words[i];
+        break;
+      }
+    }
+  }
+  // Last resort: use the first word
+  if (!best) best = words[0];
+
+  // Singularize and capitalize
+  const s = singularize(best);
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Core name-extraction algorithm. Exported so other modules (brand-name AI
+ * mock, plan-review) can reuse the same deterministic logic. The single
+ * public brand display helper is `brandName` below.
+ */
+export function coreExtract(idea: string | null | undefined): string {
+  if (!idea || !idea.trim()) return "Untitled";
+  return extractName(idea);
+}
 
 export function brandName(idea: string | null | undefined): string {
-  if (!idea) return "Untitled";
-  let sum = 0;
-  for (let i = 0; i < idea.length; i++) sum = (sum + idea.charCodeAt(i)) % 100000;
-  return BRAND_NAMES[sum % BRAND_NAMES.length];
+  if (!idea || !idea.trim()) return "Untitled";
+  return extractName(idea);
 }
 
 /** Greeting that respects the current time of day. */

@@ -4,6 +4,7 @@
 // no API key, exactly like the rest of the app.
 
 import { coerceText } from "@/lib/agent-types";
+import { coreExtract } from "@/lib/cofounder-data";
 
 export interface OnboardingQuestion {
   id: string;
@@ -188,6 +189,173 @@ export function parsePlan(text: string): BusinessPlan | null {
       values,
       gtm,
     };
+  } catch {
+    return null;
+  }
+}
+
+/* ───────────────────────── Brand: profile + names + taglines ───────────────────────── */
+
+export type VibeFit = "minimal" | "bold" | "playful" | "premium" | "technical";
+
+export interface ProductProfile {
+  oneLiner: string;
+  icp: string;
+  wedge: string;
+  valueProp: string;
+}
+
+export interface NameCandidate {
+  name: string;
+  tagline?: string;
+  rationale: string;
+  vibeFit: VibeFit[];
+}
+
+export interface TaglineCandidate {
+  text: string;
+  tone: string;
+}
+
+export interface BrandBundle {
+  profile: ProductProfile;
+  names: NameCandidate[];
+  taglines: TaglineCandidate[];
+}
+
+const VIBE_FITS: ReadonlySet<VibeFit> = new Set([
+  "minimal",
+  "bold",
+  "playful",
+  "premium",
+  "technical",
+]);
+
+/** Infer which vibe a token best maps to for an inferred name. Pure / deterministic. */
+function inferVibeFit(idea: string): VibeFit[] {
+  const l = idea.toLowerCase();
+  const out: VibeFit[] = [];
+  if (/developer|api|code|technical|engineer|stack/.test(l)) out.push("technical");
+  if (/enterprise|corporate|luxury|premium|high-end|studio/.test(l)) out.push("premium");
+  if (/friendly|community|social|fun|warm|playful|casual/.test(l)) out.push("playful");
+  if (/minimal|lean|simple|clean|strip/.test(l)) out.push("minimal");
+  if (/bold|loud|confident|power|fast|brut/.test(l)) out.push("bold");
+  if (out.length === 0) out.push("minimal");
+  return Array.from(new Set(out)).slice(0, 3);
+}
+
+/**
+ * Generate 6 brand-name candidates from the founding idea + onboarding
+ * answers. Deterministic (no randomness) — same input always gives the
+ * same output, so SSR + hydration stay stable.
+ */
+function buildNames(seed: string, idea: string): NameCandidate[] {
+  const cap = seed.charAt(0).toUpperCase() + seed.slice(1);
+  if (!cap || cap === "Untitled") {
+    // No meaningful word extracted — fall back to stable "Founder" theme.
+    return [
+      { name: "Foundry", tagline: "Where ideas become companies.", rationale: "A short, sturdy word that suggests building from first principles.", vibeFit: ["bold", "minimal"] },
+      { name: "Foundryly", tagline: "Lightweight company-building, rooted.", rationale: "A friendlier spin on Foundry with a soft -ly suffix.", vibeFit: ["playful"] },
+      { name: "Helmwise", tagline: "Run your company with helm.", rationale: "Pairs with the platform name for friendly continuity.", vibeFit: ["minimal"] },
+      { name: "Helmstack", tagline: "The stack behind your startup.", rationale: "Technical, slightly premium tone for engineering teams.", vibeFit: ["technical", "premium"] },
+      { name: "Helmlabs", tagline: "Where founders build together.", rationale: "Community-leaning, evokes co-working and craft.", vibeFit: ["playful"] },
+      { name: "Helmhq", tagline: "Headquarters for your company.", rationale: "Bold and confident, with a clear premium tilt.", vibeFit: ["bold", "premium"] },
+    ];
+  }
+  const vibeFit = inferVibeFit(idea);
+  const variants = [
+    { name: cap, tagline: `Run your ${seed.toLowerCase()} like clockwork.`, rationale: `The most descriptive option — clearly tells a visitor what you're building around "${seed}".`, vibeFit: ["minimal" as VibeFit, ...vibeFit].slice(0, 3) as VibeFit[] },
+    { name: `${cap}ly`, tagline: `${cap}ly made simple.`, rationale: `Adds a soft, friendly -ly ending — feels modern and product-led without losing the core idea.`, vibeFit: ["playful" as VibeFit, ...vibeFit].slice(0, 3) as VibeFit[] },
+    { name: `${cap}hq`, tagline: `Your ${seed.toLowerCase()} headquarters.`, rationale: `A "headquarters" framing — confident and operations-driven.`, vibeFit: ["bold" as VibeFit, ...vibeFit].slice(0, 3) as VibeFit[] },
+    { name: `${cap}lab`, tagline: `The lab for ${seed.toLowerCase()}.`, rationale: `Signals craftsmanship + experimentation; great for technical or premium brands.`, vibeFit: ["technical" as VibeFit, ...vibeFit].slice(0, 3) as VibeFit[] },
+    { name: `Get${cap}`, tagline: `Get ${seed.toLowerCase()}, fast.`, rationale: `Action-oriented; pairs a verb with the noun to lean into speed.`, vibeFit: ["bold" as VibeFit] },
+    { name: `Try${cap}`, tagline: `Try ${seed.toLowerCase()} on for size.`, rationale: `Invitation-style — friendly and exploratory, soft sell.`, vibeFit: ["playful" as VibeFit, "minimal" as VibeFit].slice(0, 3) as VibeFit[] },
+  ];
+  return variants;
+}
+
+function buildTaglines(seed: string, answers: AnsweredQuestion[]): TaglineCandidate[] {
+  const customer = find(answers, "customer") || "your customers";
+  const geo = find(answers, "geograph") || "your market";
+  const s = seed.toLowerCase();
+  return [
+    { text: `Run your ${s} like clockwork.`, tone: "Approachable" },
+    { text: `${cap(seed)}, on autopilot.`, tone: "Confident" },
+    { text: `${s.charAt(0).toUpperCase() + s.slice(1)} ops, refined for ${geo}.`, tone: "Concise" },
+  ];
+}
+
+/**
+ * Deterministic brand bundle generator. Used both client-side as a fast
+ * preview and server-side as the mock fallback when no AI key is configured.
+ */
+export function mockBrand(idea: string, answers: AnsweredQuestion[] = []): BrandBundle {
+  const seed = coreExtract(idea);
+  const product = shorten(idea || "your product", 110);
+  const customer = find(answers, "customer") || "your customers";
+  const geo = find(answers, "geograph") || "your first market";
+  const wedge = find(answers, "wedge") || "your wedge";
+
+  const profile: ProductProfile = {
+    oneLiner: product,
+    icp: `${customer} in ${geo}`,
+    wedge,
+    valueProp: `Helps ${customer.toLowerCase()} ship faster on ${wedge.toLowerCase()}.`,
+  };
+
+  return {
+    profile,
+    names: buildNames(seed, idea || ""),
+    taglines: buildTaglines(seed, answers),
+  };
+}
+
+function cap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Parse the AI's fenced JSON response into a BrandBundle. Pure / deterministic. */
+export function parseBrand(text: string): BrandBundle | null {
+  try {
+    const p = JSON.parse(fenced(text)) as Record<string, unknown>;
+    const prof = (p?.profile && typeof p.profile === "object" ? p.profile : {}) as Record<string, unknown>;
+    const profile: ProductProfile | null = prof.oneLiner
+      ? {
+          oneLiner: coerceText(prof.oneLiner, 240),
+          icp: coerceText(prof.icp, 160),
+          wedge: coerceText(prof.wedge, 240),
+          valueProp: coerceText(prof.valueProp, 240),
+        }
+      : null;
+    if (!profile) return null;
+
+    const rawNames = Array.isArray(p?.names) ? (p.names as Record<string, unknown>[]) : [];
+    const names: NameCandidate[] = rawNames
+      .map((n) => {
+        const fit: VibeFit[] = Array.isArray(n?.vibeFit)
+          ? (n.vibeFit as unknown[])
+              .filter((f): f is VibeFit => typeof f === "string" && VIBE_FITS.has(f as VibeFit))
+              .slice(0, 4)
+          : [];
+        return {
+          name: coerceText(n?.name, 40),
+          tagline: typeof n?.tagline === "string" ? coerceText(n.tagline, 80) : undefined,
+          rationale: coerceText(n?.rationale, 240),
+          vibeFit: fit,
+        };
+      })
+      .filter((n) => n.name.length > 0 && n.rationale.length > 0)
+      .slice(0, 6);
+    if (!names.length) return null;
+
+    const rawTaglines = Array.isArray(p?.taglines) ? (p.taglines as Record<string, unknown>[]) : [];
+    const taglines: TaglineCandidate[] = rawTaglines
+      .map((t) => ({ text: coerceText(t?.text, 80), tone: coerceText(t?.tone, 24) }))
+      .filter((t) => t.text.length > 0 && t.tone.length > 0)
+      .slice(0, 4);
+    if (!taglines.length) return null;
+
+    return { profile, names, taglines };
   } catch {
     return null;
   }

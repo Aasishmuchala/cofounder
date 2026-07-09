@@ -6,7 +6,17 @@ import { VIBES, vibeById, PAINT_STEPS, DESIGN_ROADMAP, type Vibe } from "@/lib/v
 import type { UseOnboarding } from "@/lib/use-onboarding";
 
 /* ───────────────────────── Brand kit card (reusable) ───────────────────────── */
-export function BrandKitCard({ vibe, brand, image }: { vibe: Vibe; brand: string; image?: string | null }) {
+export function BrandKitCard({
+  vibe,
+  brand,
+  tagline,
+  image,
+}: {
+  vibe: Vibe;
+  brand: string;
+  tagline?: string | null;
+  image?: string | null;
+}) {
   const overlay = vibe.onImageDark ? "#ffffff" : vibe.ink;
   // A bespoke generated brand image wins over the preset vibe board when present.
   const board = image || vibe.board;
@@ -28,6 +38,11 @@ export function BrandKitCard({ vibe, brand, image }: { vibe: Vibe; brand: string
           <div className="font-display text-[26px] font-medium leading-none tracking-[0.5px]" style={{ color: overlay }}>
             {brand}
           </div>
+          {tagline && (
+            <div className="mt-1.5 max-w-[80%] font-display text-[12px] leading-snug tracking-[0.05em]" style={{ color: overlay, opacity: 0.85 }}>
+              {tagline}
+            </div>
+          )}
           <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.18em]" style={{ color: overlay, opacity: 0.8 }}>
             {vibe.name}
           </div>
@@ -141,14 +156,47 @@ function PaintingView({ vibe, onDone }: { vibe: Vibe | null; onDone: () => void 
 export function IdentityFlow({
   onb,
   brand,
+  tagline: taglineProp,
   onComplete,
+  onBack,
 }: {
   onb: UseOnboarding;
   brand: string;
+  tagline?: string | null;
   onComplete: () => void;
+  onBack?: () => void;
 }) {
-  const { status, vibeId, chooseVibe, markBrandReady } = onb;
+  const { status, vibeId, chooseVibe, markBrandReady, tagline, userVibeFit } = onb;
+  const taglineText = tagline || taglineProp;
   const vibe = vibeById(vibeId);
+
+  // Map the user-picked vibeFit tokens to the actual Vibe ids so we can pin them
+  // at the top of the grid. Each token maps to one canonical vibe.
+  const VIBE_TOKEN_MAP: Record<string, string> = {
+    minimal: "pastel-utility",
+    bold: "brutalist-grid",
+    playful: "soft-pop",
+    premium: "editorial-mint",
+    technical: "saturated-tech",
+  };
+  const recommendedIds: string[] = React.useMemo(() => {
+    if (userVibeFit.length === 0) return [];
+    return userVibeFit
+      .map((t) => VIBE_TOKEN_MAP[t])
+      .filter((id): id is string => Boolean(id));
+  }, [userVibeFit]);
+
+  // Reorder the grid: recommended first, then the rest.
+  const orderedVibes: Vibe[] = React.useMemo(() => {
+    if (recommendedIds.length === 0) return [...VIBES];
+    const recommended: Vibe[] = [];
+    const rest: Vibe[] = [];
+    for (const v of VIBES) {
+      if (recommendedIds.includes(v.id)) recommended.push(v);
+      else rest.push(v);
+    }
+    return [...recommended, ...rest];
+  }, [recommendedIds]);
 
   return (
     <div className="space-y-4">
@@ -163,15 +211,25 @@ export function IdentityFlow({
             Let&apos;s build your <span className="text-[var(--blue)]">visual identity</span>
           </h2>
           <p className="mt-1 max-w-[40ch] text-[13px] leading-relaxed text-[var(--text-50)]">
-            First a brand kit for {brand}. Then Design moves into logos, decks, components, and the rest of the workspace.
+            First a brand kit for <strong className="text-[var(--text)]">{brand}</strong>{taglineText ? <>: &ldquo;{taglineText}&rdquo;</> : null}. Then Design moves into logos, decks, components, and the rest of the workspace.
           </p>
         </div>
-        <button
-          onClick={onComplete}
-          className="shrink-0 rounded-[8px] bg-white px-2.5 py-1.5 font-display text-[12px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
-        >
-          Skip setup →
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="rounded-[8px] bg-white px-2.5 py-1.5 font-display text-[12px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
+            >
+              ← Tagline
+            </button>
+          )}
+          <button
+            onClick={onComplete}
+            className="rounded-[8px] bg-white px-2.5 py-1.5 font-display text-[12px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
+          >
+            Skip setup →
+          </button>
+        </div>
       </div>
 
       <DesignRoadmap />
@@ -179,31 +237,48 @@ export function IdentityFlow({
       {/* vibe picker */}
       {status === "vibe" && (
         <div>
-          <div className="mb-2 font-display text-[15px] text-[var(--text)]">Pick a vibe to start with.</div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="font-display text-[15px] text-[var(--text)]">Pick a vibe to start with.</span>
+            {recommendedIds.length > 0 && (
+              <span className="font-mono text-[8px] uppercase tracking-[0.06em] text-[var(--blue)]">
+                · Recommended for {brand}
+              </span>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-2.5">
-            {VIBES.map((v) => (
-              <button
-                key={v.id}
-                onClick={() => chooseVibe(v.id)}
-                className="group overflow-hidden rounded-[12px] bg-white text-left shadow-raised transition-shadow hover:shadow-deep"
-              >
-                <div className="relative h-[74px]">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={v.board} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
-                </div>
-                <div className="p-2.5">
-                  <div className="font-display text-[13px] text-[var(--text)]">{v.name}</div>
-                  <div className="mt-0.5 flex items-center gap-1">
-                    {v.palette.slice(0, 4).map((c) => (
-                      <span key={c} className="h-2.5 w-2.5 rounded-[3px] ring-1 ring-black/5" style={{ background: c }} />
-                    ))}
+            {orderedVibes.map((v) => {
+              const isRecommended = recommendedIds.includes(v.id);
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => chooseVibe(v.id)}
+                  className="group relative overflow-hidden rounded-[12px] bg-white text-left shadow-raised transition-shadow hover:shadow-deep"
+                >
+                  {isRecommended && (
+                    <span
+                      aria-hidden
+                      className="absolute right-1.5 top-1.5 z-10 h-1.5 w-1.5 rounded-full"
+                      style={{ background: "var(--blue)" }}
+                    />
+                  )}
+                  <div className="relative h-[74px]">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={v.board} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                   </div>
-                  <div className="mt-1.5 truncate font-mono text-[8px] uppercase tracking-[0.06em] text-[var(--text-50)]">
-                    {v.tags.join(" · ")}
+                  <div className="p-2.5">
+                    <div className="font-display text-[13px] text-[var(--text)]">{v.name}</div>
+                    <div className="mt-0.5 flex items-center gap-1">
+                      {v.palette.slice(0, 4).map((c) => (
+                        <span key={c} className="h-2.5 w-2.5 rounded-[3px] ring-1 ring-black/5" style={{ background: c }} />
+                      ))}
+                    </div>
+                    <div className="mt-1.5 truncate font-mono text-[8px] uppercase tracking-[0.06em] text-[var(--text-50)]">
+                      {v.tags.join(" · ")}
+                    </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -214,10 +289,10 @@ export function IdentityFlow({
       {/* brand board ready */}
       {status === "brand" && vibe && (
         <div className="space-y-3">
-          <BrandKitCard vibe={vibe} brand={brand} image={onb.brandImage} />
+          <BrandKitCard vibe={vibe} brand={brand} tagline={taglineText} image={onb.brandImage} />
           <div className="flex gap-2">
             <button
-              onClick={() => onb.startIdentity()}
+              onClick={() => onb.startBranding()}
               className="rounded-[10px] bg-white px-3 py-2.5 font-display text-[13px] text-[var(--text-70)] shadow-raised transition-colors hover:text-[var(--text)]"
             >
               ← Try another vibe
