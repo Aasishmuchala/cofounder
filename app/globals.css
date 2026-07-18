@@ -240,6 +240,81 @@ body {
 .anim-badge-blink { animation: badge-blink 1.4s ease-in-out infinite; }
 .anim-caret { animation: caret-blink 1s step-end infinite; }
 
+/* ============================================================
+   Home-page revamp — shared interaction vocabulary
+   Used by OrchestrationBand / ValueProps / Chapters /
+   Lifecycle* / ToolsSystems / Industries / FinalCTA so the
+   page reads as one system.
+   ============================================================ */
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0   currentColor; opacity: 0.55; }
+  70%  { box-shadow: 0 0 0 12px currentColor; opacity: 0;    }
+  100% { box-shadow: 0 0 0 0   currentColor; opacity: 0;    }
+}
+.anim-pulse-ring { animation: pulse-ring 2.2s ease-out infinite; }
+
+@keyframes draw-line { to { stroke-dashoffset: 0; } }
+.anim-draw-line { animation: draw-line 1.4s cubic-bezier(0.23, 1, 0.32, 1) forwards; }
+.anim-draw-line-loop {
+  animation: draw-line 2.4s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
+@keyframes aurora-drift {
+  0%   { transform: translate3d(-8%, -4%, 0)  rotate(0deg);   }
+  50%  { transform: translate3d(12%, 8%,  0)  rotate(180deg); }
+  100% { transform: translate3d(-8%, -4%, 0)  rotate(360deg); }
+}
+.anim-aurora { animation: aurora-drift 22s linear infinite; }
+.anim-aurora-slow { animation: aurora-drift 38s linear infinite; }
+
+@keyframes shimmer-border {
+  to { background-position: 200% 0; }
+}
+.anim-shimmer-border {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.45) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-border 2.4s linear infinite;
+}
+
+@keyframes num-pop {
+  0%   { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0);    }
+}
+.anim-num-pop { animation: num-pop 0.5s cubic-bezier(0.23, 1, 0.32, 1) both; }
+
+@keyframes scan-line {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(140%);  }
+}
+.anim-scan-line { animation: scan-line 1.8s linear infinite; }
+
+@keyframes typewriter-1 { 0%,100%{width:0} 50%,90%{width:100%} }
+@keyframes typewriter-2 { 0%,24%,100%{width:0} 25%,49%{width:100%} }
+@keyframes typewriter-3 { 0%,49%,100%{width:0} 50%,74%{width:100%} }
+.anim-type-1 { animation: typewriter-1 9s steps(20) infinite; }
+.anim-type-2 { animation: typewriter-2 9s steps(20) infinite; }
+.anim-type-3 { animation: typewriter-3 9s steps(20) infinite; }
+
+@keyframes marquee-x {
+  from { transform: translateX(0);   }
+  to   { transform: translateX(-50%); }
+}
+.anim-marquee { animation: marquee-x 38s linear infinite; }
+
+/* Aurora blob — a soft radial that drifts; used by FinalCTA backdrop */
+.aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  will-change: transform;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
 }

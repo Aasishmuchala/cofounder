@@ -38,8 +38,10 @@ function StatusBadge({ status }: { status?: TaskStatus }) {
     needs_action: { bg: "var(--coral-tint)", fg: "var(--coral)", dot: "var(--coral)" },
     done: { bg: "var(--green-tint)", fg: "#2c7a3f", dot: "var(--green)" },
   };
+
   const v = styles[s] ?? styles.todo;
   return (
+    
     <StatusBadgeBase
       label={STATUS_LABEL[s] ?? "To do"}
       bg={v.bg}

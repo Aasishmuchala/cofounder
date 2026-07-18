@@ -86,7 +86,17 @@ export function StepIdea({
 
 /* ───────────────────────── Step 2: Questions (one at a time) ───────────────────────── */
 export function StepQuestions({ onb }: { onb: UseOnboarding }) {
-  const { questions, answers, answer, loading, allAnswered, buildPlan } = onb;
+  const {
+    questions,
+    answers,
+    answer,
+    loading,
+    allAnswered,
+    buildPlan,
+    questionsAreMock,
+    questionsMockReason,
+    retryQuestions,
+  } = onb;
 
   // Render one question per screen. Track local index; auto-advance when all
   // are answered (existing useCofounder.buildPlan triggers via status="asking").
@@ -96,31 +106,31 @@ export function StepQuestions({ onb }: { onb: UseOnboarding }) {
   // button + data attr, so the modal's footer Continue/Back can drive flow.
   const advanceRef = React.useRef<HTMLButtonElement>(null);
 
-  React.useEffect(() => {
-    if (questions.length === 0) return;
-    if (idx >= questions.length) setIdx(questions.length - 1);
-  }, [questions.length, idx]);
+  // Clamp `idx` defensively (questions might shrink on a retry) — derived
+  // from `questions.length`, no effect needed.
+  const safeIdx = Math.min(idx, Math.max(0, questions.length - 1));
 
   if (loading || questions.length === 0) {
     return (
       <div>
         <StepHeader
-          title="Cofounder is preparing a few questions…"
-          subtitle="One moment — we're drafting something specific to your idea."
+          title="Drafting questions for your idea…"
+          subtitle="Cofounder is reading your idea and writing the sharpest 5 it can."
         />
-        <div className="flex items-center gap-2">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--text-30)] border-t-[var(--text-70)]" />
-          <span className="anim-badge-blink font-mono text-[12px] text-[var(--text-50)]">
-            thinking…
+        <ProgressRail idx={0} total={5} />
+        <div className="mt-8 flex items-center gap-2.5">
+          <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-[var(--text)]" />
+          <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--text-50)]">
+            thinking
           </span>
         </div>
       </div>
     );
   }
 
-  const q = questions[Math.min(idx, questions.length - 1)];
+  const q = questions[safeIdx];
   const picked = answers[q.id];
-  const isLast = idx + 1 >= questions.length;
+  const isLast = safeIdx + 1 >= questions.length;
   const canAdvance = Boolean(picked);
 
   // Local "advance" handler — moves to next question OR builds the plan when
@@ -132,64 +142,114 @@ export function StepQuestions({ onb }: { onb: UseOnboarding }) {
       if (allAnswered) void buildPlan();
       return;
     }
-    setIdx(idx + 1);
+    setIdx(safeIdx + 1);
   };
 
   const back = () => {
-    if (idx > 0) setIdx(idx - 1);
+    if (safeIdx > 0) setIdx(safeIdx - 1);
   };
 
   return (
     <div data-test="step-questions">
-      <StepHeader
-        title={q.prompt}
-        subtitle={
-          q.options.length <= 4
-            ? "We've worked with companies like yours before — pick what fits."
-            : "Pick one of these options so Cofounder can draft your plan."
-        }
-      />
-      <div className="flex flex-wrap gap-2">
-        {q.options.map((opt) => {
+      {/* Mock-fallback notice: surfaces only when the questions came from the
+          deterministic fallback (no key, parse failure, or transport error).
+          Dismissable + retryable — never silent. */}
+      {questionsAreMock && (
+        <MockNotice
+          reason={questionsMockReason}
+          onRetry={() => void retryQuestions()}
+          retrying={loading}
+        />
+      )}
+
+      <div className="mb-1.5 flex items-center justify-between">
+        <ProgressRail idx={safeIdx} total={questions.length} />
+      </div>
+
+      <h1
+        className="font-display text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-[var(--text)] md:text-[34px]"
+        key={q.id /* re-mount on question change so the entrance replays */}
+      >
+        {q.prompt}
+      </h1>
+      <p className="mt-2.5 max-w-[52ch] font-display text-[13.5px] leading-relaxed text-[var(--text-50)]">
+        Pick the position that fits best — there&apos;s no wrong answer, just a starting point for the plan.
+      </p>
+
+      {/* Stacked option rows: each is a position the founder takes. Picked
+          state fills ink and shows a small check; unpicked rows are quiet
+          cards with a hover lift. */}
+      <ul className="mt-6 flex flex-col gap-2.5">
+        {q.options.map((opt, i) => {
           const isPicked = picked === opt;
           return (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => answer(q.id, opt)}
-              className={cx(
-                "rounded-full border px-4 py-2 font-display text-[13.5px] transition-all",
-                isPicked
-                  ? "border-[var(--text)] bg-[var(--text)] text-white shadow-glossy"
-                  : "border-[var(--border-line)] bg-[var(--surface-raised)] text-[var(--text-70)] hover:border-[var(--text-50)] hover:text-[var(--text)]",
-              )}
+            <li
+              key={`${q.id}-${opt}`}
+              className="hf-q-enter"
+              style={{ animationDelay: `${i * 45}ms` }}
             >
-              {opt}
-            </button>
+              <button
+                type="button"
+                onClick={() => answer(q.id, opt)}
+                aria-pressed={isPicked}
+                className={cx(
+                  "group flex w-full items-center gap-3 rounded-[12px] border px-4 py-3.5 text-left transition-all duration-200",
+                  isPicked
+                    ? "border-[var(--text)] bg-[var(--text)] text-white shadow-[0_2px_12px_rgba(0,0,0,0.18)]"
+                    : "border-[var(--border-line)] bg-[var(--surface-raised)] text-[var(--text-80)] hover:-translate-y-[1px] hover:border-[var(--text-50)] hover:text-[var(--text)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.04)]",
+                )}
+              >
+                <span
+                  aria-hidden
+                  className={cx(
+                    "grid h-5 w-5 shrink-0 place-items-center rounded-full border transition-all duration-200",
+                    isPicked
+                      ? "border-white bg-white"
+                      : "border-[var(--text-30)] group-hover:border-[var(--text-50)]",
+                  )}
+                >
+                  {isPicked ? (
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text)" strokeWidth="3" aria-hidden>
+                      <path d="M5 12l5 5L20 7" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : null}
+                </span>
+                <span className="flex-1 font-display text-[15px] leading-snug">{opt}</span>
+                <span
+                  className={cx(
+                    "font-mono text-[10px] uppercase tracking-[0.1em] transition-colors",
+                    isPicked ? "text-white/70" : "text-[var(--text-30)] group-hover:text-[var(--text-50)]",
+                  )}
+                >
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+              </button>
+            </li>
           );
         })}
-      </div>
+      </ul>
+
       {/* Inline mini-nav — the modal footer Continue button drives the same
           advance via the hidden button below. */}
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-5 flex items-center gap-3">
         <button
           type="button"
           onClick={back}
-          disabled={idx === 0}
-          className="font-display text-[12px] text-[var(--text-50)] hover:text-[var(--text)] disabled:opacity-30"
+          disabled={safeIdx === 0}
+          className="font-display text-[12.5px] text-[var(--text-50)] transition-colors hover:text-[var(--text)] disabled:opacity-30"
         >
-          ← previous question
+          ← back
         </button>
-        <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--text-50)]">
-          Q{idx + 1} of {questions.length}
+        <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--text-30)]">
+          {safeIdx + 1} / {questions.length}
         </span>
         <button
           type="button"
           onClick={advance}
           disabled={!canAdvance}
-          className="font-display text-[12px] text-[var(--text-70)] hover:text-[var(--text)] disabled:opacity-30"
+          className="font-display text-[12.5px] text-[var(--text-70)] transition-colors hover:text-[var(--text)] disabled:opacity-30"
         >
-          {isLast ? "generate plan →" : "next question →"}
+          {isLast ? "build plan →" : "next →"}
         </button>
       </div>
       {/* Hidden Continue trigger — the modal footer Continue clicks this. */}
@@ -202,6 +262,157 @@ export function StepQuestions({ onb }: { onb: UseOnboarding }) {
         style={{ display: "none" }}
         aria-hidden
       />
+
+      {/* scoped keyframes for the option entrance + the rail fill */}
+      <style>{`
+        @keyframes hf-q-enter {
+          from { opacity: 0; transform: translateY(6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .hf-q-enter { animation: hf-q-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+        @media (prefers-reduced-motion: reduce) {
+          .hf-q-enter { animation: none; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/* ──── The progress rail: a single hairline split into N segments, the
+        current + all completed segments filled with ink. Segments-to-the-left
+        of idx are filled (the founder has answered those); the current
+        segment is filled with a slightly lighter shade; the rest are empty
+        hairlines. ──── */
+function ProgressRail({ idx, total }: { idx: number; total: number }) {
+  const safeTotal = Math.max(1, total);
+  return (
+    <div
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={safeTotal}
+      aria-valuenow={idx + 1}
+      aria-label={`Question ${idx + 1} of ${safeTotal}`}
+      className="flex w-full items-center gap-1.5"
+    >
+      {Array.from({ length: safeTotal }).map((_, i) => {
+        const done = i < idx;
+        const here = i === idx;
+        return (
+          <span
+            key={i}
+            className={cx(
+              "h-[3px] flex-1 rounded-full transition-colors duration-300",
+              done ? "bg-[var(--text)]" : here ? "bg-[var(--text-70)]" : "bg-[var(--border-line)]",
+            )}
+          />
+        );
+      })}
+      <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-50)]">
+        {idx + 1} / {safeTotal}
+      </span>
+    </div>
+  );
+}
+
+/* ──── Map a fallback reason from the API to a specific, actionable
+        message. The single most-common cause (the user's shell already
+        exports ANTHROPIC_BASE_URL, hijacking the SDK's apiKey path) is
+        called out so they don't have to guess. ──── */
+function reasonCopy(reason: string | null | undefined): { title: string; body: string; retryable: boolean } {
+  switch (reason) {
+    case "no_credential":
+      return {
+        title: "No AI key configured.",
+        body: "Set ANTHROPIC_API_KEY (or HELM_ANTHROPIC_API_KEY) in .env.local and restart the server.",
+        retryable: false,
+      };
+    case "auth_rejected":
+      return {
+        title: "The AI provider rejected the key.",
+        body: "Check that the key in .env.local is valid and has access to claude-opus-4-8 on this gateway.",
+        retryable: false,
+      };
+    case "not_found":
+      return {
+        title: "AI endpoint not reachable.",
+        body: "Your shell may have set ANTHROPIC_BASE_URL — try the HELM_ANTHROPIC_* overrides in .env.local, or unset the base URL.",
+        retryable: false,
+      };
+    case "rate_limited":
+      return {
+        title: "Rate limited by the AI provider.",
+        body: "Wait a moment and retry — the provider asked us to slow down.",
+        retryable: true,
+      };
+    case "upstream_5xx":
+      return {
+        title: "The AI provider returned a server error.",
+        body: "Retry in a few seconds. Your idea and answers are safe.",
+        retryable: true,
+      };
+    case "timeout":
+      return {
+        title: "The AI call timed out.",
+        body: "The provider is slow or unreachable. Retry, or raise HELM_ANTHROPIC_TIMEOUT_MS in .env.local.",
+        retryable: true,
+      };
+    case "network":
+      return {
+        title: "Couldn&apos;t reach the AI provider.",
+        body: "Check your network connection and retry.",
+        retryable: true,
+      };
+    case "empty_response":
+    case "parse_failed":
+    default:
+      return {
+        title: "Using a generic template — Cofounder couldn&apos;t draft questions tailored to your idea.",
+        body: "Your answers will still work, but a tailored plan usually fits better. Try once more?",
+        retryable: true,
+      };
+  }
+}
+
+/* ──── The mock-fallback notice: surfaces when questions came from the
+        deterministic fallback. Title + body are tailored to the specific
+        failure reason from the API so the founder can act on it. ──── */
+function MockNotice({
+  reason,
+  onRetry,
+  retrying,
+}: {
+  reason: string | null | undefined;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const { title, body, retryable } = reasonCopy(reason);
+  return (
+    <div
+      role="status"
+      className="mb-5 flex items-start gap-3 rounded-[10px] border border-[var(--coral)]/30 bg-[var(--coral-tint)]/60 px-4 py-3"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--coral)" strokeWidth="2" aria-hidden className="mt-0.5 shrink-0">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 8v4M12 16h.01" strokeLinecap="round" />
+      </svg>
+      <div className="flex-1">
+        <p className="font-display text-[13px] font-medium leading-snug text-[var(--text)]">
+          {title}
+        </p>
+        <p className="mt-1 font-display text-[12px] leading-snug text-[var(--text-70)]">
+          {body}
+        </p>
+      </div>
+      {retryable && (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retrying}
+          className="inline-flex h-[28px] shrink-0 items-center rounded-[7px] border border-[var(--coral)]/40 bg-white px-2.5 font-display text-[12px] text-[var(--coral)] transition-colors hover:border-[var(--coral)] hover:bg-[var(--coral)] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {retrying ? "Retrying…" : "Retry"}
+        </button>
+      )}
     </div>
   );
 }

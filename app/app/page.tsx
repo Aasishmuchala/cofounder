@@ -15,6 +15,7 @@ import { brandName } from "@/lib/cofounder-data";
 type TabKey = "Home" | "Cofounder" | "Company" | "Org" | "Tasks" | "Skills" | "Connections" | "Library";
 
 export default function AppPage() {
+
   const cf = useCofounder();
   const onb = useOnboarding();
   const localAgents = useCustomAgents();
@@ -28,6 +29,7 @@ export default function AppPage() {
   // rendered a full-screen blank during the redirect; on a slow navigation that
   // blank lingered — the classic "goes blank" report. It's gone.)
   const redirectedRef = React.useRef(false);
+  
   React.useEffect(() => {
     if (redirectedRef.current || typeof window === "undefined") return;
     redirectedRef.current = true;

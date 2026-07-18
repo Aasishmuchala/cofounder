@@ -1,312 +1,386 @@
 "use client";
 
-import { motion } from "framer-motion";
-import Image from "next/image";
-import { RaisedCard, EtchedDivider, BlinkDot, MonoLabel, cx } from "@/components/ui/primitives";
+import * as React from "react";
+import { motion, useInView } from "framer-motion";
+import {
+  SectionEyebrow,
+  SectionHeadline,
+  SectionLead,
+  RevealOnView,
+  RaisedCard,
+  MonoLabel,
+  BlinkDot,
+  cx,
+} from "@/components/ui/primitives";
 
 const EASE = [0.23, 1, 0.32, 1] as const;
 
-/* ── shared text-side feature copy ────────────────────────────── */
-function FeatureText({
-  eyebrow,
-  heading,
-  body,
-  link,
-}: {
-  eyebrow: string;
-  heading: string;
-  body: string;
-  link: string;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-80px" }}
-      transition={{ duration: 0.6, ease: EASE }}
-      className="flex flex-col justify-center"
-    >
-      <MonoLabel>{eyebrow}</MonoLabel>
-      <h3 className="font-display mt-3 text-[26px] md:text-[28px] font-normal leading-[1.15] text-[var(--text)]">
-        {heading}
-      </h3>
-      <p className="mt-4 max-w-[40ch] text-[15px] leading-[1.5] text-[var(--text-70)]">
-        {body}
-      </p>
-      <a
-        href="#"
-        className="font-display group mt-6 inline-flex w-fit items-center gap-1.5 text-[14px] text-[var(--text-80)] tracking-[0.15px] transition-colors hover:text-[var(--text)]"
-      >
-        {link}
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          className="transition-transform duration-200 group-hover:translate-x-0.5"
-        >
-          <path d="M5 12h14M13 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </a>
-    </motion.div>
-  );
-}
-
-/* ── mock-side wrapper with entrance ──────────────────────────── */
-function MockSide({ children }: { children: React.ReactNode }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-80px" }}
-      transition={{ duration: 0.7, ease: EASE, delay: 0.1 }}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-/* ── BLOCK: Sell ──────────────────────────────────────────────── */
-function SellMock() {
-  return (
-    <RaisedCard deep className="overflow-hidden p-3.5">
-      {/* (a) Email Preview */}
-      <div className="rounded-[10px] bg-[var(--surface-raised)] p-3.5 shadow-raised">
-        <div className="flex items-center gap-2.5">
-          <Image
-            src="/homepage/email-app-icon.svg"
-            alt="Mail"
-            width={26}
-            height={26}
-            className="rounded-[6px]"
-          />
-          <div className="min-w-0">
-            <div className="font-display text-[13px] font-medium leading-tight text-[var(--text-80)]">
-              Email Preview
-            </div>
-            <MonoLabel>DRAFT · OUTREACH</MonoLabel>
-          </div>
-        </div>
-
-        <div className="mt-3.5 space-y-1.5">
-          <div className="flex items-center gap-2 text-[12px]">
-            <span className="font-mono w-[40px] shrink-0 uppercase text-[var(--text-50)] text-[10px] tracking-[0.06em]">
-              To
-            </span>
-            <span className="text-[var(--text-80)]">Sarah Chen</span>
-          </div>
-          <div className="flex items-center gap-2 text-[12px]">
-            <span className="font-mono w-[40px] shrink-0 uppercase text-[var(--text-50)] text-[10px] tracking-[0.06em]">
-              From
-            </span>
-            <span className="text-[var(--text-80)]">Tanner Holloway</span>
-          </div>
-          <EtchedDivider className="my-2" />
-          <div className="font-display text-[13px] font-medium leading-snug text-[var(--text)]">
-            Thought you could use Helm for Acme
-          </div>
-          <p className="text-[12px] leading-[1.45] text-[var(--text-70)]">
-            Hi Sarah — I noticed Acme is scaling fast and wanted to share how teams like
-            yours are running go-to-market with autonomous agents. Would love to show you
-            a 5-minute walkthrough…
-          </p>
-        </div>
-      </div>
-
-      {/* (b) Email Campaign Report */}
-      <div className="mt-3.5 rounded-[10px] bg-[var(--surface-raised)] p-3.5 shadow-raised">
-        <div className="flex items-center justify-between">
-          <div className="font-display text-[13px] font-medium text-[var(--text-80)]">
-            Email Campaign Report
-          </div>
-          <MonoLabel>LAST 7 DAYS</MonoLabel>
-        </div>
-
-        <div className="mt-3 grid grid-cols-3 gap-2.5">
-          {/* Open Rate */}
-          <div className="rounded-[8px] bg-white p-2.5 shadow-raised">
-            <MonoLabel>OPEN RATE</MonoLabel>
-            <div className="mt-1.5 flex items-baseline gap-1.5">
-              <span className="font-display text-[20px] leading-none text-[var(--text)]">
-                12%
-              </span>
-            </div>
-            <div className="mt-1.5 flex items-center gap-1">
-              <Image
-                src="/homepage/email-arrow-up-green.svg"
-                alt=""
-                width={9}
-                height={9}
-                aria-hidden
-              />
-              <span className="font-mono text-[10px] font-medium text-[var(--green)]">
-                +4%
-              </span>
-            </div>
-          </div>
-          {/* Opened */}
-          <div className="rounded-[8px] bg-white p-2.5 shadow-raised">
-            <MonoLabel>OPENED</MonoLabel>
-            <div className="mt-1.5 font-display text-[20px] leading-none text-[var(--text)]">
-              3
-            </div>
-            <div className="mt-1.5 font-mono text-[10px] text-[var(--text-50)]">
-              messages
-            </div>
-          </div>
-          {/* Unopened */}
-          <div className="rounded-[8px] bg-white p-2.5 shadow-raised">
-            <MonoLabel>UNOPENED</MonoLabel>
-            <div className="mt-1.5 font-display text-[20px] leading-none text-[var(--text)]">
-              6
-            </div>
-            <div className="mt-1.5 font-mono text-[10px] text-[var(--text-50)]">
-              messages
-            </div>
-          </div>
-        </div>
-      </div>
-    </RaisedCard>
-  );
-}
-
-/* ── BLOCK: Scale ─────────────────────────────────────────────── */
-const SCALE_STATS = [
-  { label: "SIGN UPS", value: "211", delta: "+34%", up: true },
-  { label: "DAU", value: "9,262", delta: "+8%", up: true },
-  { label: "MAU", value: "44,264", delta: "+37%", up: true },
+/* ── Sell: working email composer + live metrics ───────────────── */
+const SEQUENCES: Array<{
+  step: number;
+  label: string;
+  bg: string;
+  fg: string;
+}> = [
+  { step: 0, label: "Draft", bg: "rgba(29,112,217,0.10)", fg: "var(--blue)" },
+  { step: 1, label: "Sent", bg: "rgba(0,0,0,0.05)", fg: "var(--text-70)" },
+  { step: 2, label: "Opened", bg: "var(--green-tint)", fg: "var(--green)" },
+  { step: 3, label: "Replied", bg: "rgba(167,139,250,0.18)", fg: "#6d49c2" },
+  { step: 4, label: "Booked", bg: "var(--green)", fg: "white" },
 ];
 
-function StatArrow({ up }: { up: boolean }) {
+function EmailComposerMock() {
+  const [step, setStep] = React.useState(0);
+  // auto-advance every 2.4s, looping
+  React.useEffect(() => {
+    const t = window.setInterval(() => {
+      setStep((s) => (s + 1) % SEQUENCES.length);
+    }, 2400);
+    return () => window.clearInterval(t);
+  }, []);
+
   return (
-    <svg width="9" height="9" viewBox="0 0 12 12" fill="none" aria-hidden>
-      <path
-        d={up ? "M6 2.5L9.5 7H2.5L6 2.5Z" : "M6 9.5L2.5 5h7L6 9.5Z"}
-        fill={up ? "var(--green)" : "var(--coral)"}
-      />
-    </svg>
+    <RaisedCard deep className="overflow-hidden p-3.5">
+      <div className="grid gap-3.5 md:grid-cols-[1fr_240px]">
+        {/* Email preview */}
+        <div className="rounded-[10px] bg-[var(--surface-raised)] p-4 shadow-raised">
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-7 w-7 place-items-center rounded-[6px] bg-[var(--blue)]/10 font-mono text-[11px] font-medium text-[var(--blue)]">
+              @
+            </span>
+            <div className="min-w-0">
+              <div className="font-display text-[13.5px] font-medium leading-tight text-[var(--text-80)]">
+                Outreach draft
+              </div>
+              <MonoLabel>DRAFT · OUTREACH</MonoLabel>
+            </div>
+          </div>
+
+          <div className="mt-3.5 space-y-1.5 text-[12.5px]">
+            <div className="flex items-center gap-2">
+              <span className="font-mono w-[40px] shrink-0 text-[10px] uppercase text-[var(--text-50)] tracking-[0.06em]">
+                To
+              </span>
+              <span className="text-[var(--text-80)]">sarah@acme.com</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono w-[40px] shrink-0 text-[10px] uppercase text-[var(--text-50)] tracking-[0.06em]">
+                From
+              </span>
+              <span className="text-[var(--text-80)]">founder@helm.run</span>
+            </div>
+            <div className="divider-etched my-2 w-full" />
+            <div className="font-display text-[13.5px] font-medium leading-snug text-[var(--text)]">
+              Thought you could use Helm for Acme
+            </div>
+            <p className="text-[12px] leading-[1.45] text-[var(--text-70)]">
+              Hi Sarah — noticed Acme is scaling fast. Teams like yours are
+              running go-to-market with autonomous agents now. Open to a
+              5-minute walkthrough this week?
+            </p>
+          </div>
+
+          <div className="mt-3 flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition-colors"
+              style={{ background: SEQUENCES[step].bg, color: SEQUENCES[step].fg }}
+            >
+              <BlinkDot color={SEQUENCES[step].fg} />
+              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.06em]">
+                {SEQUENCES[step].label}
+              </span>
+            </span>
+            <MonoLabel>Step {step + 1} of {SEQUENCES.length}</MonoLabel>
+          </div>
+        </div>
+
+        {/* Live metrics */}
+        <div className="flex flex-col gap-2.5">
+          {[
+            { label: "Open rate", value: 64, suffix: "%", delta: "+12%" },
+            { label: "Reply rate", value: 18, suffix: "%", delta: "+5%" },
+            { label: "Meetings", value: 7, suffix: "", delta: "+3" },
+          ].map((m) => (
+            <div
+              key={m.label}
+              className="rounded-[8px] bg-white p-3 shadow-raised"
+            >
+              <MonoLabel>{m.label.toUpperCase()}</MonoLabel>
+              <div className="mt-1 flex items-baseline gap-1.5">
+                <span className="font-display text-[22px] leading-none tabular-nums text-[var(--text)]">
+                  {m.value}
+                </span>
+                <span className="font-display text-[12px] text-[var(--text-50)]">
+                  {m.suffix}
+                </span>
+              </div>
+              <div className="mt-1.5 inline-flex items-center gap-1 font-mono text-[10px] font-medium text-[var(--green)]">
+                <svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden>
+                  <path d="M6 2.5L9.5 7H2.5L6 2.5Z" />
+                </svg>
+                {m.delta}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </RaisedCard>
   );
 }
 
+/* ── Scale: animated SVG chart with live KPIs ─────────────────── */
+function useCountUp(target: number, run: boolean, durationMs = 1100) {
+  const [n, setN] = React.useState(0);
+  React.useEffect(() => {
+    if (!run) return;
+    const start = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      // ease-out cubic
+      const eased = 1 - Math.pow(1 - t, 3);
+      setN(Math.round(target * eased));
+      if (t < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, run, durationMs]);
+  return n;
+}
+
+const SCALE_STATS = [
+  { label: "SIGN UPS", value: 211, delta: "+34%" },
+  { label: "DAU", value: 9262, delta: "+8%" },
+  { label: "MAU", value: 44264, delta: "+37%" },
+];
+
 function ScaleMock() {
-  // smooth area/line chart geometry
-  const W = 300;
-  const H = 92;
-  const line =
-    "M0 74 C 26 70, 40 58, 62 60 S 104 46, 128 40 S 176 50, 200 34 S 248 18, 272 22 S 296 12, 300 10";
-  const area = `${line} L 300 ${H} L 0 ${H} Z`;
+  const ref = React.useRef<HTMLDivElement | null>(null);
+  const inView = useInView(ref, { once: true, amount: 0.3 });
+
+  /* Animated chart line — keeps a buffer of points and adds a new one every 1.2s */
+  const W = 320;
+  const H = 96;
+  const [points, setPoints] = React.useState<Array<{ x: number; y: number }>>(
+    () => [
+      { x: 0, y: 78 },
+      { x: 36, y: 70 },
+      { x: 72, y: 60 },
+      { x: 108, y: 64 },
+      { x: 144, y: 50 },
+      { x: 180, y: 38 },
+      { x: 216, y: 44 },
+      { x: 252, y: 30 },
+      { x: 288, y: 24 },
+      { x: 320, y: 18 },
+    ],
+  );
+  React.useEffect(() => {
+    if (!inView) return;
+    const id = window.setInterval(() => {
+      setPoints((prev) => {
+        const next = [...prev.slice(1)];
+        const lastY = prev[prev.length - 1].y;
+        const delta = (Math.random() - 0.55) * 8;
+        const newY = Math.max(8, Math.min(86, lastY + delta));
+        next.push({ x: W, y: newY });
+        // re-x
+        return next.map((p, i) => ({ ...p, x: (i / (next.length - 1)) * W }));
+      });
+    }, 1200);
+    return () => window.clearInterval(id);
+  }, [inView]);
+
+  const line = points
+    .map((p, i) => `${i === 0 ? "M" : "L"}${p.x} ${p.y}`)
+    .join(" ");
+  const area = `${line} L ${W} ${H} L 0 ${H} Z`;
 
   return (
-    <RaisedCard deep className="p-3.5">
-      {/* header */}
-      <div className="flex items-center justify-between">
-        <div className="font-display text-[13px] font-medium text-[var(--text-80)]">
-          Analytics
-        </div>
-        {/* Live users pill */}
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--green-tint)] px-2.5 py-1">
-          <BlinkDot color="var(--green)" />
-          <span className="font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--green)]">
-            Live users 2,843
-          </span>
-        </span>
-      </div>
-
-      {/* stat tiles */}
-      <div className="mt-3 grid grid-cols-3 gap-2.5">
-        {SCALE_STATS.map((s) => (
-          <div key={s.label} className="rounded-[8px] bg-white p-2.5 shadow-raised">
-            <MonoLabel>{s.label}</MonoLabel>
-            <div className="mt-1.5 font-display text-[19px] leading-none text-[var(--text)]">
-              {s.value}
-            </div>
-            <div className="mt-1.5 flex items-center gap-1">
-              <StatArrow up={s.up} />
-              <span
-                className={cx(
-                  "font-mono text-[10px] font-medium",
-                  s.up ? "text-[var(--green)]" : "text-[var(--coral)]"
-                )}
-              >
-                {s.delta}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* chart */}
-      <div className="mt-3.5 rounded-[8px] bg-white p-3 shadow-raised">
+    <div ref={ref}>
+      <RaisedCard deep className="p-3.5">
+        {/* header */}
         <div className="flex items-center justify-between">
-          <MonoLabel>WEEKLY ACTIVE USERS</MonoLabel>
-          <span className="font-mono text-[10px] font-medium text-[var(--green)]">
-            ▲ trending up
+          <div className="font-display text-[13px] font-medium text-[var(--text-80)]">
+            Analytics
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--green-tint)] px-2.5 py-1">
+            <BlinkDot color="var(--green)" />
+            <span className="font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--green)]">
+              Live · ticking
+            </span>
           </span>
         </div>
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="mt-2 w-full"
-          preserveAspectRatio="none"
-          height={H}
-        >
-          <defs>
-            <linearGradient id="scale-area-fill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--green)" stopOpacity="0.16" />
-              <stop offset="100%" stopColor="var(--green)" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <path d={area} fill="url(#scale-area-fill)" />
-          <path
-            d={line}
-            fill="none"
-            stroke="var(--green)"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+
+        {/* KPI tiles with count-up */}
+        <div className="mt-3 grid grid-cols-3 gap-2.5">
+          {SCALE_STATS.map((s) => (
+            <KpiTile key={s.label} {...s} run={inView} />
+          ))}
+        </div>
+
+        {/* chart */}
+        <div className="mt-3.5 rounded-[8px] bg-white p-3 shadow-raised">
+          <div className="flex items-center justify-between">
+            <MonoLabel>WEEKLY ACTIVE USERS</MonoLabel>
+            <span className="font-mono text-[10px] font-medium text-[var(--green)]">
+              ▲ trending up
+            </span>
+          </div>
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            className="mt-2 w-full"
+            preserveAspectRatio="none"
+            height={H}
+          >
+            <defs>
+              <linearGradient id="scale-area-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--green)" stopOpacity="0.18" />
+                <stop offset="100%" stopColor="var(--green)" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <path d={area} fill="url(#scale-area-fill)" />
+            <motion.path
+              d={line}
+              fill="none"
+              stroke="var(--green)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: 1.2, ease: EASE }}
+            />
+            {/* last-point pulse */}
+            <circle
+              cx={points[points.length - 1].x}
+              cy={points[points.length - 1].y}
+              r="3.5"
+              fill="var(--green)"
+            />
+            <circle
+              cx={points[points.length - 1].x}
+              cy={points[points.length - 1].y}
+              r="8"
+              fill="none"
+              stroke="var(--green)"
+              strokeWidth="1"
+              className="anim-pulse-ring"
+              style={{ color: "var(--green)" }}
+            />
+          </svg>
+        </div>
+      </RaisedCard>
+    </div>
+  );
+}
+
+function KpiTile({
+  label,
+  value,
+  delta,
+  run,
+}: {
+  label: string;
+  value: number;
+  delta: string;
+  run: boolean;
+}) {
+  const n = useCountUp(value, run);
+  return (
+    <div className="rounded-[8px] bg-white p-2.5 shadow-raised">
+      <MonoLabel>{label}</MonoLabel>
+      <div className="mt-1.5 font-display text-[19px] leading-none tabular-nums text-[var(--text)]">
+        {n.toLocaleString()}
       </div>
-    </RaisedCard>
+      <div className="mt-1.5 inline-flex items-center gap-1 font-mono text-[10px] font-medium text-[var(--green)]">
+        <svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden>
+          <path d="M6 2.5L9.5 7H2.5L6 2.5Z" />
+        </svg>
+        {delta}
+      </div>
+    </div>
   );
 }
 
 /* ── Section ──────────────────────────────────────────────────── */
 export default function LifecycleSellScale() {
   return (
-    <section className="pb-20 md:pb-28">
+    <section id="sell" className="py-20 md:py-28">
       <div className="container-1440 px-5 min-[476px]:px-8">
-        {/* Sell — text left, mock right */}
+        <RevealOnView>
+          <div className="mx-auto flex max-w-[820px] flex-col items-center text-center">
+            <SectionEyebrow index="05">Sell · Scale</SectionEyebrow>
+            <SectionHeadline accent="without lifting a finger." className="mt-6">
+              Reach customers and grow,
+            </SectionHeadline>
+            <SectionLead className="mt-5">
+              Outreach that drafts itself. Campaigns that reply on your behalf.
+              Analytics that update while you make coffee.
+            </SectionLead>
+          </div>
+        </RevealOnView>
+
+        {/* Sell */}
         <div
-          id="sell"
-          className="grid scroll-mt-24 grid-cols-1 items-center gap-10 md:gap-16 min-[900px]:grid-cols-2"
+          id="sell-block"
+          className="mt-16 grid items-center gap-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-14"
         >
-          <FeatureText
-            eyebrow="SELL"
-            heading="Reach customers and run go-to-market."
-            body="Draft outreach, launch campaigns, and track every reply. Your agents handle the busywork while you keep your hand on the wheel."
-            link="Learn how to sell"
-          />
-          <MockSide>
-            <SellMock />
-          </MockSide>
+          <RevealOnView className="flex flex-col justify-center">
+            <MonoLabel>SELL</MonoLabel>
+            <h3 className="font-display mt-3 text-[28px] font-normal leading-[1.12] tracking-[-0.02em] text-[var(--text)] md:text-[36px]">
+              Outreach that drafts, sends, and follows up.
+            </h3>
+            <p className="mt-4 max-w-[44ch] text-[15px] leading-[1.55] text-[var(--text-70)]">
+              Your agents write the email. They wait. They follow up. They book
+              the meeting — and only ping you when there's a real decision to
+              make.
+            </p>
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <span className="font-display inline-flex h-10 items-center gap-2 rounded-[8px] bg-[var(--text)] px-4 text-[13.5px] text-white">
+                See outreach playbooks
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <path d="M5 12h14M13 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+              <MonoLabel>12 templates</MonoLabel>
+            </div>
+          </RevealOnView>
+          <RevealOnView delay={0.1}>
+            <EmailComposerMock />
+          </RevealOnView>
         </div>
 
-        {/* Scale — mock left, text right (alternating) */}
+        {/* Scale */}
         <div
-          id="scale"
-          className="mt-20 grid scroll-mt-24 grid-cols-1 items-center gap-10 md:mt-28 md:gap-16 min-[900px]:grid-cols-2"
+          id="scale-block"
+          className="mt-20 grid items-center gap-10 md:mt-28 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] md:gap-14"
         >
-          <MockSide>
+          <RevealOnView>
             <ScaleMock />
-          </MockSide>
-          <FeatureText
-            eyebrow="SCALE"
-            heading="Grow revenue, analytics, and support."
-            body="Watch sign-ups, daily actives, and revenue climb in real time — with agents on call to handle support and surface what matters."
-            link="Learn how to scale"
-          />
+          </RevealOnView>
+          <RevealOnView delay={0.1} className="flex flex-col justify-center">
+            <MonoLabel>SCALE</MonoLabel>
+            <h3 className="font-display mt-3 text-[28px] font-normal leading-[1.12] tracking-[-0.02em] text-[var(--text)] md:text-[36px]">
+              Real-time analytics that{" "}
+              <span className="bg-gradient-to-r from-[var(--text)] via-[var(--green)] to-[var(--text)] bg-clip-text text-transparent">
+                breathe.
+              </span>
+            </h3>
+            <p className="mt-4 max-w-[44ch] text-[15px] leading-[1.55] text-[var(--text-70)]">
+              Watch your numbers move in real time. Sign-ups, daily actives,
+              revenue — every chart ticks with fresh data, every tile counts up
+              the moment you land on the page.
+            </p>
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <span className="font-display inline-flex h-10 items-center gap-2 rounded-[8px] bg-[var(--text)] px-4 text-[13.5px] text-white">
+                Explore dashboards
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <path d="M5 12h14M13 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+              <MonoLabel>8 live dashboards</MonoLabel>
+            </div>
+          </RevealOnView>
         </div>
       </div>
     </section>

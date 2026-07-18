@@ -30,8 +30,12 @@ interface Persisted {
   status: OnbStatus;
   idea: string;
   questions: OnboardingQuestion[];
+  questionsAreMock?: boolean;
+  questionsMockReason?: string | null;
   answers: Record<string, string>;
   plan: BusinessPlan | null;
+  planIsMock?: boolean;
+  planMockReason?: string | null;
   vibeId: string | null;
   brandImage?: string | null;
   brandName?: string | null;
@@ -46,8 +50,13 @@ export interface UseOnboarding {
   status: OnbStatus;
   idea: string;
   questions: OnboardingQuestion[];
+  /** True when the questions came from the deterministic fallback, not Claude.
+   *  The UI surfaces this so a parse/model failure isn't silently masked. */
+  questionsAreMock: boolean;
   answers: Record<string, string>;
   plan: BusinessPlan | null;
+  /** Same flag, for the plan step. */
+  planIsMock: boolean;
   vibeId: string | null;
   brandImage: string | null;
   brandName: string | null;
@@ -56,6 +65,11 @@ export interface UseOnboarding {
   brandOptions: NameCandidate[];
   taglineOptions: TaglineCandidate[];
   userVibeFit: VibeFit[];
+  /** Why the questions came from the mock fallback (no_credential | auth_rejected | network | …).
+   *  Drives a specific message in the fallback notice. */
+  questionsMockReason: string | null;
+  /** Same flag, for the plan step. */
+  planMockReason: string | null;
   loading: boolean;
   started: boolean;
   active: boolean;
@@ -63,6 +77,8 @@ export interface UseOnboarding {
   start: (idea: string) => Promise<void>;
   answer: (id: string, value: string) => void;
   buildPlan: () => Promise<void>;
+  /** Retry question generation when the previous response was the mock fallback. */
+  retryQuestions: () => Promise<void>;
   startBranding: () => void;
   chooseVibe: (id: string) => void;
   markBrandReady: () => void;
@@ -88,8 +104,10 @@ export function useOnboarding(): UseOnboarding {
   const [status, setStatus] = useState<OnbStatus>("idle");
   const [idea, setIdea] = useState("");
   const [questions, setQuestions] = useState<OnboardingQuestion[]>([]);
+  const [questionsAreMock, setQuestionsAreMock] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<BusinessPlan | null>(null);
+  const [planIsMock, setPlanIsMock] = useState(false);
   const [vibeId, setVibeId] = useState<string | null>(null);
   const [brandImage, setBrandImage] = useState<string | null>(null);
   // Brand-building state (new).
@@ -99,6 +117,8 @@ export function useOnboarding(): UseOnboarding {
   const [brandOptions, setBrandOptions] = useState<NameCandidate[]>([]);
   const [taglineOptions, setTaglineOptions] = useState<TaglineCandidate[]>([]);
   const [userVibeFit, setUserVibeFit] = useState<VibeFit[]>([]);
+  const [questionsMockReason, setQuestionsMockReason] = useState<string | null>(null);
+  const [planMockReason, setPlanMockReason] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const buildingRef = useRef(false);
   const brandingRef = useRef(false);
@@ -115,8 +135,12 @@ export function useOnboarding(): UseOnboarding {
           setStatus(p.status);
           setIdea(p.idea ?? "");
           setQuestions(Array.isArray(p.questions) ? p.questions : []);
+          setQuestionsAreMock(Boolean(p.questionsAreMock));
+          setQuestionsMockReason(p.questionsMockReason ?? null);
           setAnswers(p.answers ?? {});
           setPlan(p.plan ?? null);
+          setPlanIsMock(Boolean(p.planIsMock));
+          setPlanMockReason(p.planMockReason ?? null);
           setVibeId(p.vibeId ?? null);
           setBrandImage(p.brandImage ?? null);
           setBrandName(p.brandName ?? null);
@@ -143,8 +167,12 @@ export function useOnboarding(): UseOnboarding {
       status,
       idea,
       questions,
+      questionsAreMock,
+      questionsMockReason,
       answers,
       plan,
+      planIsMock,
+      planMockReason,
       vibeId,
       brandImage,
       brandName,
@@ -159,7 +187,7 @@ export function useOnboarding(): UseOnboarding {
     } catch {
       /* quota exceeded or circular — skip silently */
     }
-  }, [status, idea, questions, answers, plan, vibeId, brandImage, brandName, tagline, productProfile, brandOptions, taglineOptions, userVibeFit]);
+  }, [status, idea, questions, questionsAreMock, questionsMockReason, answers, plan, planIsMock, planMockReason, vibeId, brandImage, brandName, tagline, productProfile, brandOptions, taglineOptions, userVibeFit]);
 
   const start = useCallback(async (rawIdea: string) => {
     const text = rawIdea.trim();
@@ -169,20 +197,39 @@ export function useOnboarding(): UseOnboarding {
     setPlan(null);
     setStatus("asking");
     setLoading(true);
+    setQuestionsAreMock(false);
+    setQuestionsMockReason(null);
     try {
       const res = await fetch("/api/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "questions", idea: text }),
       });
-      const data = (await res.json()) as { questions: OnboardingQuestion[] };
+      const data = (await res.json()) as {
+        questions: OnboardingQuestion[];
+        mock?: boolean;
+        reason?: string;
+      };
       setQuestions(Array.isArray(data.questions) ? data.questions : []);
+      const isMock = Boolean(data.mock);
+      setQuestionsAreMock(isMock);
+      setQuestionsMockReason(isMock ? data.reason ?? "parse_failed" : null);
     } catch {
       setQuestions([]);
+      setQuestionsAreMock(true); // surface the notice so the founder knows
+      setQuestionsMockReason("network");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  /** Manually retry question generation when the mock fallback was used
+   *  (network blip / AI unavailable / parse failure). Keeps the founder
+   *  in control — never retry without their click. */
+  const retryQuestions = useCallback(async () => {
+    if (!idea.trim() || loading) return;
+    await start(idea);
+  }, [idea, loading, start]);
 
   const answer = useCallback((id: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [id]: value }));
@@ -196,6 +243,8 @@ export function useOnboarding(): UseOnboarding {
     buildingRef.current = true;
     setStatus("planning");
     setLoading(true);
+    setPlanIsMock(false);
+    setPlanMockReason(null);
     try {
       const payload: AnsweredQuestion[] = questions.map((q) => ({
         prompt: q.prompt,
@@ -206,11 +255,16 @@ export function useOnboarding(): UseOnboarding {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "plan", idea, answers: payload }),
       });
-      const data = (await res.json()) as { plan: BusinessPlan };
+      const data = (await res.json()) as { plan: BusinessPlan; mock?: boolean; reason?: string };
       setPlan(data.plan ?? null);
+      const isMock = Boolean(data.mock);
+      setPlanIsMock(isMock);
+      setPlanMockReason(isMock ? data.reason ?? "parse_failed" : null);
       setStatus("ready");
     } catch {
       setStatus("asking");
+      setPlanIsMock(true);
+      setPlanMockReason("network");
     } finally {
       setLoading(false);
       buildingRef.current = false;
@@ -395,8 +449,10 @@ export function useOnboarding(): UseOnboarding {
     status,
     idea,
     questions,
+    questionsAreMock,
     answers,
     plan,
+    planIsMock,
     vibeId,
     brandImage,
     brandName,
@@ -405,6 +461,8 @@ export function useOnboarding(): UseOnboarding {
     brandOptions,
     taglineOptions,
     userVibeFit,
+    questionsMockReason,
+    planMockReason,
     loading,
     started: status !== "idle",
     active:
@@ -421,6 +479,7 @@ export function useOnboarding(): UseOnboarding {
     start,
     answer,
     buildPlan,
+    retryQuestions,
     startBranding,
     chooseVibe,
     markBrandReady,

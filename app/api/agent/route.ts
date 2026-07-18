@@ -177,6 +177,8 @@ function withIds(result: AgentResult): { reply: string; tasks: Task[] } {
  * and return DB-backed tasks with real ids. Falls back to in-memory ids if the
  * database isn't configured or a write fails — the UI always gets a valid shape.
  */
+
+
 async function finalize(
   result: AgentResult,
   opts: { mock: boolean; workspaceId?: string; idea: string; meta?: WorkspaceMeta },

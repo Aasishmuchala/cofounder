@@ -75,9 +75,12 @@ interface Body {
   answers?: { prompt?: unknown; answer?: unknown }[];
 }
 
-async function callClaude(system: string, userText: string, maxTokens = 2500): Promise<string | null> {
+async function callClaude(system: string, userText: string, maxTokens = 2500): Promise<{ text: string | null; reason?: string }> {
   const client = getAnthropic();
-  if (!aiConfigured || !client) return null;
+  if (!aiConfigured || !client) {
+    // No credential at all — distinct from a call that failed mid-flight.
+    return { text: null, reason: "no_credential" };
+  }
   try {
     // Hold a concurrency slot for the paid call so a burst can't fan out into N
     // simultaneous Opus calls (cost + provider 429s + socket exhaustion). Saturated
@@ -90,14 +93,28 @@ async function callClaude(system: string, userText: string, maxTokens = 2500): P
         messages: [{ role: "user", content: userText }] as Anthropic.MessageParam[],
       }),
     );
-    return response.content
+    const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map((b) => b.text)
       .join("\n")
       .trim();
+    return { text: text || null, reason: text ? undefined : "empty_response" };
   } catch (e) {
     if (e instanceof Saturated) throw e; // let the route map it to 503
-    return null;
+    // Capture the failure kind so the UI can show a specific cause (network /
+    // 4xx auth / 5xx upstream / timeout). The SDK's `status` field is the HTTP
+    // code when present; the message includes the URL when DNS / connect fails.
+    const anyErr = e as { status?: number; message?: string } | null;
+    const status = typeof anyErr?.status === "number" ? anyErr.status : 0;
+    const msg = (anyErr?.message ?? "").slice(0, 200);
+    let reason = "call_failed";
+    if (status === 401 || status === 403) reason = "auth_rejected";
+    else if (status === 404) reason = "not_found";
+    else if (status === 429) reason = "rate_limited";
+    else if (status >= 500 && status < 600) reason = "upstream_5xx";
+    else if (/timeout|timed out|ETIMEDOUT|aborted/i.test(msg)) reason = "timeout";
+    else if (/ENOTFOUND|ECONNREFUSED|fetch failed|getaddrinfo/i.test(msg)) reason = "network";
+    return { text: null, reason, message: msg };
   }
 }
 
@@ -120,11 +137,13 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     if (action === "questions") {
-      const text = await callClaude(QUESTIONS_SYSTEM, `Company idea: ${idea || "a new startup"}`);
-      const questions = text ? parseQuestions(text) : null;
+      const result = await callClaude(QUESTIONS_SYSTEM, `Company idea: ${idea || "a new startup"}`);
+      const questions = result.text ? parseQuestions(result.text) : null;
       return Response.json({
         questions: questions ?? mockQuestions(),
         mock: !questions,
+        reason: !questions ? result.reason ?? "parse_failed" : undefined,
+        message: !questions ? result.message : undefined,
       });
     }
 
@@ -135,14 +154,16 @@ export async function POST(req: Request): Promise<Response> {
             .filter((a) => a.prompt && a.answer)
         : [];
       const qa = answers.map((a) => `Q: ${a.prompt}\nA: ${a.answer}`).join("\n\n");
-      const text = await callClaude(
+      const result = await callClaude(
         PLAN_SYSTEM,
         `Company idea: ${idea || "a new startup"}\n\nOnboarding answers:\n${qa || "(none)"}`,
       );
-      const plan = text ? parsePlan(text) : null;
+      const plan = result.text ? parsePlan(result.text) : null;
       return Response.json({
         plan: plan ?? mockPlan(idea, answers),
         mock: !plan,
+        reason: !plan ? result.reason ?? "parse_failed" : undefined,
+        message: !plan ? result.message : undefined,
       });
     }
 
@@ -157,8 +178,8 @@ export async function POST(req: Request): Promise<Response> {
         `Company idea: ${idea || "a new startup"}\n\n` +
         `Onboarding answers:\n${qa || "(none)"}\n\n` +
         `Generate a Product Profile, 5 brand-name candidates, and 3 tagline options. Names and taglines must be specific to the idea.`;
-      const text = await callClaude(BRAND_SYSTEM, userText, 4000);
-      const brand = text ? parseBrand(text) : null;
+      const result = await callClaude(BRAND_SYSTEM, userText, 4000);
+      const brand = result.text ? parseBrand(result.text) : null;
       // Always return a usable bundle — if the AI failed, mock the missing fields
       // so the UI never gets a half-empty response.
       const fallback = mockBrand(idea, answers);
@@ -167,6 +188,8 @@ export async function POST(req: Request): Promise<Response> {
         names: brand?.names ?? fallback.names,
         taglines: brand?.taglines ?? fallback.taglines,
         mock: !brand,
+        reason: !brand ? result.reason ?? "parse_failed" : undefined,
+        message: !brand ? result.message : undefined,
       });
     }
   } catch (e) {

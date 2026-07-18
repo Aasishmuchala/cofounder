@@ -1,4 +1,5 @@
 import * as React from "react";
+import { motion, type MotionProps } from "framer-motion";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -31,9 +32,10 @@ export function LightButton({
   children,
   as = "button",
   ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  as?: "button" | "span";
-}) {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> &
+  React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+    as?: "button" | "span" | "a";
+  }) {
   const Comp = as as "button";
   return (
     <Comp
@@ -297,3 +299,122 @@ export function Stepper({
 }
 
 export { cx };
+
+/* ============================================================
+   Shared section vocabulary — used by every section so the
+   page reads as one system.
+   ============================================================ */
+
+/** Section eyebrow: a mono-uppercase label flanked by hairlines.
+ *  Numbered chapter-style ("01 — Orchestration"). */
+export function SectionEyebrow({
+  index,
+  children,
+  className,
+}: {
+  index: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cx(
+        "flex items-center gap-3 text-[var(--text-50)]",
+        className,
+      )}
+    >
+      <span className="font-mono text-[11px] font-medium tracking-[0.16em]">
+        {index}
+      </span>
+      <span className="h-px w-6 bg-[var(--border-line)]" />
+      <span className="font-mono text-[11px] font-medium uppercase tracking-[0.16em]">
+        {children}
+      </span>
+    </div>
+  );
+}
+
+/** Standard section headline typography. */
+export function SectionHeadline({
+  as: Tag = "h2",
+  accent,
+  children,
+  className,
+}: {
+  as?: "h2" | "h3";
+  accent?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Tag
+      className={cx(
+        "font-display font-normal leading-[1.08] tracking-[-0.02em] text-[var(--text)]",
+        "text-[32px] min-[760px]:text-[44px] min-[1100px]:text-[56px]",
+        className,
+      )}
+    >
+      {accent ? (
+        <>
+          {children}{" "}
+          <span className="bg-gradient-to-r from-[var(--text)] via-[#a78bfa] to-[var(--text)] bg-clip-text text-transparent">
+            {accent}
+          </span>
+        </>
+      ) : (
+        children
+      )}
+    </Tag>
+  );
+}
+
+/** Section body — same gray as the rest of the page. */
+export function SectionLead({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <p
+      className={cx(
+        "font-display max-w-[58ch] text-[16px] min-[760px]:text-[18px] leading-[1.55] text-[var(--text-70)]",
+        className,
+      )}
+    >
+      {children}
+    </p>
+  );
+}
+
+/** One-line framer-motion reveal wrapper. Centralizes the project's
+ *  ease, viewport margin, and threshold so every section behaves
+ *  the same on scroll. */
+export function RevealOnView({
+  children,
+  delay = 0,
+  y = 16,
+  once = true,
+  className,
+  amount = 0.2,
+}: {
+  children: React.ReactNode;
+  delay?: number;
+  y?: number;
+  once?: boolean;
+  className?: string;
+  amount?: number;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once, amount, margin: "-60px" }}
+      transition={{ duration: 0.6, ease: [0.23, 1, 0.32, 1], delay }}
+      className={className}
+    >
+      {children}
+    </motion.div>
+  );
+}
